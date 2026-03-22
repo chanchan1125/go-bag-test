@@ -1,0 +1,269 @@
+package com.gobag.data.repository
+
+import android.content.Context
+import com.gobag.core.common.nowMs
+import com.gobag.core.model.AlertModel
+import com.gobag.core.model.AutoResolved
+import com.gobag.core.model.BagProfile
+import com.gobag.core.model.Conflict
+import com.gobag.core.model.DeviceState
+import com.gobag.core.model.Item
+import com.gobag.data.local.ConflictDao
+import com.gobag.data.local.to_entity
+import com.gobag.data.local.to_model
+import com.gobag.data.remote.RemoteDataSourceFactory
+import com.gobag.data.remote.SyncRequestDto
+import com.gobag.data.remote.to_dto
+import com.gobag.data.remote.to_model
+import com.gobag.domain.repository.ItemRepository
+import com.gobag.domain.repository.SyncRepository
+import com.gobag.domain.repository.SyncRunResult
+import com.google.gson.JsonElement
+import com.google.gson.JsonParser
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import retrofit2.HttpException
+
+class GoBagSyncRepository(
+    private val context: Context,
+    private val item_repository: ItemRepository,
+    private val conflict_dao: ConflictDao,
+    private val device_state_store: DeviceStateStore
+) : SyncRepository {
+    override fun observe_device_state(): Flow<DeviceState> = device_state_store.state
+
+    override fun observe_conflicts(): Flow<List<Conflict>> =
+        conflict_dao.observe_conflicts().map { rows -> rows.map { it.to_model() } }
+
+    override suspend fun set_auto_sync(enabled: Boolean) {
+        val has_conflicts = observe_conflicts().first().isNotEmpty()
+        if (enabled && has_conflicts) {
+            device_state_store.set_auto_sync(false)
+        } else {
+            device_state_store.set_auto_sync(enabled)
+        }
+    }
+
+    override suspend fun set_selected_bag_id(bag_id: String) {
+        device_state_store.set_selected_bag_id(bag_id)
+    }
+
+    override suspend fun refresh_remote_status(): String? {
+        device_state_store.initialize_phone_device_id_if_missing()
+        val state = device_state_store.state.first()
+        if (state.base_url.isBlank()) {
+            return "No Raspberry Pi address is saved yet."
+        }
+        return try {
+            val api = RemoteDataSourceFactory.create_api(state.base_url, state.auth_token)
+            val status = api.device_status()
+            device_state_store.set_connection_snapshot(
+                status = status.connection_status,
+                pendingChangesCount = status.pending_changes_count,
+                localIp = status.local_ip,
+                lastSyncAt = if (state.auth_token.isNotBlank()) status.last_sync_at else null
+            )
+            null
+        } catch (e: Exception) {
+            val message = describe_remote_exception(e, action = "Could not refresh Raspberry Pi status")
+            device_state_store.set_connection_error(message)
+            message
+        }
+    }
+
+    override suspend fun resolve_conflict_keep_phone(item: Item) {
+        val local_item = item_repository.get_item(item.id)
+        if (local_item != null) {
+            item_repository.upsert_item(local_item.copy(updated_at = nowMs()))
+        }
+        conflict_dao.clear_item(item.id)
+        val has_conflicts = observe_conflicts().first().isNotEmpty()
+        device_state_store.set_has_unresolved_conflicts(has_conflicts)
+    }
+
+    override suspend fun resolve_conflict_keep_pi(item: Item) {
+        item_repository.upsert_item(item)
+        conflict_dao.clear_item(item.id)
+        val has_conflicts = observe_conflicts().first().isNotEmpty()
+        device_state_store.set_has_unresolved_conflicts(has_conflicts)
+    }
+
+    override suspend fun resolve_conflict_keep_deleted(item: Item) {
+        item_repository.soft_delete_item(item.copy(updated_at = nowMs()))
+        conflict_dao.clear_item(item.id)
+        val has_conflicts = observe_conflicts().first().isNotEmpty()
+        device_state_store.set_has_unresolved_conflicts(has_conflicts)
+    }
+
+    override suspend fun resolve_conflict_restore(item: Item) {
+        item_repository.upsert_item(item.copy(deleted = false, updated_at = nowMs()))
+        conflict_dao.clear_item(item.id)
+        val has_conflicts = observe_conflicts().first().isNotEmpty()
+        device_state_store.set_has_unresolved_conflicts(has_conflicts)
+    }
+
+    override suspend fun run_sync_now(): SyncRunResult {
+        device_state_store.initialize_phone_device_id_if_missing()
+        val state = device_state_store.state.first()
+        if (state.auth_token.isBlank() || state.base_url.isBlank()) {
+            device_state_store.set_connection_error("Phone is not paired to a Raspberry Pi.")
+            return SyncRunResult(
+                server_time_ms = state.last_sync_at,
+                conflicts = emptyList(),
+                auto_resolved = emptyList(),
+                alerts = emptyList(),
+                skipped_reason = "Sync skipped because this phone is not paired to a Raspberry Pi."
+            )
+        }
+
+        val changed_items = item_repository.get_items_changed_since(state.last_sync_at)
+        val changed_bags = item_repository.get_bags_changed_since(state.last_sync_at)
+        try {
+            validate_sync_payload(changed_bags, changed_items)
+        } catch (e: IllegalStateException) {
+            device_state_store.set_connection_error(e.message ?: "Sync validation failed.")
+            throw e
+        }
+
+        val api = RemoteDataSourceFactory.create_api(state.base_url, state.auth_token)
+        val response = try {
+            api.sync(
+                SyncRequestDto(
+                    phone_device_id = state.phone_device_id,
+                    last_sync_at = state.last_sync_at,
+                    changed_bags = changed_bags.map { it.to_dto() },
+                    changed_items = changed_items.map { it.to_dto() }
+                )
+            )
+        } catch (e: Exception) {
+            val message = describe_remote_exception(e, action = "Raspberry Pi sync failed")
+            device_state_store.set_connection_error(message)
+            throw IllegalStateException(message, e)
+        }
+
+        response.server_bag_changes.map { it.to_model() }.forEach {
+            item_repository.apply_server_bag(it, state.last_sync_at)
+        }
+        response.server_item_changes.map { it.to_model() }.forEach {
+            item_repository.apply_server_item(it, state.last_sync_at)
+        }
+
+        val conflicts = response.conflicts.map { it.to_model() }
+        conflict_dao.clear_all()
+        if (conflicts.isNotEmpty()) {
+            conflict_dao.upsert_all(conflicts.map { it.to_entity() })
+            device_state_store.set_has_unresolved_conflicts(true)
+            device_state_store.set_auto_sync(false)
+        } else {
+            device_state_store.set_has_unresolved_conflicts(false)
+        }
+
+        val alerts = response.alerts.map { it.to_model() }
+        if (alerts.isNotEmpty()) {
+            NotificationHelper.notify_alerts(context, alerts)
+        }
+
+        val syncStatus = try {
+            api.sync_status()
+        } catch (_: Exception) {
+            null
+        }
+        if (syncStatus != null) {
+            device_state_store.set_connection_snapshot(
+                status = syncStatus.connection_status,
+                pendingChangesCount = syncStatus.pending_changes_count,
+                localIp = syncStatus.local_ip,
+                lastSyncAt = syncStatus.last_sync_at
+            )
+        } else {
+            device_state_store.set_last_sync_at(response.server_time_ms)
+        }
+        return SyncRunResult(
+            server_time_ms = response.server_time_ms,
+            conflicts = conflicts,
+            auto_resolved = response.auto_resolved.map { AutoResolved(it.item_id, it.rule) },
+            alerts = alerts
+        )
+    }
+
+    private suspend fun validate_sync_payload(changed_bags: List<BagProfile>, changed_items: List<Item>) {
+        val knownBagIds = (item_repository.observe_bags().first().map { it.bag_id } + changed_bags.map { it.bag_id }).toSet()
+        val invalidBag = changed_bags.firstOrNull {
+            it.bag_id.isBlank() || it.name.isBlank() || it.size_liters <= 0 || it.template_id.isBlank() || it.updated_by.isBlank()
+        }
+        if (invalidBag != null) {
+            val label = invalidBag.name.ifBlank { invalidBag.bag_id }
+            throw IllegalStateException("Cannot sync bag '$label' because required bag fields are missing.")
+        }
+
+        val invalidItem = changed_items.firstOrNull {
+            it.id.isBlank() ||
+                it.bag_id.isBlank() ||
+                (!it.deleted && it.bag_id !in knownBagIds) ||
+                it.name.isBlank() ||
+                it.unit.isBlank() ||
+                it.updated_by.isBlank() ||
+                it.quantity <= 0.0
+        }
+        if (invalidItem != null) {
+            val label = invalidItem.name.ifBlank { invalidItem.id }
+            val reason = when {
+                invalidItem.bag_id.isBlank() -> "missing a bag reference"
+                !invalidItem.deleted && invalidItem.bag_id !in knownBagIds -> "references a bag that does not exist locally"
+                invalidItem.name.isBlank() -> "is missing a name"
+                invalidItem.unit.isBlank() -> "is missing a unit"
+                invalidItem.updated_by.isBlank() -> "is missing an updated_by value"
+                invalidItem.quantity <= 0.0 -> "has a non-positive quantity"
+                else -> "is missing required fields"
+            }
+            throw IllegalStateException("Cannot sync item '$label' because it $reason.")
+        }
+    }
+
+    private fun describe_remote_exception(error: Exception, action: String): String {
+        if (error is IllegalStateException && error.cause == null) {
+            return error.message ?: action
+        }
+        if (error is HttpException) {
+            val detail = error.response()?.errorBody()?.string()?.let(::parse_fastapi_detail)
+            return when {
+                error.code() == 422 && !detail.isNullOrBlank() -> "$action: Raspberry Pi rejected the payload ($detail)."
+                error.code() == 422 -> "$action: Raspberry Pi rejected the payload."
+                !detail.isNullOrBlank() -> "$action: HTTP ${error.code()} ($detail)."
+                else -> "$action: HTTP ${error.code()}."
+            }
+        }
+        return error.message?.let { "$action: $it" } ?: action
+    }
+
+    private fun parse_fastapi_detail(raw: String): String? {
+        val parsed = runCatching { JsonParser.parseString(raw) }.getOrNull() ?: return raw.ifBlank { null }
+        if (!parsed.isJsonObject) {
+            return raw.ifBlank { null }
+        }
+        val detail = parsed.asJsonObject.get("detail") ?: return raw.ifBlank { null }
+        return when {
+            detail.isJsonPrimitive -> detail.asString
+            detail.isJsonArray -> detail.asJsonArray
+                .mapNotNull(::format_fastapi_detail_entry)
+                .joinToString("; ")
+                .ifBlank { null }
+            else -> detail.toString()
+        }
+    }
+
+    private fun format_fastapi_detail_entry(entry: JsonElement): String? {
+        if (!entry.isJsonObject) {
+            return entry.toString().ifBlank { null }
+        }
+        val message = entry.asJsonObject.get("msg")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+        val location = entry.asJsonObject.get("loc")
+            ?.takeIf { it.isJsonArray }
+            ?.asJsonArray
+            ?.mapNotNull { part -> if (part.isJsonPrimitive) part.asString else null }
+            ?.joinToString(".")
+            .orEmpty()
+        return listOfNotNull(location.ifBlank { null }, message.ifBlank { null }).joinToString(": ").ifBlank { null }
+    }
+}

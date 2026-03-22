@@ -1,0 +1,189 @@
+package com.gobag.feature.pairing
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.gobag.domain.repository.PairingConnectionResult
+import com.gobag.domain.repository.PairingRepository
+import com.gobag.domain.repository.SyncRepository
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+data class PairingUiState(
+    val status: String = "Not paired",
+    val endpoint: String = "",
+    val manual_endpoint: String = "",
+    val endpoint_status: String = "Unknown",
+    val endpoint_detail: String = "Scan the Raspberry Pi QR code or test a local address.",
+    val auth_status: String = "Not authenticated",
+    val pairing_detail: String = "No Raspberry Pi has been paired with this phone yet.",
+    val running: Boolean = false,
+    val error: String = "",
+    val feedback_message: String = ""
+)
+
+private data class PairingViewInputs(
+    val running: Boolean,
+    val error: String,
+    val feedback: String,
+    val endpoint_input: String,
+    val endpoint_status: String,
+    val endpoint_detail: String
+)
+
+private data class PairingFeedbackState(
+    val running: Boolean,
+    val error: String,
+    val feedback: String
+)
+
+private data class PairingEndpointState(
+    val endpoint_input: String,
+    val endpoint_status: String,
+    val endpoint_detail: String
+)
+
+class PairingViewModel(
+    private val pairing_repository: PairingRepository,
+    sync_repository: SyncRepository
+) : ViewModel() {
+    private val running = MutableStateFlow(false)
+    private val error = MutableStateFlow("")
+    private val feedback_message = MutableStateFlow("")
+    private val manualEndpoint = MutableStateFlow("")
+    private val endpointStatus = MutableStateFlow("Unknown")
+    private val endpointDetail = MutableStateFlow("Scan the Raspberry Pi QR code or test a local address.")
+
+    private val feedback_state = combine(
+        running,
+        error,
+        feedback_message
+    ) { running_now, error_text, feedback ->
+        PairingFeedbackState(
+            running = running_now,
+            error = error_text,
+            feedback = feedback
+        )
+    }
+
+    private val endpoint_state = combine(
+        manualEndpoint,
+        endpointStatus,
+        endpointDetail
+    ) { endpointInput, statusText, detailText ->
+        PairingEndpointState(
+            endpoint_input = endpointInput,
+            endpoint_status = statusText,
+            endpoint_detail = detailText
+        )
+    }
+
+    private val view_inputs = combine(
+        feedback_state,
+        endpoint_state
+    ) { feedbackState, endpointState ->
+        PairingViewInputs(
+            running = feedbackState.running,
+            error = feedbackState.error,
+            feedback = feedbackState.feedback,
+            endpoint_input = endpointState.endpoint_input,
+            endpoint_status = endpointState.endpoint_status,
+            endpoint_detail = endpointState.endpoint_detail
+        )
+    }
+
+    val ui_state: StateFlow<PairingUiState> = combine(
+        sync_repository.observe_device_state(),
+        view_inputs
+    ) { state, inputs ->
+        val paired = state.auth_token.isNotBlank() && state.base_url.isNotBlank()
+        val savedEndpointOnly = state.base_url.isNotBlank() && state.auth_token.isBlank()
+        PairingUiState(
+            status = when {
+                paired -> "Paired to Raspberry Pi"
+                savedEndpointOnly -> "Address saved only"
+                else -> "Not paired"
+            },
+            endpoint = state.base_url,
+            manual_endpoint = inputs.endpoint_input.ifBlank { state.base_url },
+            endpoint_status = inputs.endpoint_status,
+            endpoint_detail = inputs.endpoint_detail,
+            auth_status = if (state.auth_token.isNotBlank()) "Authenticated" else "Not authenticated",
+            pairing_detail = when {
+                paired -> "This phone has pairing credentials and can sync inventory."
+                savedEndpointOnly -> "This phone knows the Raspberry Pi address, but it still needs QR pairing to authenticate."
+                else -> "No Raspberry Pi has been paired with this phone yet."
+            },
+            running = inputs.running,
+            error = inputs.error,
+            feedback_message = inputs.feedback
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PairingUiState())
+
+    fun on_manual_endpoint_changed(value: String) {
+        manualEndpoint.value = value
+    }
+
+    fun on_qr_payload(payload_json: String) {
+        viewModelScope.launch {
+            running.value = true
+            error.value = ""
+            try {
+                val result = pairing_repository.pair_from_qr_payload(payload_json)
+                endpointStatus.value = if (result.initial_sync_completed) "Paired" else "Paired with warning"
+                endpointDetail.value = result.detail
+                feedback_message.value = result.detail
+            } catch (e: Exception) {
+                error.value = e.message ?: "Pair failed"
+                endpointStatus.value = "Failed"
+                endpointDetail.value = e.message ?: "Pair failed"
+                feedback_message.value = "Pairing failed."
+            } finally {
+                running.value = false
+            }
+        }
+    }
+
+    fun test_connection(value: String) {
+        viewModelScope.launch {
+            running.value = true
+            error.value = ""
+            try {
+                val result = pairing_repository.test_connection(value)
+                updateConnectionState(result)
+                feedback_message.value = "Address test succeeded. Pair with QR to authenticate this phone."
+            } catch (e: Exception) {
+                val message = e.message ?: "Connection test failed."
+                error.value = message
+                endpointStatus.value = "Failed"
+                endpointDetail.value = message
+                feedback_message.value = "Address test failed."
+            } finally {
+                running.value = false
+            }
+        }
+    }
+
+    fun unpair() {
+        viewModelScope.launch {
+            pairing_repository.unpair()
+            error.value = ""
+            endpointStatus.value = "Unknown"
+            endpointDetail.value = "Pairing credentials removed from this phone."
+            feedback_message.value = "Device unpaired."
+        }
+    }
+
+    fun consume_feedback() {
+        feedback_message.value = ""
+    }
+
+    private fun updateConnectionState(result: PairingConnectionResult) {
+        manualEndpoint.value = result.endpoint
+        endpointStatus.value = result.status
+        endpointDetail.value = result.detail
+    }
+}

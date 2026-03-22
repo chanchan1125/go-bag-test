@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=GO BAG Inventory Autostart
+Comment=Launch the GO BAG web UI on desktop login
+Exec=__LAUNCH_CMD__ --kiosk
+Icon=applications-office
+Terminal=false
+Categories=Utility;
+X-GNOME-Autostart-enabled=true
