@@ -3,9 +3,11 @@ import calendar
 import glob
 import io
 import json
+import logging
 import os
 import platform
 import secrets
+import shlex
 import shutil
 import socket
 import sqlite3
@@ -21,8 +23,15 @@ from urllib.parse import parse_qs, quote
 
 import qrcode
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from pydantic import BaseModel, Field
+
+try:
+    from pyzbar.pyzbar import ZBarSymbol, decode as pyzbar_decode
+except Exception:
+    ZBarSymbol = None
+    pyzbar_decode = None
 
 DEFAULT_DATA_DIR = "/var/lib/gobag"
 DEVICE_NAME = os.getenv("GOBAG_DEVICE_NAME", "GO BAG Raspberry Pi")
@@ -43,6 +52,9 @@ USB_SCAN_DEVICE = os.getenv("GOBAG_USB_CAMERA_DEVICE", "").strip()
 USB_SCAN_WIDTH = int(os.getenv("GOBAG_USB_SCAN_WIDTH", "1280"))
 USB_SCAN_HEIGHT = int(os.getenv("GOBAG_USB_SCAN_HEIGHT", "720"))
 USB_SCAN_TIMEOUT_S = float(os.getenv("GOBAG_USB_SCAN_TIMEOUT_S", "12"))
+USB_PREVIEW_WIDTH = int(os.getenv("GOBAG_USB_PREVIEW_WIDTH", "960"))
+USB_PREVIEW_HEIGHT = int(os.getenv("GOBAG_USB_PREVIEW_HEIGHT", "720"))
+USB_PREVIEW_INTERVAL_MS = max(int(os.getenv("GOBAG_USB_PREVIEW_INTERVAL_MS", "1200")), 800)
 QR_DECODE_CMD = os.getenv("GOBAG_QR_DECODE_CMD", "zbarimg")
 UI_REFRESH_INTERVAL_MS = max(int(os.getenv("GOBAG_UI_REFRESH_INTERVAL_MS", "5000")), 2000)
 SINGLE_BAG_META_KEY = "single_bag_id"
@@ -57,6 +69,10 @@ CHECKLIST_CATEGORIES = [
 DAY_MS = 24 * 60 * 60 * 1000
 
 app = FastAPI(title="Go-Bag Pi Server", version="2.0.0")
+logger = logging.getLogger("gobag.pi")
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=os.getenv("GOBAG_LOG_LEVEL", "INFO").upper())
+IMAGE_RESAMPLING = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 
 
 class Bag(BaseModel):
@@ -265,6 +281,16 @@ class InventoryGroupView:
     unit: str
     total_quantity: float
     batches: List[InventoryBatchView]
+
+
+@dataclass
+class UsbCaptureResult:
+    purpose: Literal["preview", "scan"]
+    device: str
+    file_path: str
+    width: int
+    height: int
+    image_bytes: bytes
 
 
 def now_ms() -> int:
@@ -1362,24 +1388,127 @@ def unexpected_ui_error_message(action: str, exc: Exception) -> str:
     return f"{action} failed unexpectedly: {clipped}"
 
 
-def scan_qr_from_usb_camera() -> str:
-    if not usb_scan_available():
-        raise HTTPException(status_code=503, detail=f"USB scan command not found: {USB_SCAN_CMD}")
-    if not qr_decode_available():
-        raise HTTPException(status_code=503, detail=f"QR decode command not found: {QR_DECODE_CMD}")
+def scan_error_guidance(code: str) -> List[str]:
+    tips = {
+        "CAMERA_PREVIEW_FAILED": [
+            "Check that the USB camera is plugged in and not used by another app.",
+            "Confirm the Raspberry Pi user has camera and video access.",
+        ],
+        "CAMERA_CAPTURE_FAILED": [
+            "Hold the QR steady and make sure the USB camera is connected.",
+            "Try better lighting and make sure the camera lens is clean.",
+        ],
+        "NO_QR_DETECTED": [
+            "Move the QR closer so it fills more of the frame.",
+            "Hold the QR steady and reduce glare or shadows.",
+            "Try brighter, even lighting and keep the camera focused.",
+        ],
+        "INVALID_QR_CONTENT": [
+            "Use a GO BAG item QR in the format Item/Unit/Category/YYYY-MM-DD.",
+            "If the QR is for a different feature, add the item manually instead.",
+        ],
+        "ITEM_CREATE_FAILED": [
+            "Review the QR content and try the scan again.",
+            "If the problem continues, add the item manually and inspect the QR format.",
+        ],
+        "DATABASE_SAVE_FAILED": [
+            "Check that the Raspberry Pi storage is writable and has free space.",
+            "Retry the scan after restarting the GO BAG backend if needed.",
+        ],
+        "QR_DECODE_FAILED": [
+            "Retry the scan with the QR larger in the frame and in better lighting.",
+            "If the issue continues, verify the Pi has its QR decoder tools installed.",
+        ],
+    }
+    return tips.get(code, ["Retry the action and check the Raspberry Pi logs if the problem continues."])
 
+
+def structured_error_detail(code: str, message: str, technical: str = "", guidance: Optional[List[str]] = None) -> dict:
+    return {
+        "ok": False,
+        "code": code,
+        "message": message,
+        "guidance": guidance or scan_error_guidance(code),
+        "technical": technical,
+    }
+
+
+def structured_http_exception(
+    status_code: int,
+    code: str,
+    message: str,
+    technical: str = "",
+    guidance: Optional[List[str]] = None,
+) -> HTTPException:
+    return HTTPException(status_code=status_code, detail=structured_error_detail(code, message, technical=technical, guidance=guidance))
+
+
+def error_payload_from_detail(detail: object, default_code: str = "SCAN_FAILED") -> dict:
+    if isinstance(detail, dict):
+        code = str(detail.get("code") or default_code)
+        return {
+            "ok": False,
+            "code": code,
+            "message": str(detail.get("message") or "The request failed."),
+            "guidance": list(detail.get("guidance") or scan_error_guidance(code)),
+            "technical": str(detail.get("technical") or ""),
+        }
+    message = str(detail or "The request failed.")
+    return structured_error_detail(default_code, message)
+
+
+def ui_message_for_error_payload(payload: dict) -> str:
+    message = str(payload.get("message") or "The request failed.").strip()
+    guidance = list(payload.get("guidance") or [])
+    if guidance:
+        return f"{message} Tip: {guidance[0]}"
+    return message
+
+
+def resolve_usb_camera_device(error_code: str) -> str:
+    if not usb_scan_available():
+        raise structured_http_exception(
+            503,
+            error_code,
+            f"USB camera command is not available on this Pi ({USB_SCAN_CMD}).",
+            technical=f"missing command: {USB_SCAN_CMD}",
+        )
     scan_device = USB_SCAN_DEVICE
     if scan_device and not os.path.exists(scan_device):
-        raise HTTPException(status_code=503, detail=f"Configured USB camera device was not found: {scan_device}")
+        raise structured_http_exception(
+            503,
+            error_code,
+            "The configured USB camera device was not found.",
+            technical=scan_device,
+        )
     if not scan_device:
         available_devices = available_usb_camera_devices()
         if available_devices:
             scan_device = available_devices[0]
         else:
-            raise HTTPException(
-                status_code=503,
-                detail="No USB camera device was detected. Check the USB camera connection and Raspberry Pi video permissions.",
+            raise structured_http_exception(
+                503,
+                error_code,
+                "No USB camera device was detected.",
+                technical="no /dev/video* device found",
             )
+    logger.info("USB camera device selected for %s: %s", error_code, scan_device)
+    return scan_device
+
+
+def image_dimensions_for_bytes(image_bytes: bytes) -> tuple[int, int]:
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            return int(image.width), int(image.height)
+    except Exception:
+        return 0, 0
+
+
+def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureResult:
+    error_code = "CAMERA_PREVIEW_FAILED" if purpose == "preview" else "CAMERA_CAPTURE_FAILED"
+    device = resolve_usb_camera_device(error_code)
+    width = USB_PREVIEW_WIDTH if purpose == "preview" else USB_SCAN_WIDTH
+    height = USB_PREVIEW_HEIGHT if purpose == "preview" else USB_SCAN_HEIGHT
 
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         out_path = tmp.name
@@ -1387,12 +1516,13 @@ def scan_qr_from_usb_camera() -> str:
     capture_cmd = [
         USB_SCAN_CMD,
         "-r",
-        f"{USB_SCAN_WIDTH}x{USB_SCAN_HEIGHT}",
+        f"{width}x{height}",
         "--no-banner",
+        "-d",
+        device,
+        out_path,
     ]
-    if scan_device:
-        capture_cmd.extend(["-d", scan_device])
-    capture_cmd.append(out_path)
+    logger.info("USB %s command: %s", purpose, shlex.join(capture_cmd))
 
     try:
         capture = subprocess.run(
@@ -1403,20 +1533,105 @@ def scan_qr_from_usb_camera() -> str:
         )
         if capture.returncode != 0:
             capture_error = decode_process_output(capture.stderr) or decode_process_output(capture.stdout)
-            raise HTTPException(
-                status_code=503,
-                detail=f"USB camera capture failed ({capture.returncode}): {capture_error[:200] or 'fswebcam could not read from the camera'}",
+            logger.warning("USB %s failed (%s): %s", purpose, capture.returncode, capture_error)
+            raise structured_http_exception(
+                503,
+                error_code,
+                "The USB camera could not capture an image.",
+                technical=f"returncode={capture.returncode}; {capture_error[:240]}",
             )
         if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-            raise HTTPException(status_code=503, detail="USB camera did not produce an image. Check camera access and file permissions.")
+            raise structured_http_exception(
+                503,
+                error_code,
+                "The USB camera did not produce an image.",
+                technical="empty capture file",
+            )
+        with open(out_path, "rb") as captured_file:
+            image_bytes = captured_file.read()
+        detected_width, detected_height = image_dimensions_for_bytes(image_bytes)
+        logger.info(
+            "USB %s image saved to %s (%sx%s, %s bytes)",
+            purpose,
+            out_path,
+            detected_width or width,
+            detected_height or height,
+            len(image_bytes),
+        )
+        return UsbCaptureResult(
+            purpose=purpose,
+            device=device,
+            file_path=out_path,
+            width=detected_width or width,
+            height=detected_height or height,
+            image_bytes=image_bytes,
+        )
+    except subprocess.TimeoutExpired:
+        raise structured_http_exception(504, error_code, "The USB camera timed out while capturing.", technical="capture timeout")
+    except OSError as exc:
+        raise structured_http_exception(
+            503,
+            error_code,
+            "The USB camera could not start.",
+            technical=exc.strerror or str(exc),
+        )
+    finally:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
 
-        decode_attempts = [
-            [QR_DECODE_CMD, "--quiet", "--raw", out_path],
-            [QR_DECODE_CMD, "--raw", out_path],
+
+def build_decode_variants(image_bytes: bytes) -> List[tuple[str, Image.Image]]:
+    with Image.open(io.BytesIO(image_bytes)) as source_image:
+        base = ImageOps.exif_transpose(source_image).convert("RGB")
+        gray = ImageOps.autocontrast(ImageOps.grayscale(base))
+        upscale_width = min(max(gray.width * 2, gray.width), 2560)
+        upscale_height = min(max(gray.height * 2, gray.height), 2560)
+        upscaled = gray.resize((upscale_width, upscale_height), IMAGE_RESAMPLING)
+        sharpened = ImageEnhance.Sharpness(upscaled).enhance(2.4)
+        high_contrast = ImageEnhance.Contrast(sharpened).enhance(1.8)
+        threshold_160 = high_contrast.point(lambda value: 255 if value > 160 else 0).convert("L")
+        threshold_190 = high_contrast.point(lambda value: 255 if value > 190 else 0).convert("L")
+        return [
+            ("original", base.copy()),
+            ("grayscale_autocontrast", gray.copy()),
+            ("upscaled", upscaled.copy()),
+            ("upscaled_sharpened", sharpened.copy()),
+            ("high_contrast", high_contrast.copy()),
+            ("threshold_160", threshold_160.copy()),
+            ("threshold_190", threshold_190.copy()),
         ]
-        decode = None
-        decode_error = ""
+
+
+def decode_qr_with_pyzbar(variant_name: str, image: Image.Image) -> tuple[Optional[str], str]:
+    if pyzbar_decode is None or ZBarSymbol is None:
+        return None, "pyzbar unavailable"
+    try:
+        decoded_rows = pyzbar_decode(image, symbols=[ZBarSymbol.QRCODE])
+        if decoded_rows:
+            content = decoded_rows[0].data.decode("utf-8", errors="replace").strip()
+            return content, f"pyzbar found {len(decoded_rows)} QR symbol(s)"
+        return None, "pyzbar found no QR symbols"
+    except Exception as exc:
+        logger.warning("pyzbar decode failed for %s: %s", variant_name, exc)
+        return None, str(exc)
+
+
+def decode_qr_with_zbarimg(variant_name: str, image: Image.Image) -> tuple[Optional[str], str]:
+    if not qr_decode_available():
+        return None, f"{QR_DECODE_CMD} unavailable"
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        variant_path = tmp.name
+    try:
+        image.save(variant_path, format="PNG")
+        decode_attempts = [
+            [QR_DECODE_CMD, "--quiet", "--raw", variant_path],
+            [QR_DECODE_CMD, "--raw", variant_path],
+        ]
+        last_error = ""
         for command in decode_attempts:
+            logger.info("USB scan decode command (%s): %s", variant_name, shlex.join(command))
             decode = subprocess.run(
                 command,
                 check=False,
@@ -1426,24 +1641,134 @@ def scan_qr_from_usb_camera() -> str:
             decode_output = decode_process_output(decode.stdout)
             decode_error = decode_process_output(decode.stderr) or decode_output
             if decode.returncode == 0 and decode_output:
-                break
+                return decode_output.splitlines()[0].strip(), f"zbarimg succeeded with {variant_name}"
             if "--quiet" in command and "option" in decode_error.lower() and "quiet" in decode_error.lower():
                 continue
-        if decode is None or decode.returncode != 0:
-            raise HTTPException(status_code=400, detail=f"QR scan failed: {decode_error[:200] or 'No QR code detected'}")
-        content = decode_process_output(decode.stdout).splitlines()[0].strip() if decode_process_output(decode.stdout) else ""
-        if not content:
-            raise HTTPException(status_code=400, detail="QR scan returned no readable content")
-        return content
+            if decode_error:
+                last_error = decode_error
+        return None, last_error or "zbarimg returned no QR content"
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="USB camera scan timed out")
+        return None, "zbarimg timed out"
     except OSError as exc:
-        raise HTTPException(status_code=503, detail=f"USB camera scan could not start: {exc.strerror or str(exc)}")
+        return None, exc.strerror or str(exc)
     finally:
         try:
-            os.remove(out_path)
+            os.remove(variant_path)
         except OSError:
             pass
+
+
+def decode_qr_from_image_bytes(image_bytes: bytes) -> str:
+    if pyzbar_decode is None and not qr_decode_available():
+        raise structured_http_exception(
+            503,
+            "QR_DECODE_FAILED",
+            "No QR decoder is available on this Raspberry Pi.",
+            technical=f"pyzbar unavailable; {QR_DECODE_CMD} unavailable",
+        )
+
+    attempt_notes: List[str] = []
+    for variant_name, image in build_decode_variants(image_bytes):
+        logger.info("USB scan decode attempt using variant: %s", variant_name)
+        content, note = decode_qr_with_pyzbar(variant_name, image)
+        attempt_notes.append(f"{variant_name}: {note}")
+        if content:
+            logger.info("USB scan decoded QR with pyzbar variant %s", variant_name)
+            return content
+        content, note = decode_qr_with_zbarimg(variant_name, image)
+        attempt_notes.append(f"{variant_name}: {note}")
+        if content:
+            logger.info("USB scan decoded QR with zbarimg variant %s", variant_name)
+            return content
+
+    technical = "; ".join(attempt_notes)[-900:]
+    logger.info("USB scan decode attempts exhausted: %s", technical)
+    raise structured_http_exception(
+        400,
+        "NO_QR_DETECTED",
+        "No QR code was detected in the captured image.",
+        technical=technical,
+    )
+
+
+def scan_qr_from_usb_camera() -> str:
+    capture = capture_usb_camera_frame("scan")
+    return decode_qr_from_image_bytes(capture.image_bytes)
+
+
+def perform_usb_scan_and_save(conn: sqlite3.Connection, requested_bag_id: str = "") -> dict:
+    bag_row = canonical_ui_bag_row(conn)
+    bag_id = bag_row["bag_id"]
+    if requested_bag_id and requested_bag_id != bag_id:
+        logger.info("Ignoring requested bag id %s and using canonical bag %s", requested_bag_id, bag_id)
+
+    capture = capture_usb_camera_frame("scan")
+    raw_content = decode_qr_from_image_bytes(capture.image_bytes)
+    logger.info("USB scan decoded raw content: %s", raw_content[:240])
+
+    try:
+        parsed = parse_item_qr_content(raw_content)
+    except HTTPException as exc:
+        raise structured_http_exception(
+            400,
+            "INVALID_QR_CONTENT",
+            "A QR code was found, but it is not a valid GO BAG item QR.",
+            technical=raw_content[:240],
+        ) from exc
+
+    payload = ItemWriteRequest(
+        category_id=category_id_for_name(parsed.category),
+        name=parsed.name,
+        quantity=1,
+        unit=parsed.unit,
+        packed_status=False,
+        essential=False,
+        expiry_date=parsed.expiry_date,
+        minimum_quantity=0,
+        condition_status="good",
+        notes="Added from QR scan",
+    )
+
+    try:
+        written = merge_or_write_item_record(conn, bag_id, payload)
+    except HTTPException as exc:
+        payload_detail = error_payload_from_detail(exc.detail, default_code="ITEM_CREATE_FAILED")
+        raise structured_http_exception(
+            400,
+            "ITEM_CREATE_FAILED",
+            "The QR code was read, but the item could not be added to inventory.",
+            technical=payload_detail.get("message", ""),
+        ) from exc
+    except sqlite3.Error as exc:
+        logger.exception("USB scan database save failed")
+        raise structured_http_exception(
+            500,
+            "DATABASE_SAVE_FAILED",
+            "The item was scanned, but it could not be saved to the GO BAG.",
+            technical=str(exc),
+        ) from exc
+
+    logger.info(
+        "USB scan parsed item: name=%s unit=%s category=%s expiry=%s",
+        parsed.name,
+        parsed.unit,
+        parsed.category,
+        parsed.expiry_date,
+    )
+    return {
+        "ok": True,
+        "code": "SCAN_SUCCESS",
+        "message": f"Scanned {parsed.name} into inventory.",
+        "raw_content": raw_content,
+        "parsed": {
+            "name": parsed.name,
+            "unit": parsed.unit,
+            "category": parsed.category,
+            "expiry_date": parsed.expiry_date,
+        },
+        "item": written.model_dump(),
+        "bag_id": bag_id,
+    }
 
 
 def qr_data_uri_for_payload(payload: dict) -> str:
@@ -1722,7 +2047,10 @@ def camera_status() -> dict:
         "usb_scan_cmd_available": usb_scan_available(),
         "qr_decode_cmd": QR_DECODE_CMD,
         "qr_decode_cmd_available": qr_decode_available(),
+        "pyzbar_available": pyzbar_decode is not None,
         "resolution": {"width": CAMERA_WIDTH, "height": CAMERA_HEIGHT},
+        "usb_preview_resolution": {"width": USB_PREVIEW_WIDTH, "height": USB_PREVIEW_HEIGHT},
+        "usb_scan_resolution": {"width": USB_SCAN_WIDTH, "height": USB_SCAN_HEIGHT},
     }
 
 
@@ -1730,6 +2058,32 @@ def camera_status() -> dict:
 def camera_capture() -> Response:
     image = capture_camera_jpeg()
     return Response(content=image, media_type="image/jpeg")
+
+
+@app.get("/camera/usb/preview/status")
+def usb_camera_preview_status() -> JSONResponse:
+    try:
+        device = resolve_usb_camera_device("CAMERA_PREVIEW_FAILED")
+        payload = {
+            "ok": True,
+            "message": "USB camera preview is ready.",
+            "device": device,
+            "preview_url": "/camera/usb/preview.jpg",
+            "resolution": {"width": USB_PREVIEW_WIDTH, "height": USB_PREVIEW_HEIGHT},
+            "interval_ms": USB_PREVIEW_INTERVAL_MS,
+        }
+        logger.info("USB preview start result: ready on %s", device)
+        return JSONResponse(payload)
+    except HTTPException as exc:
+        payload = error_payload_from_detail(exc.detail, default_code="CAMERA_PREVIEW_FAILED")
+        logger.warning("USB preview start failed: %s", payload.get("technical") or payload.get("message"))
+        return JSONResponse(payload, status_code=exc.status_code)
+
+
+@app.get("/camera/usb/preview.jpg")
+def usb_camera_preview_image() -> Response:
+    capture = capture_usb_camera_frame("preview")
+    return Response(content=capture.image_bytes, media_type="image/jpeg", headers={"Cache-Control": "no-store, max-age=0"})
 
 
 @app.get("/time")
@@ -2289,7 +2643,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         ]
     )
     inventory_notice = (
-        f"USB scan is ready with {USB_SCAN_CMD}."
+        f"USB scan preview is ready with {USB_SCAN_CMD}. Open the scanner to align the QR before capture."
         if usb_scan_available() and qr_decode_available()
         else f"USB scan unavailable. {USB_SCAN_CMD}: {'ok' if usb_scan_available() else 'missing'}, {QR_DECODE_CMD}: {'ok' if qr_decode_available() else 'missing'}."
     )
@@ -2327,7 +2681,13 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
     }
 
 
-def ui_redirect_url(bag_id: str = "", notice: str = "", error: str = "", edit_item_id: str = "") -> str:
+def ui_redirect_url(
+    bag_id: str = "",
+    notice: str = "",
+    error: str = "",
+    edit_item_id: str = "",
+    open_scan: bool = False,
+) -> str:
     params: List[str] = []
     if bag_id:
         params.append(f"bag={quote(bag_id)}")
@@ -2337,6 +2697,8 @@ def ui_redirect_url(bag_id: str = "", notice: str = "", error: str = "", edit_it
         params.append(f"notice={quote(notice)}")
     if error:
         params.append(f"error={quote(error)}")
+    if open_scan:
+        params.append("scan=1")
     return "/" if not params else "/?" + "&".join(params)
 
 
@@ -2412,6 +2774,28 @@ def ui_revoke_tokens(request: Request) -> RedirectResponse:
     return RedirectResponse(ui_redirect_url(notice="All phone access was revoked."), status_code=303)
 
 
+@app.post("/camera/usb/scan")
+async def usb_camera_scan(request: Request) -> JSONResponse:
+    form = await read_ui_form(request)
+    requested_bag_id = str(form.get("bag_id") or "").strip()
+    try:
+        with db_conn() as conn:
+            payload = perform_usb_scan_and_save(conn, requested_bag_id=requested_bag_id)
+            conn.commit()
+        return JSONResponse(payload)
+    except HTTPException as exc:
+        payload = error_payload_from_detail(exc.detail)
+        return JSONResponse(payload, status_code=exc.status_code)
+    except Exception as exc:
+        logger.exception("USB camera scan failed unexpectedly")
+        payload = structured_error_detail(
+            "SCAN_FAILED",
+            "USB camera scan failed unexpectedly.",
+            technical=str(exc),
+        )
+        return JSONResponse(payload, status_code=500)
+
+
 @app.post("/ui/items/save")
 async def ui_save_item(request: Request) -> RedirectResponse:
     try:
@@ -2450,36 +2834,29 @@ async def ui_save_item(request: Request) -> RedirectResponse:
 @app.post("/ui/items/scan")
 async def ui_scan_item(request: Request) -> RedirectResponse:
     try:
-        await read_ui_form(request)
-        parsed = parse_item_qr_content(scan_qr_from_usb_camera())
-        payload = ItemWriteRequest(
-            category_id=category_id_for_name(parsed.category),
-            name=parsed.name,
-            quantity=1,
-            unit=parsed.unit,
-            packed_status=False,
-            essential=False,
-            expiry_date=parsed.expiry_date,
-            minimum_quantity=0,
-            condition_status="good",
-            notes="Added from QR scan",
-        )
+        form = await read_ui_form(request)
+        requested_bag_id = str(form.get("bag_id") or "").strip()
         with db_conn() as conn:
-            bag_row = canonical_ui_bag_row(conn)
-            bag_id = bag_row["bag_id"]
-            merge_or_write_item_record(conn, bag_id, payload)
+            payload = perform_usb_scan_and_save(conn, requested_bag_id=requested_bag_id)
+            bag_id = str(payload["bag_id"])
             conn.commit()
         return RedirectResponse(
-            ui_redirect_url(bag_id=bag_id, notice=f"Scanned {parsed.name} into inventory."),
+            ui_redirect_url(bag_id=bag_id, notice=str(payload["message"])),
             status_code=303,
         )
     except HTTPException as exc:
-        bag_id = str(locals().get("bag_id") or "")
-        return RedirectResponse(ui_redirect_url(bag_id=bag_id, error=str(exc.detail)), status_code=303)
-    except Exception as exc:
+        payload = error_payload_from_detail(exc.detail)
         bag_id = str(locals().get("bag_id") or "")
         return RedirectResponse(
-            ui_redirect_url(bag_id=bag_id, error=unexpected_ui_error_message("USB camera scan", exc)),
+            ui_redirect_url(bag_id=bag_id, error=ui_message_for_error_payload(payload), open_scan=True),
+            status_code=303,
+        )
+    except Exception as exc:
+        logger.exception("USB camera scan fallback route failed unexpectedly")
+        bag_id = str(locals().get("bag_id") or "")
+        payload = structured_error_detail("SCAN_FAILED", "USB camera scan failed unexpectedly.", technical=str(exc))
+        return RedirectResponse(
+            ui_redirect_url(bag_id=bag_id, error=ui_message_for_error_payload(payload), open_scan=True),
             status_code=303,
         )
 
@@ -2524,6 +2901,7 @@ def home(request: Request) -> HTMLResponse:
     category_rows = view_model["category_rows"]
     notice = request.query_params.get("notice", "").strip()
     error = request.query_params.get("error", "").strip()
+    open_scan = request.query_params.get("scan", "").strip() == "1"
     admin_query = f"?token={ADMIN_TOKEN}" if ADMIN_TOKEN else ""
     category_options = "".join(
         [
@@ -2902,11 +3280,112 @@ def home(request: Request) -> HTMLResponse:
       color: var(--muted);
       padding: 8px 0 4px;
     }}
+    .hidden {{
+      display: none !important;
+    }}
     .check-row.ok strong {{
       color: var(--accent);
     }}
     .check-row.warn strong {{
       color: var(--warn);
+    }}
+    body.modal-open {{
+      overflow: hidden;
+    }}
+    .scan-modal {{
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(20, 29, 24, 0.68);
+      backdrop-filter: blur(4px);
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .scan-dialog {{
+      width: min(860px, 100%);
+      max-height: calc(100vh - 32px);
+      overflow-y: auto;
+      margin: 0;
+    }}
+    .scan-preview-shell {{
+      display: grid;
+      gap: 16px;
+      margin-top: 12px;
+    }}
+    .scan-preview-frame {{
+      position: relative;
+      min-height: 260px;
+      border-radius: 20px;
+      border: 1px solid rgba(216, 204, 180, 0.9);
+      background: #111915;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .scan-preview-frame img {{
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      background: #111915;
+    }}
+    .scan-preview-placeholder {{
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      text-align: center;
+      color: #f8f4ea;
+      background: linear-gradient(180deg, rgba(17, 25, 21, 0.85), rgba(17, 25, 21, 0.92));
+    }}
+    .scan-status-card {{
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fffdf7;
+      padding: 16px;
+    }}
+    .scan-status {{
+      font-weight: 700;
+      line-height: 1.45;
+      margin-top: 10px;
+    }}
+    .scan-status.ok {{
+      color: var(--accent);
+    }}
+    .scan-status.warn {{
+      color: var(--warn);
+    }}
+    .scan-status.error {{
+      color: var(--danger);
+    }}
+    .scan-guidance-list {{
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }}
+    .scan-tip {{
+      border-radius: 14px;
+      padding: 10px 12px;
+      background: #f2ede3;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      line-height: 1.45;
+    }}
+    .scan-result-card {{
+      border-radius: 16px;
+      border: 1px solid rgba(54, 95, 76, 0.18);
+      background: var(--accent-soft);
+      color: var(--ink);
+      padding: 14px;
+      margin-top: 14px;
+    }}
+    .scan-result-card strong {{
+      color: var(--accent);
     }}
     @media (min-width: 720px) {{
       .qr-wrap {{
@@ -2918,10 +3397,13 @@ def home(request: Request) -> HTMLResponse:
       .field-grid.settings-grid {{
         grid-template-columns: 1fr auto;
       }}
+      .scan-preview-shell {{
+        grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+      }}
     }}
   </style>
 </head>
-<body data-state-version="{escape(view_model['state_version'])}">
+<body data-state-version="{escape(view_model['state_version'])}" data-open-scan="{'1' if open_scan else '0'}">
   <main>
     <section class="hero">
       <div class="hero-grid">
@@ -2945,8 +3427,8 @@ def home(request: Request) -> HTMLResponse:
       {view_model['summary_html']}
     </section>
 
-    {f'<div class="banner notice">{escape(notice)}</div>' if notice else ''}
-    {f'<div class="banner error">{escape(error)}</div>' if error else ''}
+    <div class="banner notice {'hidden' if not notice else ''}" id="page-notice">{escape(notice)}</div>
+    <div class="banner error {'hidden' if not error else ''}" id="page-error">{escape(error)}</div>
 
     <section class="panel">
       <div class="panel-head">
@@ -3026,11 +3508,8 @@ def home(request: Request) -> HTMLResponse:
         <textarea name="notes" placeholder="Notes" style="margin-top: 12px;">{escape(edit_item.notes if edit_item else '')}</textarea>
         <div class="button-row">
           <button type="submit">{'Update inventory batch' if edit_item else 'Manual Add'}</button>
+          <button type="button" class="secondary" id="scan-open-button">Scan with USB camera</button>
         </div>
-      </form>
-      <form method="post" action="/ui/items/scan" class="inline">
-        <input type="hidden" name="bag_id" value="{escape(bag.bag_id)}">
-        <button type="submit" class="secondary">Scan with USB camera</button>
       </form>
       <div id="inventory-groups">{view_model['inventory_groups_html']}</div>
     </section>
@@ -3058,11 +3537,168 @@ def home(request: Request) -> HTMLResponse:
       </div>
       {checklist_rows}
     </section>
+
+    <div class="scan-modal hidden" id="scan-modal" aria-hidden="true">
+      <section class="panel scan-dialog" aria-label="USB QR scanner">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">USB Camera Scanner</div>
+            <div class="panel-note">Line up the item QR in the preview, then capture when the code looks sharp and fills more of the frame.</div>
+          </div>
+          <button type="button" class="secondary" id="scan-close-button">Close</button>
+        </div>
+        <div class="scan-preview-shell">
+          <div class="scan-preview-frame">
+            <img id="scan-preview-image" class="hidden" alt="USB camera preview">
+            <div class="scan-preview-placeholder" id="scan-preview-placeholder">Preview will appear here when the USB camera is ready.</div>
+          </div>
+          <div class="scan-status-card">
+            <div class="pair-code-label">Scan status</div>
+            <div class="scan-status warn" id="scan-status">Open the scanner to start the preview.</div>
+            <div class="scan-guidance-list" id="scan-guidance-list">
+              <div class="scan-tip">Move the QR closer so it fills more of the frame.</div>
+              <div class="scan-tip">Keep the QR flat, steady, and in even lighting.</div>
+              <div class="scan-tip">Use Capture and scan QR after the preview looks sharp.</div>
+            </div>
+            <div class="scan-result-card hidden" id="scan-result-card">
+              <div class="row-title">Last scan</div>
+              <div class="row-subtitle" id="scan-result-summary"></div>
+            </div>
+          </div>
+        </div>
+        <form id="scan-capture-form" style="margin-top: 14px;">
+          <input type="hidden" name="bag_id" value="{escape(bag.bag_id)}">
+          <div class="button-row">
+            <button type="submit" id="scan-capture-button">Capture and scan QR</button>
+            <button type="button" class="secondary" id="scan-refresh-button">Refresh preview</button>
+          </div>
+        </form>
+      </section>
+    </div>
   </main>
   <script>
     (() => {{
       const refreshIntervalMs = {UI_REFRESH_INTERVAL_MS};
+      const previewFallbackIntervalMs = {USB_PREVIEW_INTERVAL_MS};
       let lastStateVersion = document.body.dataset.stateVersion || "";
+      let previewTimer = 0;
+      let previewLoading = false;
+      let scanBusy = false;
+
+      const pageNotice = document.getElementById("page-notice");
+      const pageError = document.getElementById("page-error");
+      const scanModal = document.getElementById("scan-modal");
+      const scanOpenButton = document.getElementById("scan-open-button");
+      const scanCloseButton = document.getElementById("scan-close-button");
+      const scanRefreshButton = document.getElementById("scan-refresh-button");
+      const scanCaptureForm = document.getElementById("scan-capture-form");
+      const scanCaptureButton = document.getElementById("scan-capture-button");
+      const scanPreviewImage = document.getElementById("scan-preview-image");
+      const scanPreviewPlaceholder = document.getElementById("scan-preview-placeholder");
+      const scanStatus = document.getElementById("scan-status");
+      const scanGuidanceList = document.getElementById("scan-guidance-list");
+      const scanResultCard = document.getElementById("scan-result-card");
+      const scanResultSummary = document.getElementById("scan-result-summary");
+      const scanGuidanceFallback = {{
+        CAMERA_PREVIEW_FAILED: [
+          "Check the USB camera connection and make sure another app is not using it.",
+          "Confirm the Raspberry Pi user has camera and video permissions.",
+        ],
+        CAMERA_CAPTURE_FAILED: [
+          "Hold the QR steady and make sure the camera preview is visible before capturing.",
+          "Try better lighting and keep the QR flat in front of the lens.",
+        ],
+        NO_QR_DETECTED: [
+          "Move the QR closer so it fills more of the frame.",
+          "Hold the QR steady and reduce glare or shadows.",
+          "Use Refresh preview if the image looks blurry.",
+        ],
+        INVALID_QR_CONTENT: [
+          "Use a GO BAG item QR in the format Item/Unit/Category/YYYY-MM-DD.",
+          "Add the item manually if this QR belongs to a different workflow.",
+        ],
+        ITEM_CREATE_FAILED: [
+          "Check the QR content and try the scan again.",
+          "Add the item manually if the same QR keeps failing.",
+        ],
+        DATABASE_SAVE_FAILED: [
+          "Check that the Raspberry Pi storage is writable and has free space.",
+          "Retry the scan after restarting the GO BAG backend if needed.",
+        ],
+        SCAN_FAILED: [
+          "Retry the scan and keep the QR centered in the preview.",
+          "If the issue continues, inspect the backend logs for USB camera details.",
+        ],
+      }};
+
+      function escapeHtml(value) {{
+        return (value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }}
+
+      function setBanner(kind, text) {{
+        const target = kind === "notice" ? pageNotice : pageError;
+        const other = kind === "notice" ? pageError : pageNotice;
+        if (target) {{
+          if (text) {{
+            target.textContent = text;
+            target.classList.remove("hidden");
+          }} else {{
+            target.textContent = "";
+            target.classList.add("hidden");
+          }}
+        }}
+        if (text && other) {{
+          other.textContent = "";
+          other.classList.add("hidden");
+        }}
+      }}
+
+      function setScanStatus(message, tone = "warn") {{
+        if (!scanStatus) return;
+        scanStatus.textContent = message || "";
+        scanStatus.classList.remove("ok", "warn", "error");
+        scanStatus.classList.add(tone);
+      }}
+
+      function renderScanGuidance(guidance) {{
+        if (!scanGuidanceList) return;
+        const tips = (guidance && guidance.length ? guidance : scanGuidanceFallback.NO_QR_DETECTED);
+        scanGuidanceList.innerHTML = tips.map((tip) => `<div class="scan-tip">${{escapeHtml(tip)}}</div>`).join("");
+      }}
+
+      function hideScanResult() {{
+        if (scanResultCard) scanResultCard.classList.add("hidden");
+        if (scanResultSummary) scanResultSummary.textContent = "";
+      }}
+
+      function showScanResult(summary) {{
+        if (scanResultSummary) scanResultSummary.textContent = summary || "";
+        if (scanResultCard) scanResultCard.classList.remove("hidden");
+      }}
+
+      function setPreviewVisible(isVisible) {{
+        if (scanPreviewImage) scanPreviewImage.classList.toggle("hidden", !isVisible);
+        if (scanPreviewPlaceholder) scanPreviewPlaceholder.classList.toggle("hidden", isVisible);
+      }}
+
+      function stopPreviewLoop() {{
+        if (previewTimer) {{
+          window.clearInterval(previewTimer);
+          previewTimer = 0;
+        }}
+      }}
+
+      function startPreviewLoop(intervalMs) {{
+        stopPreviewLoop();
+        previewTimer = window.setInterval(() => {{
+          void refreshPreviewFrame();
+        }}, intervalMs || previewFallbackIntervalMs);
+      }}
 
       async function refreshDashboard() {{
         try {{
@@ -3107,7 +3743,175 @@ def home(request: Request) -> HTMLResponse:
         }}
       }}
 
+      async function refreshPreviewFrame() {{
+        if (!scanPreviewImage || !scanModal || scanModal.classList.contains("hidden") || previewLoading || scanBusy) {{
+          return;
+        }}
+        previewLoading = true;
+        scanPreviewImage.onload = () => {{
+          previewLoading = false;
+          setPreviewVisible(true);
+          if (!scanBusy) {{
+            setScanStatus("Live preview ready. Align the QR and tap Capture and scan QR.", "ok");
+          }}
+        }};
+        scanPreviewImage.onerror = () => {{
+          previewLoading = false;
+          setPreviewVisible(false);
+          setScanStatus("USB camera preview failed.", "error");
+          renderScanGuidance(scanGuidanceFallback.CAMERA_PREVIEW_FAILED);
+          setBanner("error", "USB camera preview failed. Check the camera connection and Raspberry Pi permissions.");
+        }};
+        scanPreviewImage.src = `/camera/usb/preview.jpg?t=${{Date.now()}}`;
+      }}
+
+      async function preparePreview() {{
+        setPreviewVisible(false);
+        setScanStatus("Starting USB camera preview...", "warn");
+        renderScanGuidance(scanGuidanceFallback.NO_QR_DETECTED);
+        try {{
+          const response = await fetch("/camera/usb/preview/status", {{
+            headers: {{ "Accept": "application/json" }},
+            cache: "no-store",
+          }});
+          const payload = await response.json().catch(() => ({{ ok: false, code: "CAMERA_PREVIEW_FAILED", message: "USB camera preview failed." }}));
+          if (!response.ok || payload.ok === false) {{
+            setScanStatus(payload.message || "USB camera preview failed.", "error");
+            renderScanGuidance(payload.guidance || scanGuidanceFallback.CAMERA_PREVIEW_FAILED);
+            setBanner("error", payload.message || "USB camera preview failed.");
+            return;
+          }}
+          setScanStatus(payload.message || "USB camera preview is ready.", "ok");
+          renderScanGuidance(payload.guidance || scanGuidanceFallback.NO_QR_DETECTED);
+          await refreshPreviewFrame();
+          startPreviewLoop(payload.interval_ms || previewFallbackIntervalMs);
+        }} catch (_error) {{
+          setScanStatus("USB camera preview failed.", "error");
+          renderScanGuidance(scanGuidanceFallback.CAMERA_PREVIEW_FAILED);
+          setBanner("error", "USB camera preview failed. Check the camera connection and permissions.");
+        }}
+      }}
+
+      function openScanModal() {{
+        if (!scanModal) return;
+        scanModal.classList.remove("hidden");
+        scanModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("modal-open");
+        hideScanResult();
+        void preparePreview();
+      }}
+
+      function closeScanModal() {{
+        stopPreviewLoop();
+        previewLoading = false;
+        scanBusy = false;
+        if (scanModal) {{
+          scanModal.classList.add("hidden");
+          scanModal.setAttribute("aria-hidden", "true");
+        }}
+        document.body.classList.remove("modal-open");
+        if (scanPreviewImage) {{
+          scanPreviewImage.removeAttribute("src");
+        }}
+        setPreviewVisible(false);
+        if (scanCaptureButton) {{
+          scanCaptureButton.disabled = false;
+          scanCaptureButton.textContent = "Capture and scan QR";
+        }}
+      }}
+
+      async function submitUsbScan(event) {{
+        event.preventDefault();
+        if (!scanCaptureForm || scanBusy) {{
+          return;
+        }}
+        scanBusy = true;
+        stopPreviewLoop();
+        hideScanResult();
+        if (scanCaptureButton) {{
+          scanCaptureButton.disabled = true;
+          scanCaptureButton.textContent = "Scanning...";
+        }}
+        setScanStatus("Capturing image and scanning QR...", "warn");
+        try {{
+          const response = await fetch("/camera/usb/scan", {{
+            method: "POST",
+            headers: {{ "Accept": "application/json" }},
+            body: new URLSearchParams(new FormData(scanCaptureForm)),
+            cache: "no-store",
+          }});
+          const payload = await response.json().catch(() => ({{ ok: false, code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}));
+          if (!response.ok || payload.ok === false) {{
+            setScanStatus(payload.message || "USB camera scan failed.", "error");
+            renderScanGuidance(payload.guidance || scanGuidanceFallback[payload.code] || scanGuidanceFallback.NO_QR_DETECTED);
+            setBanner("error", payload.message || "USB camera scan failed.");
+            return;
+          }}
+
+          const parsed = payload.parsed || {{}};
+          const summary = [
+            parsed.name || "Item added",
+            parsed.category || "",
+            parsed.expiry_date ? `Expires ${{parsed.expiry_date}}` : "",
+          ].filter(Boolean).join(" | ");
+
+          showScanResult(summary);
+          setScanStatus(payload.message || "QR code detected and item added.", "ok");
+          renderScanGuidance([
+            "Scan complete. You can scan another item or close this scanner.",
+            "Use Refresh preview if the next QR looks blurry or too dark.",
+          ]);
+          setBanner("notice", payload.message || "QR code detected and item added.");
+          await refreshDashboard();
+        }} catch (_error) {{
+          setScanStatus("USB camera scan failed unexpectedly.", "error");
+          renderScanGuidance(scanGuidanceFallback.SCAN_FAILED);
+          setBanner("error", "USB camera scan failed unexpectedly.");
+        }} finally {{
+          scanBusy = false;
+          if (scanCaptureButton) {{
+            scanCaptureButton.disabled = false;
+            scanCaptureButton.textContent = "Capture and scan QR";
+          }}
+          if (scanModal && !scanModal.classList.contains("hidden")) {{
+            startPreviewLoop(previewFallbackIntervalMs);
+            void refreshPreviewFrame();
+          }}
+        }}
+      }}
+
+      if (scanOpenButton) {{
+        scanOpenButton.addEventListener("click", openScanModal);
+      }}
+      if (scanCloseButton) {{
+        scanCloseButton.addEventListener("click", closeScanModal);
+      }}
+      if (scanRefreshButton) {{
+        scanRefreshButton.addEventListener("click", () => {{
+          void refreshPreviewFrame();
+        }});
+      }}
+      if (scanCaptureForm) {{
+        scanCaptureForm.addEventListener("submit", submitUsbScan);
+      }}
+      if (scanModal) {{
+        scanModal.addEventListener("click", (event) => {{
+          if (event.target === scanModal) {{
+            closeScanModal();
+          }}
+        }});
+      }}
+
+      window.addEventListener("keydown", (event) => {{
+        if (event.key === "Escape" && scanModal && !scanModal.classList.contains("hidden")) {{
+          closeScanModal();
+        }}
+      }});
+
       window.setInterval(refreshDashboard, refreshIntervalMs);
+      if (document.body.dataset.openScan === "1") {{
+        openScanModal();
+      }}
     }})();
   </script>
 </body>

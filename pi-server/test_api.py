@@ -305,6 +305,9 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn("Bag Settings", body)
         self.assertIn("Pairing QR", body)
         self.assertIn("Pair code", body)
+        self.assertIn("USB Camera Scanner", body)
+        self.assertIn("/camera/usb/preview/status", body)
+        self.assertIn("/camera/usb/scan", body)
         self.assertIn('fetch("/ui/state"', body)
         self.assertIn(".hero .panel {", body)
         self.assertIn("input::placeholder", body)
@@ -377,26 +380,132 @@ class PiServerApiTests(unittest.TestCase):
 
         with mock.patch.object(
             self.module,
-            "scan_qr_from_usb_camera",
-            return_value="Thermal Blanket/pcs/Tools & Protection/2027-01-01",
+            "perform_usb_scan_and_save",
+            return_value={
+                "ok": True,
+                "code": "SCAN_SUCCESS",
+                "message": "Scanned Thermal Blanket into inventory.",
+                "bag_id": bag_id,
+                "parsed": {
+                    "name": "Thermal Blanket",
+                    "unit": "pcs",
+                    "category": "Tools & Protection",
+                    "expiry_date": "2027-01-01",
+                },
+                "item": {
+                    "id": "item-1",
+                    "bag_id": bag_id,
+                    "category_id": "tools_protection",
+                    "name": "Thermal Blanket",
+                    "quantity": 1,
+                    "unit": "pcs",
+                    "packed_status": False,
+                    "essential": False,
+                    "expiry_date": "2027-01-01",
+                    "minimum_quantity": 0,
+                    "condition_status": "good",
+                    "notes": "Added from QR scan",
+                    "created_at": 1,
+                    "updated_at": 1,
+                },
+            },
         ):
             created = self.client.post("/ui/items/scan", data={"bag_id": bag_id}, follow_redirects=False)
         self.assertEqual(created.status_code, 303)
         self.assertIn("Scanned%20Thermal%20Blanket%20into%20inventory", created.headers["location"])
 
-        items = self.client.get(f"/bags/{bag_id}/items")
-        self.assertEqual(items.status_code, 200)
-        self.assertEqual(len(items.json()), 1)
-        self.assertEqual(items.json()[0]["name"], "Thermal Blanket")
-
         with mock.patch.object(
             self.module,
-            "scan_qr_from_usb_camera",
-            side_effect=self.module.HTTPException(status_code=503, detail="USB camera unavailable"),
+            "perform_usb_scan_and_save",
+            side_effect=self.module.HTTPException(
+                status_code=400,
+                detail=self.module.structured_error_detail(
+                    "NO_QR_DETECTED",
+                    "No QR code was detected in the captured image.",
+                ),
+            ),
         ):
             error = self.client.post("/ui/items/scan", data={"bag_id": bag_id}, follow_redirects=False)
         self.assertEqual(error.status_code, 303)
-        self.assertIn("USB%20camera%20unavailable", error.headers["location"])
+        self.assertIn("No%20QR%20code%20was%20detected%20in%20the%20captured%20image", error.headers["location"])
+        self.assertIn("scan=1", error.headers["location"])
+
+    def test_usb_preview_status_and_json_scan_return_structured_payloads(self):
+        bag_id = self.client.get("/bags").json()[0]["id"]
+
+        with mock.patch.object(self.module, "resolve_usb_camera_device", return_value="/dev/video0"):
+            preview = self.client.get("/camera/usb/preview/status")
+        self.assertEqual(preview.status_code, 200)
+        self.assertTrue(preview.json()["ok"])
+        self.assertEqual(preview.json()["device"], "/dev/video0")
+
+        with mock.patch.object(
+            self.module,
+            "perform_usb_scan_and_save",
+            return_value={
+                "ok": True,
+                "code": "SCAN_SUCCESS",
+                "message": "Scanned Water Pouch into inventory.",
+                "bag_id": bag_id,
+                "parsed": {
+                    "name": "Water Pouch",
+                    "unit": "pcs",
+                    "category": "Water & Food",
+                    "expiry_date": "2027-06-01",
+                },
+                "item": {
+                    "id": "item-2",
+                    "bag_id": bag_id,
+                    "category_id": "water_food",
+                    "name": "Water Pouch",
+                    "quantity": 1,
+                    "unit": "pcs",
+                    "packed_status": False,
+                    "essential": False,
+                    "expiry_date": "2027-06-01",
+                    "minimum_quantity": 0,
+                    "condition_status": "good",
+                    "notes": "Added from QR scan",
+                    "created_at": 1,
+                    "updated_at": 1,
+                },
+            },
+        ):
+            scan = self.client.post("/camera/usb/scan", data={"bag_id": bag_id})
+        self.assertEqual(scan.status_code, 200)
+        self.assertTrue(scan.json()["ok"])
+        self.assertEqual(scan.json()["parsed"]["name"], "Water Pouch")
+
+        with mock.patch.object(
+            self.module,
+            "resolve_usb_camera_device",
+            side_effect=self.module.HTTPException(
+                status_code=503,
+                detail=self.module.structured_error_detail(
+                    "CAMERA_PREVIEW_FAILED",
+                    "USB camera preview failed.",
+                ),
+            ),
+        ):
+            preview_error = self.client.get("/camera/usb/preview/status")
+        self.assertEqual(preview_error.status_code, 503)
+        self.assertEqual(preview_error.json()["code"], "CAMERA_PREVIEW_FAILED")
+
+        with mock.patch.object(
+            self.module,
+            "perform_usb_scan_and_save",
+            side_effect=self.module.HTTPException(
+                status_code=400,
+                detail=self.module.structured_error_detail(
+                    "INVALID_QR_CONTENT",
+                    "A QR code was found, but it is not a valid GO BAG item QR.",
+                ),
+            ),
+        ):
+            scan_error = self.client.post("/camera/usb/scan", data={"bag_id": bag_id})
+        self.assertEqual(scan_error.status_code, 400)
+        self.assertEqual(scan_error.json()["code"], "INVALID_QR_CONTENT")
+        self.assertFalse(scan_error.json()["ok"])
 
     def test_single_bag_endpoints_keep_one_local_bag_and_update_size(self):
         initial = self.client.get("/bags")
@@ -491,10 +600,11 @@ class PiServerApiTests(unittest.TestCase):
             async def form(self):
                 return {"bag_id": bag_id}
 
-        with mock.patch.object(self.module, "scan_qr_from_usb_camera", side_effect=RuntimeError("camera offline")):
+        with mock.patch.object(self.module, "perform_usb_scan_and_save", side_effect=RuntimeError("camera offline")):
             scan = asyncio.run(self.module.ui_scan_item(FakeRequest()))
         self.assertEqual(scan.status_code, 303)
         self.assertIn("USB%20camera%20scan%20failed%20unexpectedly", scan.headers["location"])
+        self.assertIn("scan=1", scan.headers["location"])
 
 
 if __name__ == "__main__":
