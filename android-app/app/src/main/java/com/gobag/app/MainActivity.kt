@@ -88,10 +88,11 @@ private fun GoBagApp() {
         runBlocking {
             container.device_state_store.initialize_phone_device_id_if_missing()
             val state = container.device_state_store.state.first()
-            val bag_id = if (state.selected_bag_id.isNotBlank()) {
-                state.selected_bag_id
-            } else {
-                container.item_repository.observe_bags().first().firstOrNull()?.bag_id.orEmpty()
+            val pairedBagIds = state.paired_bags.map { it.bag_id }
+            val bag_id = when {
+                state.selected_bag_id.isNotBlank() && state.selected_bag_id in pairedBagIds -> state.selected_bag_id
+                pairedBagIds.isNotEmpty() -> pairedBagIds.first()
+                else -> ""
             }
             StartupState(
                 phone_device_id = state.phone_device_id,
@@ -107,11 +108,13 @@ private fun GoBagApp() {
         ) { state, bags ->
             state to bags
         }.collect { (state, bags) ->
-            // Keep one valid primary bag shared across every screen.
+            val pairedBagIds = state.paired_bags.map { it.bag_id }.toSet()
+            val pairedBags = bags.filter { it.bag_id in pairedBagIds }
+            // Keep one valid paired primary bag shared across every screen.
             val resolvedBagId = when {
-                bags.isEmpty() -> ""
-                state.selected_bag_id.isNotBlank() && bags.any { it.bag_id == state.selected_bag_id } -> state.selected_bag_id
-                else -> bags.first().bag_id
+                pairedBags.isEmpty() -> ""
+                state.selected_bag_id.isNotBlank() && pairedBags.any { it.bag_id == state.selected_bag_id } -> state.selected_bag_id
+                else -> pairedBags.first().bag_id
             }
             if (resolvedBagId != state.selected_bag_id) {
                 container.sync_repository.set_selected_bag_id(resolvedBagId)

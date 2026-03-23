@@ -61,7 +61,7 @@ fun PairingScreen(
     val state by view_model.ui_state.collectAsState()
     val snackbarHost = remember { SnackbarHostState() }
     val context = LocalContext.current
-    val isPaired = state.auth_status == "Authenticated"
+    val isPaired = state.paired_bag_count > 0
     val hasSavedEndpoint = state.endpoint.isNotBlank()
 
     val launcher = rememberLauncherForActivityResult(ScanContract()) { result ->
@@ -133,7 +133,7 @@ fun PairingScreen(
                     )
                     StatusPill(
                         label = when {
-                            isPaired -> "Phone paired and authenticated"
+                            isPaired -> "${state.paired_bag_count} bag(s) paired"
                             hasSavedEndpoint -> "Address saved, pairing still required"
                             else -> "Waiting for first secure pairing"
                         },
@@ -206,7 +206,7 @@ fun PairingScreen(
                                     } else if (hasSavedEndpoint) {
                                         state.pairing_detail
                                     } else {
-                                        "Test the Raspberry Pi address, then scan the GO BAG QR code to pair this phone."
+                                        "Test the Raspberry Pi address, then scan a bag-specific GO BAG QR code to pair it to this phone."
                                     },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -258,7 +258,7 @@ fun PairingScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "Address testing does not pair or authenticate this phone. QR pairing is still required for sync.",
+                            "Address testing does not pair a bag. Bag QR pairing is still required before a bag becomes selectable or syncable.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -309,7 +309,7 @@ fun PairingScreen(
                     enabled = !state.running,
                     shape = RoundedCornerShape(24.dp)
                 ) {
-                    Text(if (state.running) "Pairing..." else "Pair and Download Inventory")
+                    Text(if (state.running) "Pairing..." else "Scan Bag QR And Download Inventory")
                 }
             }
             if (isPaired) {
@@ -321,7 +321,7 @@ fun PairingScreen(
                             .height(60.dp),
                         shape = RoundedCornerShape(22.dp)
                     ) {
-                        Text("Forget Raspberry Pi", color = MaterialTheme.colorScheme.error)
+                        Text("Remove Selected Bag", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }

@@ -41,7 +41,10 @@ class HomeViewModel(
     sync_repository: SyncRepository
 ) : ViewModel() {
     private val deviceState = sync_repository.observe_device_state()
-    private val bags = item_repository.observe_bags()
+    private val bags = combine(item_repository.observe_bags(), deviceState) { bagList, state ->
+        val pairedBagIds = state.paired_bags.map { it.bag_id }.toSet()
+        bagList.filter { it.bag_id in pairedBagIds }
+    }
     private val selectedBagId = combine(deviceState, bags) { state, bagList ->
         when {
             state.selected_bag_id.isNotBlank() && bagList.any { it.bag_id == state.selected_bag_id } -> state.selected_bag_id

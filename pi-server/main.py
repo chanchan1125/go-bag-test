@@ -1,5 +1,6 @@
 import base64
 import calendar
+import io
 import json
 import os
 import platform
@@ -15,15 +16,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from html import escape
 from typing import Dict, List, Literal, Optional, Union
+from urllib.parse import quote
 
 import qrcode
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 DEFAULT_DATA_DIR = "/var/lib/gobag"
-DATA_DIR = os.getenv("GOBAG_DATA_DIR", DEFAULT_DATA_DIR)
-DB_PATH = os.path.join(DATA_DIR, "gobag.db")
 DEVICE_NAME = os.getenv("GOBAG_DEVICE_NAME", "GO BAG Raspberry Pi")
 HOST = os.getenv("GOBAG_HOST", "0.0.0.0")
 PORT = int(os.getenv("GOBAG_PORT", "8080"))
@@ -37,6 +37,12 @@ CAMERA_WIDTH = int(os.getenv("GOBAG_CAMERA_WIDTH", "1280"))
 CAMERA_HEIGHT = int(os.getenv("GOBAG_CAMERA_HEIGHT", "720"))
 CAMERA_WARMUP_MS = int(os.getenv("GOBAG_CAMERA_WARMUP_MS", "900"))
 CAMERA_TIMEOUT_S = float(os.getenv("GOBAG_CAMERA_TIMEOUT_S", "12"))
+USB_SCAN_CMD = os.getenv("GOBAG_USB_SCAN_CMD", "fswebcam")
+USB_SCAN_DEVICE = os.getenv("GOBAG_USB_CAMERA_DEVICE", "").strip()
+USB_SCAN_WIDTH = int(os.getenv("GOBAG_USB_SCAN_WIDTH", "1280"))
+USB_SCAN_HEIGHT = int(os.getenv("GOBAG_USB_SCAN_HEIGHT", "720"))
+USB_SCAN_TIMEOUT_S = float(os.getenv("GOBAG_USB_SCAN_TIMEOUT_S", "12"))
+QR_DECODE_CMD = os.getenv("GOBAG_QR_DECODE_CMD", "zbarimg")
 CHECKLIST_CATEGORIES = [
     "Water & Food",
     "Medical & Health",
@@ -156,7 +162,7 @@ class BagRecord(BaseModel):
 
 class BagCreateRequest(BaseModel):
     name: str
-    bag_type: str = "custom"
+    bag_type: str = "44l"
 
 
 class BagUpdateRequest(BaseModel):
@@ -234,6 +240,30 @@ class DiffResult:
     delete_vs_edit: bool
 
 
+@dataclass
+class ParsedItemQr:
+    name: str
+    unit: str
+    category: str
+    expiry_date: str
+
+
+@dataclass
+class InventoryBatchView:
+    item: ItemRecord
+    expiry_label: str
+
+
+@dataclass
+class InventoryGroupView:
+    bag_id: str
+    name: str
+    category: str
+    unit: str
+    total_quantity: float
+    batches: List[InventoryBatchView]
+
+
 def now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -246,8 +276,10 @@ def format_time_ms(value: int) -> str:
 
 @contextmanager
 def db_conn() -> sqlite3.Connection:
-    os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    data_dir = os.getenv("GOBAG_DATA_DIR", DEFAULT_DATA_DIR)
+    db_path = os.path.join(data_dir, "gobag.db")
+    os.makedirs(data_dir, exist_ok=True)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -291,11 +323,13 @@ def iso_date_from_epoch_ms(value: Optional[int]) -> Optional[str]:
 
 
 def bag_type_for_template(template_id: str, size_liters: int) -> str:
+    if template_id == "template_25l":
+        return "25l"
     if template_id == "template_44l":
         return "44l"
     if template_id == "template_66l":
         return "66l"
-    return f"{size_liters}l" if size_liters > 0 else "custom"
+    return f"{size_liters}l" if size_liters in {25, 44, 66} else "44l"
 
 
 def row_to_bag(row: sqlite3.Row) -> Bag:
@@ -753,26 +787,29 @@ def init_db() -> None:
         conn.executemany(
             "INSERT INTO templates(template_id, category, name, recommended_qty, unit, priority, tips) VALUES(?, ?, ?, ?, ?, ?, ?)",
             [
+                ("template_25l", "Water & Food", "Drinking Water", 2, "L", "critical", "Rotate every 6 months."),
+                ("template_25l", "Medical & Health", "First Aid Kit", 1, "set", "important", "Keep medications current."),
                 ("template_44l", "Water & Food", "Drinking Water", 3, "L", "critical", "Rotate every 6 months."),
                 ("template_44l", "Water & Food", "Energy Bars", 6, "pcs", "critical", "Heat stable bars."),
                 ("template_66l", "Water & Food", "Drinking Water", 6, "L", "critical", "Use sealed bottles."),
                 ("template_66l", "Medical & Health", "First Aid Kit", 1, "set", "critical", "Include meds."),
-                ("template_custom", "Tools & Protection", "Multi Tool", 1, "pcs", "important", "Rust resistant."),
+                ("template_44l", "Tools & Protection", "Multi Tool", 1, "pcs", "important", "Rust resistant."),
             ],
         )
         if conn.execute("SELECT COUNT(*) AS c FROM bags").fetchone()["c"] == 0:
             t = now_ms()
             device = get_meta(conn, "pi_device_id") or "pi"
-            for name, liters, template_id in [("44L Bag", 44, "template_44l"), ("66L Bag", 66, "template_66l"), ("Custom Bag", 50, "template_custom")]:
+            for name, liters, template_id in [("25L Bag", 25, "template_25l"), ("44L Bag", 44, "template_44l"), ("66L Bag", 66, "template_66l")]:
                 upsert_bag(conn, Bag(bag_id=str(uuid.uuid4()), name=name, size_liters=liters, template_id=template_id, updated_at=t, updated_by=device))
         conn.execute(
             """
             UPDATE bags
             SET
               bag_type = COALESCE(bag_type, CASE
+                WHEN template_id = 'template_25l' THEN '25l'
                 WHEN template_id = 'template_44l' THEN '44l'
                 WHEN template_id = 'template_66l' THEN '66l'
-                ELSE 'custom'
+                ELSE '44l'
               END),
               readiness_status = COALESCE(readiness_status, 'incomplete'),
               created_at = COALESCE(created_at, updated_at)
@@ -890,6 +927,244 @@ def compute_alerts(conn: sqlite3.Connection, current_time_ms: int) -> List[Alert
     return alerts
 
 
+def size_liters_for_bag_type(bag_type: str) -> int:
+    normalized = bag_type.strip().lower()
+    if normalized == "25l":
+        return 25
+    if normalized == "44l":
+        return 44
+    if normalized == "66l":
+        return 66
+    raise HTTPException(status_code=400, detail="Bag size must be 25L, 44L, or 66L")
+
+
+def template_id_for_size(size_liters: int) -> str:
+    if size_liters == 25:
+        return "template_25l"
+    if size_liters == 44:
+        return "template_44l"
+    if size_liters == 66:
+        return "template_66l"
+    raise HTTPException(status_code=400, detail="Bag size must be 25L, 44L, or 66L")
+
+
+def normalized_identity_key(name: str, unit: str, category: str) -> str:
+    return "|".join(
+        [
+            " ".join((name or "").strip().lower().split()),
+            " ".join((unit or "").strip().lower().split()),
+            normalize_category(category),
+        ]
+    )
+
+
+def merged_notes(existing: str, incoming: str) -> str:
+    if not incoming.strip():
+        return existing.strip()
+    if not existing.strip():
+        return incoming.strip()
+    if incoming.strip().lower() in existing.strip().lower():
+        return existing.strip()
+    return f"{existing.strip()} | {incoming.strip()}"
+
+
+def find_matching_item_rows(
+    conn: sqlite3.Connection,
+    bag_id: str,
+    name: str,
+    unit: str,
+    category_name: str,
+    exclude_item_id: Optional[str] = None,
+) -> List[sqlite3.Row]:
+    rows = conn.execute(
+        "SELECT * FROM items WHERE bag_id = ? AND deleted = 0 ORDER BY updated_at DESC",
+        (bag_id,),
+    ).fetchall()
+    key = normalized_identity_key(name, unit, category_name)
+    matches = [
+        row
+        for row in rows
+        if row["id"] != exclude_item_id and normalized_identity_key(row["name"], row["unit"], row["category"]) == key
+    ]
+    return matches
+
+
+def merge_or_write_item_record(
+    conn: sqlite3.Connection,
+    bag_id: str,
+    payload: ItemWriteRequest,
+    item_id: Optional[str] = None,
+) -> ItemRecord:
+    get_bag_row_or_404(conn, bag_id)
+    category_name = get_category_name(conn, payload.category_id)
+    expiry_date_ms = parse_yyyy_mm_dd_to_epoch_ms(payload.expiry_date) if payload.expiry_date else None
+    if payload.expiry_date and expiry_date_ms is None:
+        raise HTTPException(status_code=400, detail="Expiry date must use YYYY-MM-DD")
+
+    matches = find_matching_item_rows(
+        conn,
+        bag_id=bag_id,
+        name=payload.name.strip(),
+        unit=payload.unit.strip(),
+        category_name=category_name,
+        exclude_item_id=item_id,
+    )
+    exact_match = next(
+        (
+            row
+            for row in matches
+            if (row["expiry_date_ms"] if row["expiry_date_ms"] is not None else None) == expiry_date_ms
+        ),
+        None,
+    )
+    target_item_id = item_id or str(uuid.uuid4())
+    if exact_match is not None:
+        target_item_id = exact_match["id"]
+        payload = ItemWriteRequest(
+            category_id=payload.category_id,
+            name=payload.name.strip(),
+            quantity=float(exact_match["quantity"]) + payload.quantity,
+            unit=payload.unit.strip(),
+            packed_status=bool(exact_match["packed_status"]) or payload.packed_status,
+            essential=bool(exact_match["essential"]) or payload.essential,
+            expiry_date=payload.expiry_date,
+            minimum_quantity=max(float(exact_match["minimum_quantity"] or 0), payload.minimum_quantity),
+            condition_status=payload.condition_status.strip() or exact_match["condition_status"] or "good",
+            notes=merged_notes(exact_match["notes"] or "", payload.notes or ""),
+        )
+
+    written = write_item_record(conn, target_item_id, bag_id, payload)
+    if item_id and exact_match is not None and item_id != exact_match["id"]:
+        conn.execute(
+            """
+            UPDATE items
+            SET deleted = 1, updated_at = ?, updated_by = ?
+            WHERE id = ?
+            """,
+            (now_ms(), get_meta(conn, "pi_device_id") or "pi", item_id),
+        )
+    return written
+
+
+def parse_item_qr_content(raw: str) -> ParsedItemQr:
+    value = raw.strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="Scanned QR code was empty")
+    parts = [part.strip() for part in value.split("/")]
+    if len(parts) != 4 or any(not part for part in parts):
+        raise HTTPException(status_code=400, detail="QR format must be Item/Unit/Category/YYYY-MM-DD")
+    name, unit, category, expiry_date = parts
+    if parse_yyyy_mm_dd_to_epoch_ms(expiry_date) is None:
+        raise HTTPException(status_code=400, detail="QR expiration date must use YYYY-MM-DD")
+    return ParsedItemQr(
+        name=name,
+        unit=unit,
+        category=normalize_category(category),
+        expiry_date=expiry_date,
+    )
+
+
+def usb_scan_available() -> bool:
+    return shutil.which(USB_SCAN_CMD) is not None
+
+
+def qr_decode_available() -> bool:
+    return shutil.which(QR_DECODE_CMD) is not None
+
+
+def scan_qr_from_usb_camera() -> str:
+    if not usb_scan_available():
+        raise HTTPException(status_code=503, detail=f"USB scan command not found: {USB_SCAN_CMD}")
+    if not qr_decode_available():
+        raise HTTPException(status_code=503, detail=f"QR decode command not found: {QR_DECODE_CMD}")
+
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        out_path = tmp.name
+
+    capture_cmd = [
+        USB_SCAN_CMD,
+        "-r",
+        f"{USB_SCAN_WIDTH}x{USB_SCAN_HEIGHT}",
+        "--no-banner",
+    ]
+    if USB_SCAN_DEVICE:
+        capture_cmd.extend(["-d", USB_SCAN_DEVICE])
+    capture_cmd.append(out_path)
+
+    try:
+        capture = subprocess.run(
+            capture_cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=USB_SCAN_TIMEOUT_S,
+        )
+        if capture.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"fswebcam failed ({capture.returncode}): {(capture.stderr or capture.stdout).strip()[:200]}",
+            )
+
+        decode = subprocess.run(
+            [QR_DECODE_CMD, "--quiet", "--raw", out_path],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=USB_SCAN_TIMEOUT_S,
+        )
+        if decode.returncode != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"QR scan failed: {(decode.stderr or decode.stdout).strip()[:200] or 'No QR code detected'}",
+            )
+        content = decode.stdout.strip().splitlines()[0].strip() if decode.stdout.strip() else ""
+        if not content:
+            raise HTTPException(status_code=400, detail="QR scan returned no readable content")
+        return content
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="USB camera scan timed out")
+    finally:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+
+
+def qr_data_uri_for_payload(payload: dict) -> str:
+    image = qrcode.make(json.dumps(payload))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def build_inventory_groups(item_rows: List[sqlite3.Row]) -> List[InventoryGroupView]:
+    grouped: Dict[str, List[sqlite3.Row]] = {}
+    for row in item_rows:
+        grouped.setdefault(normalized_identity_key(row["name"], row["unit"], row["category"]), []).append(row)
+
+    groups: List[InventoryGroupView] = []
+    for rows in grouped.values():
+        ordered = [row_to_item_record(row) for row in sorted(rows, key=lambda item: (item["expiry_date_ms"] or 2**62, item["name"].lower()))]
+        first = ordered[0]
+        groups.append(
+            InventoryGroupView(
+                bag_id=first.bag_id,
+                name=first.name,
+                category=normalize_category(rows[0]["category"]),
+                unit=first.unit,
+                total_quantity=sum(item.quantity for item in ordered),
+                batches=[
+                    InventoryBatchView(
+                        item=item,
+                        expiry_label=item.expiry_date or "No expiration",
+                    )
+                    for item in ordered
+                ],
+            )
+        )
+    return sorted(groups, key=lambda group: (group.category, group.name.lower()))
+
+
 def get_bag_row_or_404(conn: sqlite3.Connection, bag_id: str) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM bags WHERE bag_id = ?", (bag_id,)).fetchone()
     if not row:
@@ -913,8 +1188,9 @@ def get_category_name(conn: sqlite3.Connection, category_id: str) -> str:
 
 def write_bag_record(conn: sqlite3.Connection, bag_id: str, payload: Union[BagCreateRequest, BagUpdateRequest]) -> BagRecord:
     current_time = now_ms()
-    bag_type = payload.bag_type.strip().lower() or "custom"
-    template_id = "template_44l" if bag_type == "44l" else "template_66l" if bag_type == "66l" else "template_custom"
+    bag_type = payload.bag_type.strip().lower() or "44l"
+    size_liters = size_liters_for_bag_type(bag_type)
+    template_id = template_id_for_size(size_liters)
     existing = conn.execute("SELECT created_at FROM bags WHERE bag_id = ?", (bag_id,)).fetchone()
     created_at = existing["created_at"] if existing and existing["created_at"] else current_time
     conn.execute(
@@ -933,7 +1209,7 @@ def write_bag_record(conn: sqlite3.Connection, bag_id: str, payload: Union[BagCr
         (
             bag_id,
             payload.name.strip(),
-            44 if bag_type == "44l" else 66 if bag_type == "66l" else 50,
+            size_liters,
             template_id,
             current_time,
             get_meta(conn, "pi_device_id") or "pi",
@@ -1020,7 +1296,7 @@ def get_device_status_payload(conn: sqlite3.Connection) -> DeviceStatusResponse:
         pi_device_id=get_meta(conn, "pi_device_id") or "",
         pair_code=pair["code"],
         paired_devices=conn.execute("SELECT COUNT(*) AS c FROM tokens WHERE revoked = 0").fetchone()["c"],
-        database_path=DB_PATH,
+        database_path=os.path.join(os.getenv("GOBAG_DATA_DIR", DEFAULT_DATA_DIR), "gobag.db"),
     )
 
 
@@ -1088,7 +1364,13 @@ def startup() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "camera_enabled": CAMERA_ENABLED, "camera_cmd_available": camera_command_available()}
+    return {
+        "status": "ok",
+        "camera_enabled": CAMERA_ENABLED,
+        "camera_cmd_available": camera_command_available(),
+        "usb_scan_cmd_available": usb_scan_available(),
+        "qr_decode_cmd_available": qr_decode_available(),
+    }
 
 
 @app.get("/system/info")
@@ -1101,6 +1383,10 @@ def system_info() -> dict:
         "camera_enabled": CAMERA_ENABLED,
         "camera_cmd": CAMERA_CMD,
         "camera_cmd_available": camera_command_available(),
+        "usb_scan_cmd": USB_SCAN_CMD,
+        "usb_scan_cmd_available": usb_scan_available(),
+        "qr_decode_cmd": QR_DECODE_CMD,
+        "qr_decode_cmd_available": qr_decode_available(),
     }
 
 
@@ -1110,6 +1396,10 @@ def camera_status() -> dict:
         "camera_enabled": CAMERA_ENABLED,
         "camera_cmd": CAMERA_CMD,
         "camera_cmd_available": camera_command_available(),
+        "usb_scan_cmd": USB_SCAN_CMD,
+        "usb_scan_cmd_available": usb_scan_available(),
+        "qr_decode_cmd": QR_DECODE_CMD,
+        "qr_decode_cmd_available": qr_decode_available(),
         "resolution": {"width": CAMERA_WIDTH, "height": CAMERA_HEIGHT},
     }
 
@@ -1206,7 +1496,7 @@ def create_item(bag_id: str, payload: ItemWriteRequest) -> ItemRecord:
     if not payload.unit.strip():
         raise HTTPException(status_code=400, detail="Unit is required")
     with db_conn() as conn:
-        item = write_item_record(conn, str(uuid.uuid4()), bag_id, payload)
+        item = merge_or_write_item_record(conn, bag_id, payload)
         conn.commit()
         return item
 
@@ -1219,7 +1509,7 @@ def update_item(item_id: str, payload: ItemWriteRequest) -> ItemRecord:
         raise HTTPException(status_code=400, detail="Unit is required")
     with db_conn() as conn:
         current = get_item_row_or_404(conn, item_id)
-        item = write_item_record(conn, item_id, current["bag_id"], payload)
+        item = merge_or_write_item_record(conn, current["bag_id"], payload, item_id=item_id)
         conn.commit()
         return item
 
@@ -1435,6 +1725,108 @@ def admin_revoke_tokens(request: Request) -> dict:
     return {"revoked": True}
 
 
+def ui_redirect_url(bag_id: str = "", notice: str = "", error: str = "", edit_item_id: str = "") -> str:
+    params: List[str] = []
+    if bag_id:
+        params.append(f"bag={quote(bag_id)}")
+    if edit_item_id:
+        params.append(f"edit_item_id={quote(edit_item_id)}")
+    if notice:
+        params.append(f"notice={quote(notice)}")
+    if error:
+        params.append(f"error={quote(error)}")
+    return "/" if not params else "/?" + "&".join(params)
+
+
+@app.post("/ui/items/save")
+async def ui_save_item(request: Request) -> RedirectResponse:
+    form = await request.form()
+    bag_id = str(form.get("bag_id") or "").strip()
+    item_id = str(form.get("item_id") or "").strip() or None
+    try:
+        quantity = float(str(form.get("quantity") or "1").strip())
+    except ValueError:
+        return RedirectResponse(ui_redirect_url(bag_id=bag_id, error="Quantity must be a valid number", edit_item_id=item_id or ""), status_code=303)
+
+    payload = ItemWriteRequest(
+        category_id=str(form.get("category_id") or "").strip(),
+        name=str(form.get("name") or "").strip(),
+        quantity=quantity,
+        unit=str(form.get("unit") or "").strip(),
+        packed_status=str(form.get("packed_status") or "").lower() in {"on", "true", "1"},
+        essential=False,
+        expiry_date=str(form.get("expiry_date") or "").strip() or None,
+        minimum_quantity=0,
+        condition_status="good",
+        notes=str(form.get("notes") or "").strip(),
+    )
+    try:
+        with db_conn() as conn:
+            merge_or_write_item_record(conn, bag_id, payload, item_id=item_id)
+            conn.commit()
+        return RedirectResponse(
+            ui_redirect_url(
+                bag_id=bag_id,
+                notice="Inventory item updated." if item_id else "Inventory item saved.",
+            ),
+            status_code=303,
+        )
+    except HTTPException as exc:
+        return RedirectResponse(ui_redirect_url(bag_id=bag_id, error=str(exc.detail), edit_item_id=item_id or ""), status_code=303)
+
+
+@app.post("/ui/items/scan")
+async def ui_scan_item(request: Request) -> RedirectResponse:
+    form = await request.form()
+    bag_id = str(form.get("bag_id") or "").strip()
+    try:
+        parsed = parse_item_qr_content(scan_qr_from_usb_camera())
+        payload = ItemWriteRequest(
+            category_id=category_id_for_name(parsed.category),
+            name=parsed.name,
+            quantity=1,
+            unit=parsed.unit,
+            packed_status=False,
+            essential=False,
+            expiry_date=parsed.expiry_date,
+            minimum_quantity=0,
+            condition_status="good",
+            notes="Added from QR scan",
+        )
+        with db_conn() as conn:
+            merge_or_write_item_record(conn, bag_id, payload)
+            conn.commit()
+        return RedirectResponse(
+            ui_redirect_url(bag_id=bag_id, notice=f"Scanned {parsed.name} into inventory."),
+            status_code=303,
+        )
+    except HTTPException as exc:
+        return RedirectResponse(ui_redirect_url(bag_id=bag_id, error=str(exc.detail)), status_code=303)
+
+
+@app.post("/ui/items/{item_id}/delete")
+async def ui_delete_item(item_id: str, request: Request) -> RedirectResponse:
+    form = await request.form()
+    bag_id = str(form.get("bag_id") or "").strip()
+    try:
+        with db_conn() as conn:
+            current = get_item_row_or_404(conn, item_id)
+            conn.execute(
+                """
+                UPDATE items
+                SET deleted = 1, updated_at = ?, updated_by = ?
+                WHERE id = ?
+                """,
+                (now_ms(), get_meta(conn, "pi_device_id") or "pi", item_id),
+            )
+            update_bag_readiness(conn, current["bag_id"])
+            update_device_state(conn)
+            conn.commit()
+        return RedirectResponse(ui_redirect_url(bag_id=bag_id, notice="Inventory batch deleted."), status_code=303)
+    except HTTPException as exc:
+        return RedirectResponse(ui_redirect_url(bag_id=bag_id, error=str(exc.detail)), status_code=303)
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
     with db_conn() as conn:
@@ -1442,24 +1834,46 @@ def home(request: Request) -> HTMLResponse:
         conn.commit()
         bags = [row_to_bag(r) for r in conn.execute("SELECT * FROM bags ORDER BY name").fetchall()]
         items = [row_to_item(r) for r in conn.execute("SELECT * FROM items WHERE deleted = 0 ORDER BY name").fetchall()]
+        category_rows = conn.execute("SELECT * FROM categories ORDER BY name").fetchall()
         current_time = now_ms()
         alerts = compute_alerts(conn, current_time)
-        templates = [dict(r) for r in conn.execute("SELECT * FROM templates ORDER BY template_id, category, name").fetchall()]
         pi_device_id = get_meta(conn, "pi_device_id") or ""
         paired_rows = conn.execute(
             "SELECT phone_device_id, issued_at FROM tokens WHERE revoked = 0 ORDER BY issued_at DESC"
         ).fetchall()
+        settings_row = conn.execute("SELECT default_bag_id FROM settings WHERE id = 'primary'").fetchone()
         paired = len(paired_rows) > 0
         last_sync_time_ms = int(get_meta(conn, "last_sync_time_ms") or "0")
         readiness = build_readiness_summary(items, paired, current_time)
+        requested_bag_id = request.query_params.get("bag", "").strip()
+        selected_bag_id = (
+            requested_bag_id
+            if requested_bag_id and any(b.bag_id == requested_bag_id for b in bags)
+            else settings_row["default_bag_id"]
+            if settings_row and settings_row["default_bag_id"] and any(b.bag_id == settings_row["default_bag_id"] for b in bags)
+            else bags[0].bag_id if bags else ""
+        )
+        if settings_row and selected_bag_id and settings_row["default_bag_id"] != selected_bag_id:
+            conn.execute("UPDATE settings SET default_bag_id = ? WHERE id = 'primary'", (selected_bag_id,))
+            conn.commit()
+        selected_bag = next((bag for bag in bags if bag.bag_id == selected_bag_id), None)
+        selected_item_rows = (
+            conn.execute("SELECT * FROM items WHERE bag_id = ? AND deleted = 0 ORDER BY category, name", (selected_bag_id,)).fetchall()
+            if selected_bag_id
+            else []
+        )
+        inventory_groups = build_inventory_groups(selected_item_rows)
+        edit_item_id = request.query_params.get("edit_item_id", "").strip()
+        edit_item_row = None
+        if edit_item_id:
+            candidate = conn.execute("SELECT * FROM items WHERE id = ? AND deleted = 0", (edit_item_id,)).fetchone()
+            if candidate and candidate["bag_id"] == selected_bag_id:
+                edit_item_row = candidate
+        edit_item = row_to_item_record(edit_item_row) if edit_item_row else None
     base_url = compute_base_url(request)
-    payload = {"base_url": base_url, "pair_code": pair["code"], "pi_device_id": pi_device_id}
+    notice = request.query_params.get("notice", "").strip()
+    error = request.query_params.get("error", "").strip()
     admin_query = f"?token={ADMIN_TOKEN}" if ADMIN_TOKEN else ""
-    qr = qrcode.make(json.dumps(payload))
-    buf = os.path.join(DATA_DIR, "pair_qr.png")
-    qr.save(buf)
-    with open(buf, "rb") as f:
-        qr_data_uri = "data:image/png;base64," + base64.b64encode(f.read()).decode("ascii")
 
     checked_count = sum(1 for row in readiness["checklist"] if row["checked"])
     missing_categories = [row["name"] for row in readiness["checklist"] if not row["checked"]]
@@ -1491,7 +1905,7 @@ def home(request: Request) -> HTMLResponse:
     next_step = (
         "Generate or scan the pairing QR so a phone can connect."
         if not paired
-        else "Use the Android app for packing updates, then sync back to this Raspberry Pi."
+        else "Use the Android app or this Pi inventory manager, then sync the selected primary bag."
     )
 
     bag_rows = "".join(
@@ -1502,7 +1916,10 @@ def home(request: Request) -> HTMLResponse:
                 <div class="row-title">{escape(bag.name)}</div>
                 <div class="row-subtitle">{bag.size_liters}L bag - Template {escape(bag.template_id)}</div>
               </div>
-              <div class="pill">{item_count_by_bag.get(bag.bag_id, 0)} items</div>
+              <div class="tag-row">
+                <span class="pill">{item_count_by_bag.get(bag.bag_id, 0)} items</span>
+                <a class="pill {'ok' if bag.bag_id == selected_bag_id else ''}" href="/?bag={quote(bag.bag_id)}">{'Selected' if bag.bag_id == selected_bag_id else 'Open'}</a>
+              </div>
             </div>
             """
             for bag in bags
@@ -1544,6 +1961,90 @@ def home(request: Request) -> HTMLResponse:
         "".join([f'<span class="tag warn">{escape(category)}</span>' for category in missing_categories])
         if missing_categories
         else '<span class="tag ok">All core categories covered</span>'
+    )
+    pairing_cards = "".join(
+        [
+            f"""
+            <div class="pair-card">
+              <div class="row-title">{escape(bag.name)}</div>
+              <div class="row-subtitle">{bag.size_liters}L physical GO BAG</div>
+              <img src="{qr_data_uri_for_payload({
+                  "base_url": base_url,
+                  "pair_code": pair["code"],
+                  "pi_device_id": pi_device_id,
+                  "bag_id": bag.bag_id,
+                  "bag_name": bag.name,
+                  "size_liters": bag.size_liters,
+                  "template_id": bag.template_id,
+              })}" alt="Pair {escape(bag.name)} QR">
+              <div class="code">{escape(json.dumps({
+                  "base_url": base_url,
+                  "pair_code": pair["code"],
+                  "pi_device_id": pi_device_id,
+                  "bag_id": bag.bag_id,
+                  "bag_name": bag.name,
+                  "size_liters": bag.size_liters,
+                  "template_id": bag.template_id,
+              }, indent=2))}</div>
+            </div>
+            """
+            for bag in bags
+        ]
+    ) or '<div class="empty-state">No bags available to pair.</div>'
+    bag_selector_options = "".join(
+        [
+            f'<option value="{escape(bag.bag_id)}" {"selected" if bag.bag_id == selected_bag_id else ""}>{escape(bag.name)} ({bag.size_liters}L)</option>'
+            for bag in bags
+        ]
+    )
+    category_options = "".join(
+        [
+            f'<option value="{escape(row["id"])}" {"selected" if edit_item and edit_item.category_id == row["id"] else ""}>{escape(row["name"])}</option>'
+            for row in category_rows
+        ]
+    )
+    inventory_groups_html = "".join(
+        [
+            f"""
+            <div class="inventory-group">
+              <div class="panel-head" style="margin-bottom: 8px;">
+                <div>
+                  <div class="panel-title">{escape(group.name)}</div>
+                  <div class="panel-note">{escape(group.category)} | Total {group.total_quantity:g} {escape(group.unit)}</div>
+                </div>
+              </div>
+              {''.join(
+                  [
+                      f'''
+                      <div class="batch-card">
+                        <div class="row-title">Batch: {batch.item.quantity:g} {escape(batch.item.unit)}</div>
+                        <div class="row-subtitle">{escape(batch.expiry_label)} | {"Packed" if batch.item.packed_status else "Needs pack"}</div>
+                        {f'<div class="row-subtitle">{escape(batch.item.notes)}</div>' if batch.item.notes else ''}
+                        <div class="button-row compact">
+                          <form method="get" action="/">
+                            <input type="hidden" name="bag" value="{escape(group.bag_id)}">
+                            <input type="hidden" name="edit_item_id" value="{escape(batch.item.id)}">
+                            <button type="submit" class="secondary">Edit batch</button>
+                          </form>
+                          <form method="post" action="/ui/items/{escape(batch.item.id)}/delete">
+                            <input type="hidden" name="bag_id" value="{escape(group.bag_id)}">
+                            <button type="submit" class="secondary danger">Delete batch</button>
+                          </form>
+                        </div>
+                      </div>
+                      '''
+                      for batch in group.batches
+                  ]
+              )}
+            </div>
+            """
+            for group in inventory_groups
+        ]
+    ) or '<div class="empty-state">No inventory for the selected bag yet.</div>'
+    inventory_notice = (
+        "USB scan is ready with fswebcam."
+        if usb_scan_available() and qr_decode_available()
+        else f"USB scan unavailable. fswebcam: {'ok' if usb_scan_available() else 'missing'}, QR decode: {'ok' if qr_decode_available() else 'missing'}."
     )
     html = f"""
 <!doctype html>
@@ -1627,6 +2128,7 @@ def home(request: Request) -> HTMLResponse:
       background: #f2ede3;
       border: 1px solid var(--line);
       color: inherit;
+      text-decoration: none;
     }}
     .tag.ok, .pill.ok {{
       background: var(--accent-soft);
@@ -1758,6 +2260,85 @@ def home(request: Request) -> HTMLResponse:
     form {{
       margin-top: 14px;
     }}
+    form.inline, .button-row form, .bag-picker form {{
+      margin-top: 0;
+      flex: 1;
+    }}
+    input, select, textarea {{
+      width: 100%;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      padding: 12px 14px;
+      font: inherit;
+      color: var(--ink);
+      background: #fffdf7;
+    }}
+    textarea {{
+      min-height: 96px;
+      resize: vertical;
+    }}
+    .field-grid {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }}
+    .button-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }}
+    .button-row.compact {{
+      margin-top: 10px;
+    }}
+    .banner {{
+      border-radius: 18px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      border: 1px solid var(--line);
+    }}
+    .banner.notice {{
+      background: var(--accent-soft);
+      color: var(--accent);
+    }}
+    .banner.error {{
+      background: var(--danger-soft);
+      color: var(--danger);
+    }}
+    .inventory-group {{
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fffdf7;
+      padding: 14px;
+      margin-top: 12px;
+    }}
+    .batch-card {{
+      border: 1px solid rgba(216, 204, 180, 0.8);
+      border-radius: 14px;
+      padding: 12px;
+      background: #f9f2e4;
+      margin-top: 10px;
+    }}
+    .pair-grid {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }}
+    .pair-card {{
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fffdf7;
+      padding: 14px;
+    }}
+    .pair-card img {{
+      width: min(220px, 100%);
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: white;
+      padding: 10px;
+      margin-top: 12px;
+      margin-bottom: 12px;
+    }}
     button {{
       width: 100%;
       min-height: 50px;
@@ -1787,6 +2368,12 @@ def home(request: Request) -> HTMLResponse:
     @media (min-width: 720px) {{
       .qr-wrap {{
         grid-template-columns: 240px 1fr;
+      }}
+      .field-grid {{
+        grid-template-columns: 1.1fr 0.7fr 0.9fr;
+      }}
+      .pair-grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }}
     }}
   </style>
@@ -1820,6 +2407,9 @@ def home(request: Request) -> HTMLResponse:
       {summary_html}
     </section>
 
+    {f'<div class="banner notice">{escape(notice)}</div>' if notice else ''}
+    {f'<div class="banner error">{escape(error)}</div>' if error else ''}
+
     <section class="panel">
       <div class="panel-head">
         <div>
@@ -1835,7 +2425,7 @@ def home(request: Request) -> HTMLResponse:
       <div class="panel-head">
         <div>
           <div class="panel-title">Bags</div>
-          <div class="panel-note">Use the phone app to edit inventory. This dashboard stays focused on summary and readiness.</div>
+          <div class="panel-note">Pick a bag below to manage its inventory and generate a bag-specific pairing QR.</div>
         </div>
       </div>
       {bag_rows}
@@ -1844,23 +2434,63 @@ def home(request: Request) -> HTMLResponse:
     <section class="panel">
       <div class="panel-head">
         <div>
-          <div class="panel-title">Pairing</div>
-          <div class="panel-note">Open the Android app, go to Pair, and scan this QR code.</div>
+          <div class="panel-title">Bag Pairing QR Codes</div>
+          <div class="panel-note">Open the Android app, go to Pair, and scan the QR under the specific physical bag you want to add.</div>
         </div>
         <div class="pill warn">Expires {escape(format_time_ms(int(pair['expires_at'])))}</div>
       </div>
-      <div class="qr-wrap">
-        <img src="{qr_data_uri}" alt="Go-Bag pairing QR code">
-        <div>
-          <div class="row-title">Pair code</div>
-          <div class="code">{escape(pair['code'])}</div>
-          <div class="row-title" style="margin-top: 12px;">Payload</div>
-          <div class="code">{escape(json.dumps(payload, indent=2))}</div>
-        </div>
+      <div class="pair-grid">
+        {pairing_cards}
       </div>
       <form method="post" action="/admin/new_pair_code{admin_query}">
         <button type="submit">Generate new pair code</button>
       </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Inventory Manager</div>
+          <div class="panel-note">Manual add and QR scan both merge by item name, unit, and category. Different expiration dates stay as separate batches under one grouped item.</div>
+        </div>
+      </div>
+      <div class="row-subtitle" style="margin-bottom: 12px;">{escape(inventory_notice)}</div>
+      <form method="get" action="/" class="bag-picker">
+        <div class="field-grid" style="grid-template-columns: 1fr auto;">
+          <select name="bag">
+            {bag_selector_options}
+          </select>
+          <button type="submit" class="secondary">Open bag</button>
+        </div>
+      </form>
+      <form method="post" action="/ui/items/save">
+        <input type="hidden" name="bag_id" value="{escape(selected_bag_id)}">
+        <input type="hidden" name="item_id" value="{escape(edit_item.id if edit_item else '')}">
+        <div class="field-grid">
+          <input type="text" name="name" placeholder="Item name" value="{escape(edit_item.name if edit_item else '')}" required>
+          <input type="number" step="0.01" min="0.01" name="quantity" placeholder="Quantity" value="{edit_item.quantity if edit_item else '1'}" required>
+          <input type="text" name="unit" placeholder="Unit" value="{escape(edit_item.unit if edit_item else 'pcs')}" required>
+        </div>
+        <div class="field-grid" style="margin-top: 12px;">
+          <select name="category_id" required>
+            {category_options}
+          </select>
+          <input type="date" name="expiry_date" value="{escape(edit_item.expiry_date or '' if edit_item else '')}">
+          <label style="display:flex; align-items:center; gap:8px; padding: 12px 0;">
+            <input type="checkbox" name="packed_status" {"checked" if edit_item and edit_item.packed_status else ""} style="width:auto;">
+            Mark batch as packed
+          </label>
+        </div>
+        <textarea name="notes" placeholder="Notes" style="margin-top: 12px;">{escape(edit_item.notes if edit_item else '')}</textarea>
+        <div class="button-row">
+          <button type="submit">{'Update inventory batch' if edit_item else 'Manual Add'}</button>
+        </div>
+      </form>
+      <form method="post" action="/ui/items/scan" class="inline">
+        <input type="hidden" name="bag_id" value="{escape(selected_bag_id)}">
+        <button type="submit" class="secondary">Scan with USB camera</button>
+      </form>
+      {inventory_groups_html}
     </section>
 
     <section class="panel">

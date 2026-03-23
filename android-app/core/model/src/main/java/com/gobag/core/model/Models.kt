@@ -55,6 +55,29 @@ data class AutoResolved(
     val rule: String
 )
 
+data class PairedBagConnection(
+    val bag_id: String,
+    val base_url: String,
+    val auth_token: String,
+    val pi_device_id: String,
+    val last_sync_at: Long,
+    val time_offset_ms: Long,
+    val connection_status: String,
+    val pending_changes_count: Int,
+    val local_ip: String,
+    val last_connection_error: String,
+    val paired_at: Long
+)
+
+data class SavedPiAddress(
+    val id: String,
+    val base_url: String,
+    val last_status: String,
+    val last_detail: String,
+    val last_checked_at: Long,
+    val is_active: Boolean
+)
+
 data class DeviceState(
     val phone_device_id: String,
     val auth_token: String,
@@ -68,5 +91,8 @@ data class DeviceState(
     val connection_status: String,
     val pending_changes_count: Int,
     val local_ip: String,
-    val last_connection_error: String
+    val last_connection_error: String,
+    val paired_bags: List<PairedBagConnection>,
+    val saved_addresses: List<SavedPiAddress>,
+    val active_address_id: String
 )

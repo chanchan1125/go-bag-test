@@ -62,12 +62,33 @@ class GoBagSyncRepository(
                 status = status.connection_status,
                 pendingChangesCount = status.pending_changes_count,
                 localIp = status.local_ip,
-                lastSyncAt = if (state.auth_token.isNotBlank()) status.last_sync_at else null
+                lastSyncAt = if (state.auth_token.isNotBlank()) status.last_sync_at else null,
+                bag_id = state.selected_bag_id
             )
+            if (state.active_address_id.isNotBlank()) {
+                device_state_store.update_saved_address_status(
+                    address_id = state.active_address_id,
+                    status = "Reachable",
+                    detail = if (status.local_ip.isBlank()) {
+                        "Pi ${status.device_name} is ${status.connection_status}."
+                    } else {
+                        "Pi ${status.device_name} is ${status.connection_status} at ${status.local_ip}."
+                    },
+                    make_active = true
+                )
+            }
             null
         } catch (e: Exception) {
             val message = describe_remote_exception(e, action = "Could not refresh Raspberry Pi status")
-            device_state_store.set_connection_error(message)
+            device_state_store.set_connection_error(message, bag_id = state.selected_bag_id)
+            if (state.active_address_id.isNotBlank()) {
+                device_state_store.update_saved_address_status(
+                    address_id = state.active_address_id,
+                    status = "Failed",
+                    detail = message,
+                    make_active = true
+                )
+            }
             message
         }
     }
@@ -106,23 +127,46 @@ class GoBagSyncRepository(
     override suspend fun run_sync_now(): SyncRunResult {
         device_state_store.initialize_phone_device_id_if_missing()
         val state = device_state_store.state.first()
-        if (state.auth_token.isBlank() || state.base_url.isBlank()) {
-            device_state_store.set_connection_error("Phone is not paired to a Raspberry Pi.")
+        if (state.selected_bag_id.isBlank()) {
+            device_state_store.set_connection_error("Select a primary paired bag before syncing.")
             return SyncRunResult(
                 server_time_ms = state.last_sync_at,
                 conflicts = emptyList(),
                 auto_resolved = emptyList(),
                 alerts = emptyList(),
-                skipped_reason = "Sync skipped because this phone is not paired to a Raspberry Pi."
+                skipped_reason = "Sync skipped because no primary paired bag is selected."
+            )
+        }
+        if (state.auth_token.isBlank() || state.base_url.isBlank()) {
+            device_state_store.set_connection_error("The selected primary bag is not paired to a Raspberry Pi.", bag_id = state.selected_bag_id)
+            return SyncRunResult(
+                server_time_ms = state.last_sync_at,
+                conflicts = emptyList(),
+                auto_resolved = emptyList(),
+                alerts = emptyList(),
+                skipped_reason = "Sync skipped because the selected primary bag is not paired to a Raspberry Pi."
             )
         }
 
-        val changed_items = item_repository.get_items_changed_since(state.last_sync_at)
-        val changed_bags = item_repository.get_bags_changed_since(state.last_sync_at)
+        val selectedBagId = state.selected_bag_id
+        val pairedBagIds = state.paired_bags.map { it.bag_id }.toSet()
+        if (selectedBagId !in pairedBagIds) {
+            device_state_store.set_connection_error("The selected primary bag is not available in the paired bag list.", bag_id = selectedBagId)
+            return SyncRunResult(
+                server_time_ms = state.last_sync_at,
+                conflicts = emptyList(),
+                auto_resolved = emptyList(),
+                alerts = emptyList(),
+                skipped_reason = "Sync skipped because the selected primary bag is not paired yet."
+            )
+        }
+
+        val changed_items = item_repository.get_items_changed_since(state.last_sync_at).filter { it.bag_id == selectedBagId }
+        val changed_bags = item_repository.get_bags_changed_since(state.last_sync_at).filter { it.bag_id == selectedBagId }
         try {
-            validate_sync_payload(changed_bags, changed_items)
+            validate_sync_payload(selectedBagId, changed_bags, changed_items)
         } catch (e: IllegalStateException) {
-            device_state_store.set_connection_error(e.message ?: "Sync validation failed.")
+            device_state_store.set_connection_error(e.message ?: "Sync validation failed.", bag_id = selectedBagId)
             throw e
         }
 
@@ -138,18 +182,26 @@ class GoBagSyncRepository(
             )
         } catch (e: Exception) {
             val message = describe_remote_exception(e, action = "Raspberry Pi sync failed")
-            device_state_store.set_connection_error(message)
+            device_state_store.set_connection_error(message, bag_id = selectedBagId)
             throw IllegalStateException(message, e)
         }
 
-        response.server_bag_changes.map { it.to_model() }.forEach {
+        response.server_bag_changes
+            .map { it.to_model() }
+            .filter { it.bag_id == selectedBagId || it.bag_id in pairedBagIds }
+            .forEach {
             item_repository.apply_server_bag(it, state.last_sync_at)
         }
-        response.server_item_changes.map { it.to_model() }.forEach {
+        response.server_item_changes
+            .map { it.to_model() }
+            .filter { it.bag_id == selectedBagId || it.bag_id in pairedBagIds }
+            .forEach {
             item_repository.apply_server_item(it, state.last_sync_at)
         }
 
-        val conflicts = response.conflicts.map { it.to_model() }
+        val conflicts = response.conflicts
+            .map { it.to_model() }
+            .filter { it.server_version.bag_id == selectedBagId }
         conflict_dao.clear_all()
         if (conflicts.isNotEmpty()) {
             conflict_dao.upsert_all(conflicts.map { it.to_entity() })
@@ -159,7 +211,7 @@ class GoBagSyncRepository(
             device_state_store.set_has_unresolved_conflicts(false)
         }
 
-        val alerts = response.alerts.map { it.to_model() }
+        val alerts = response.alerts.map { it.to_model() }.filter { it.bag_id == selectedBagId }
         if (alerts.isNotEmpty()) {
             NotificationHelper.notify_alerts(context, alerts)
         }
@@ -174,10 +226,11 @@ class GoBagSyncRepository(
                 status = syncStatus.connection_status,
                 pendingChangesCount = syncStatus.pending_changes_count,
                 localIp = syncStatus.local_ip,
-                lastSyncAt = syncStatus.last_sync_at
+                lastSyncAt = syncStatus.last_sync_at,
+                bag_id = selectedBagId
             )
         } else {
-            device_state_store.set_last_sync_at(response.server_time_ms)
+            device_state_store.set_last_sync_at(response.server_time_ms, bag_id = selectedBagId)
         }
         return SyncRunResult(
             server_time_ms = response.server_time_ms,
@@ -187,10 +240,15 @@ class GoBagSyncRepository(
         )
     }
 
-    private suspend fun validate_sync_payload(changed_bags: List<BagProfile>, changed_items: List<Item>) {
+    private suspend fun validate_sync_payload(selectedBagId: String, changed_bags: List<BagProfile>, changed_items: List<Item>) {
         val knownBagIds = (item_repository.observe_bags().first().map { it.bag_id } + changed_bags.map { it.bag_id }).toSet()
         val invalidBag = changed_bags.firstOrNull {
-            it.bag_id.isBlank() || it.name.isBlank() || it.size_liters <= 0 || it.template_id.isBlank() || it.updated_by.isBlank()
+            it.bag_id.isBlank() ||
+                it.name.isBlank() ||
+                it.bag_id != selectedBagId ||
+                it.size_liters !in setOf(25, 44, 66) ||
+                it.template_id.isBlank() ||
+                it.updated_by.isBlank()
         }
         if (invalidBag != null) {
             val label = invalidBag.name.ifBlank { invalidBag.bag_id }
@@ -200,6 +258,7 @@ class GoBagSyncRepository(
         val invalidItem = changed_items.firstOrNull {
             it.id.isBlank() ||
                 it.bag_id.isBlank() ||
+                it.bag_id != selectedBagId ||
                 (!it.deleted && it.bag_id !in knownBagIds) ||
                 it.name.isBlank() ||
                 it.unit.isBlank() ||
@@ -210,6 +269,7 @@ class GoBagSyncRepository(
             val label = invalidItem.name.ifBlank { invalidItem.id }
             val reason = when {
                 invalidItem.bag_id.isBlank() -> "missing a bag reference"
+                invalidItem.bag_id != selectedBagId -> "belongs to a bag that is not currently selected"
                 !invalidItem.deleted && invalidItem.bag_id !in knownBagIds -> "references a bag that does not exist locally"
                 invalidItem.name.isBlank() -> "is missing a name"
                 invalidItem.unit.isBlank() -> "is missing a unit"
