@@ -18,12 +18,12 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from html import escape
-from typing import Dict, List, Literal, Optional, Union
+from typing import Dict, Iterator, List, Literal, Optional, Union
 from urllib.parse import parse_qs, quote
 
 import qrcode
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from pydantic import BaseModel, Field
 
@@ -55,6 +55,12 @@ USB_SCAN_TIMEOUT_S = float(os.getenv("GOBAG_USB_SCAN_TIMEOUT_S", "12"))
 USB_PREVIEW_WIDTH = int(os.getenv("GOBAG_USB_PREVIEW_WIDTH", "960"))
 USB_PREVIEW_HEIGHT = int(os.getenv("GOBAG_USB_PREVIEW_HEIGHT", "720"))
 USB_PREVIEW_INTERVAL_MS = max(int(os.getenv("GOBAG_USB_PREVIEW_INTERVAL_MS", "1200")), 800)
+USB_AUTO_SCAN_INTERVAL_MS = max(int(os.getenv("GOBAG_USB_AUTO_SCAN_INTERVAL_MS", "2200")), 1500)
+USB_STREAM_CMD = os.getenv("GOBAG_USB_STREAM_CMD", "ffmpeg")
+USB_STREAM_WIDTH = int(os.getenv("GOBAG_USB_STREAM_WIDTH", "960"))
+USB_STREAM_HEIGHT = int(os.getenv("GOBAG_USB_STREAM_HEIGHT", "720"))
+USB_STREAM_FPS = max(int(os.getenv("GOBAG_USB_STREAM_FPS", "12")), 2)
+USB_STREAM_TIMEOUT_S = float(os.getenv("GOBAG_USB_STREAM_TIMEOUT_S", "10"))
 QR_DECODE_CMD = os.getenv("GOBAG_QR_DECODE_CMD", "zbarimg")
 UI_REFRESH_INTERVAL_MS = max(int(os.getenv("GOBAG_UI_REFRESH_INTERVAL_MS", "5000")), 2000)
 SINGLE_BAG_META_KEY = "single_bag_id"
@@ -1299,6 +1305,10 @@ def usb_scan_available() -> bool:
     return shutil.which(USB_SCAN_CMD) is not None
 
 
+def usb_stream_available() -> bool:
+    return shutil.which(USB_STREAM_CMD) is not None
+
+
 def qr_decode_available() -> bool:
     return shutil.which(QR_DECODE_CMD) is not None
 
@@ -1494,6 +1504,39 @@ def resolve_usb_camera_device(error_code: str) -> str:
             )
     logger.info("USB camera device selected for %s: %s", error_code, scan_device)
     return scan_device
+
+
+def usb_preview_mode() -> str:
+    return "stream" if usb_stream_available() else "snapshot"
+
+
+def build_usb_stream_command(device: str) -> List[str]:
+    return [
+        USB_STREAM_CMD,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-fflags",
+        "nobuffer",
+        "-flags",
+        "low_delay",
+        "-f",
+        "video4linux2",
+        "-framerate",
+        str(USB_STREAM_FPS),
+        "-video_size",
+        f"{USB_STREAM_WIDTH}x{USB_STREAM_HEIGHT}",
+        "-i",
+        device,
+        "-an",
+        "-vf",
+        f"fps={USB_STREAM_FPS}",
+        "-q:v",
+        "6",
+        "-f",
+        "mpjpeg",
+        "pipe:1",
+    ]
 
 
 def image_dimensions_for_bytes(image_bytes: bytes) -> tuple[int, int]:
@@ -2016,6 +2059,7 @@ def health() -> dict:
         "camera_enabled": CAMERA_ENABLED,
         "camera_cmd_available": camera_command_available(),
         "usb_scan_cmd_available": usb_scan_available(),
+        "usb_stream_cmd_available": usb_stream_available(),
         "qr_decode_cmd_available": qr_decode_available(),
     }
 
@@ -2032,6 +2076,8 @@ def system_info() -> dict:
         "camera_cmd_available": camera_command_available(),
         "usb_scan_cmd": USB_SCAN_CMD,
         "usb_scan_cmd_available": usb_scan_available(),
+        "usb_stream_cmd": USB_STREAM_CMD,
+        "usb_stream_cmd_available": usb_stream_available(),
         "qr_decode_cmd": QR_DECODE_CMD,
         "qr_decode_cmd_available": qr_decode_available(),
     }
@@ -2045,11 +2091,15 @@ def camera_status() -> dict:
         "camera_cmd_available": camera_command_available(),
         "usb_scan_cmd": USB_SCAN_CMD,
         "usb_scan_cmd_available": usb_scan_available(),
+        "usb_stream_cmd": USB_STREAM_CMD,
+        "usb_stream_cmd_available": usb_stream_available(),
         "qr_decode_cmd": QR_DECODE_CMD,
         "qr_decode_cmd_available": qr_decode_available(),
         "pyzbar_available": pyzbar_decode is not None,
         "resolution": {"width": CAMERA_WIDTH, "height": CAMERA_HEIGHT},
         "usb_preview_resolution": {"width": USB_PREVIEW_WIDTH, "height": USB_PREVIEW_HEIGHT},
+        "usb_stream_resolution": {"width": USB_STREAM_WIDTH, "height": USB_STREAM_HEIGHT},
+        "usb_stream_fps": USB_STREAM_FPS,
         "usb_scan_resolution": {"width": USB_SCAN_WIDTH, "height": USB_SCAN_HEIGHT},
     }
 
@@ -2064,20 +2114,80 @@ def camera_capture() -> Response:
 def usb_camera_preview_status() -> JSONResponse:
     try:
         device = resolve_usb_camera_device("CAMERA_PREVIEW_FAILED")
+        preview_mode = usb_preview_mode()
         payload = {
             "ok": True,
             "message": "USB camera preview is ready.",
             "device": device,
-            "preview_url": "/camera/usb/preview.jpg",
-            "resolution": {"width": USB_PREVIEW_WIDTH, "height": USB_PREVIEW_HEIGHT},
+            "preview_url": "/camera/usb/stream.mjpg" if preview_mode == "stream" else "/camera/usb/preview.jpg",
+            "preview_mode": preview_mode,
+            "resolution": {
+                "width": USB_STREAM_WIDTH if preview_mode == "stream" else USB_PREVIEW_WIDTH,
+                "height": USB_STREAM_HEIGHT if preview_mode == "stream" else USB_PREVIEW_HEIGHT,
+            },
             "interval_ms": USB_PREVIEW_INTERVAL_MS,
+            "scan_interval_ms": USB_AUTO_SCAN_INTERVAL_MS,
+            "auto_scan": True,
+            "auto_close_on_success": True,
+            "stream_fps": USB_STREAM_FPS if preview_mode == "stream" else 0,
         }
-        logger.info("USB preview start result: ready on %s", device)
+        logger.info("USB preview start result: ready on %s using %s mode", device, preview_mode)
         return JSONResponse(payload)
     except HTTPException as exc:
         payload = error_payload_from_detail(exc.detail, default_code="CAMERA_PREVIEW_FAILED")
         logger.warning("USB preview start failed: %s", payload.get("technical") or payload.get("message"))
         return JSONResponse(payload, status_code=exc.status_code)
+
+
+def generate_usb_camera_stream(command: List[str]) -> Iterator[bytes]:
+    logger.info("USB preview stream command: %s", shlex.join(command))
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+    )
+    try:
+        if process.stdout is None:
+            raise structured_http_exception(
+                503,
+                "CAMERA_PREVIEW_FAILED",
+                "USB camera streaming could not start.",
+                technical="stdout pipe unavailable",
+            )
+        while True:
+            chunk = process.stdout.read(16384)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        stderr_text = decode_process_output(process.stderr.read() if process.stderr else b"")
+        if stderr_text:
+            logger.warning("USB preview stream closed: %s", stderr_text[:300])
+
+
+@app.get("/camera/usb/stream.mjpg")
+def usb_camera_preview_stream() -> StreamingResponse:
+    if not usb_stream_available():
+        raise structured_http_exception(
+            503,
+            "CAMERA_PREVIEW_FAILED",
+            "USB camera streaming is not available on this Pi.",
+            technical=f"missing command: {USB_STREAM_CMD}",
+        )
+    device = resolve_usb_camera_device("CAMERA_PREVIEW_FAILED")
+    command = build_usb_stream_command(device)
+    return StreamingResponse(
+        generate_usb_camera_stream(command),
+        media_type="multipart/x-mixed-replace; boundary=ffmpeg",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @app.get("/camera/usb/preview.jpg")
@@ -2643,7 +2753,11 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         ]
     )
     inventory_notice = (
-        f"USB scan preview is ready with {USB_SCAN_CMD}. Open the scanner to align the QR before capture."
+        (
+            f"USB scan preview is ready. The full-screen scanner uses {USB_STREAM_CMD} streaming for a faster camera view."
+            if usb_stream_available() and usb_scan_available() and qr_decode_available()
+            else f"USB scan preview is ready with {USB_SCAN_CMD}. Open the scanner to align the QR before capture."
+        )
         if usb_scan_available() and qr_decode_available()
         else f"USB scan unavailable. {USB_SCAN_CMD}: {'ok' if usb_scan_available() else 'missing'}, {QR_DECODE_CMD}: {'ok' if qr_decode_available() else 'missing'}."
     )
@@ -3298,26 +3412,33 @@ def home(request: Request) -> HTMLResponse:
       z-index: 50;
       background: rgba(20, 29, 24, 0.68);
       backdrop-filter: blur(4px);
-      padding: 16px;
+      padding: 0;
       display: flex;
       align-items: center;
       justify-content: center;
     }}
     .scan-dialog {{
-      width: min(860px, 100%);
-      max-height: calc(100vh - 32px);
-      overflow-y: auto;
+      width: 100vw;
+      height: 100vh;
+      max-height: 100vh;
+      border-radius: 0;
       margin: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }}
     .scan-preview-shell {{
       display: grid;
       gap: 16px;
       margin-top: 12px;
+      flex: 1;
+      min-height: 0;
     }}
     .scan-preview-frame {{
       position: relative;
-      min-height: 260px;
-      border-radius: 20px;
+      min-height: min(62vh, 720px);
+      height: 100%;
+      border-radius: 24px;
       border: 1px solid rgba(216, 204, 180, 0.9);
       background: #111915;
       overflow: hidden;
@@ -3348,6 +3469,8 @@ def home(request: Request) -> HTMLResponse:
       border-radius: 18px;
       background: #fffdf7;
       padding: 16px;
+      height: 100%;
+      overflow-y: auto;
     }}
     .scan-status {{
       font-weight: 700;
@@ -3387,6 +3510,17 @@ def home(request: Request) -> HTMLResponse:
     .scan-result-card strong {{
       color: var(--accent);
     }}
+    .scan-auto-badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 8px 12px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+      margin-top: 12px;
+    }}
     @media (min-width: 720px) {{
       .qr-wrap {{
         grid-template-columns: 240px 1fr;
@@ -3398,7 +3532,16 @@ def home(request: Request) -> HTMLResponse:
         grid-template-columns: 1fr auto;
       }}
       .scan-preview-shell {{
-        grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+        grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.75fr);
+      }}
+    }}
+    @media (max-width: 719px) {{
+      .scan-dialog {{
+        padding-bottom: 18px;
+        overflow-y: auto;
+      }}
+      .scan-preview-frame {{
+        min-height: 52vh;
       }}
     }}
   </style>
@@ -3543,7 +3686,8 @@ def home(request: Request) -> HTMLResponse:
         <div class="panel-head">
           <div>
             <div class="panel-title">USB Camera Scanner</div>
-            <div class="panel-note">Line up the item QR in the preview, then capture when the code looks sharp and fills more of the frame.</div>
+            <div class="panel-note">This scanner fills the Pi screen, keeps watching for a QR automatically, and closes as soon as the item is added.</div>
+            <div class="scan-auto-badge">Auto-detect active while this screen is open</div>
           </div>
           <button type="button" class="secondary" id="scan-close-button">Close</button>
         </div>
@@ -3558,7 +3702,7 @@ def home(request: Request) -> HTMLResponse:
             <div class="scan-guidance-list" id="scan-guidance-list">
               <div class="scan-tip">Move the QR closer so it fills more of the frame.</div>
               <div class="scan-tip">Keep the QR flat, steady, and in even lighting.</div>
-              <div class="scan-tip">Use Capture and scan QR after the preview looks sharp.</div>
+              <div class="scan-tip">Once the preview looks sharp, the scanner will try automatically.</div>
             </div>
             <div class="scan-result-card hidden" id="scan-result-card">
               <div class="row-title">Last scan</div>
@@ -3569,7 +3713,7 @@ def home(request: Request) -> HTMLResponse:
         <form id="scan-capture-form" style="margin-top: 14px;">
           <input type="hidden" name="bag_id" value="{escape(bag.bag_id)}">
           <div class="button-row">
-            <button type="submit" id="scan-capture-button">Capture and scan QR</button>
+            <button type="submit" id="scan-capture-button">Scan now</button>
             <button type="button" class="secondary" id="scan-refresh-button">Refresh preview</button>
           </div>
         </form>
@@ -3580,10 +3724,16 @@ def home(request: Request) -> HTMLResponse:
     (() => {{
       const refreshIntervalMs = {UI_REFRESH_INTERVAL_MS};
       const previewFallbackIntervalMs = {USB_PREVIEW_INTERVAL_MS};
+      const autoScanFallbackIntervalMs = {USB_AUTO_SCAN_INTERVAL_MS};
       let lastStateVersion = document.body.dataset.stateVersion || "";
       let previewTimer = 0;
+      let autoScanTimer = 0;
+      let autoScanStartTimer = 0;
       let previewLoading = false;
       let scanBusy = false;
+      let scanIntervalMs = autoScanFallbackIntervalMs;
+      let previewMode = "snapshot";
+      let previewUrl = "/camera/usb/preview.jpg";
 
       const pageNotice = document.getElementById("page-notice");
       const pageError = document.getElementById("page-error");
@@ -3693,11 +3843,33 @@ def home(request: Request) -> HTMLResponse:
         }}
       }}
 
+      function stopAutoScanLoop() {{
+        if (autoScanTimer) {{
+          window.clearInterval(autoScanTimer);
+          autoScanTimer = 0;
+        }}
+        if (autoScanStartTimer) {{
+          window.clearTimeout(autoScanStartTimer);
+          autoScanStartTimer = 0;
+        }}
+      }}
+
       function startPreviewLoop(intervalMs) {{
         stopPreviewLoop();
         previewTimer = window.setInterval(() => {{
           void refreshPreviewFrame();
         }}, intervalMs || previewFallbackIntervalMs);
+      }}
+
+      function startAutoScanLoop(intervalMs) {{
+        stopAutoScanLoop();
+        scanIntervalMs = intervalMs || autoScanFallbackIntervalMs;
+        autoScanStartTimer = window.setTimeout(() => {{
+          void submitUsbScan(null, true);
+        }}, Math.min(scanIntervalMs, 1100));
+        autoScanTimer = window.setInterval(() => {{
+          void submitUsbScan(null, true);
+        }}, scanIntervalMs);
       }}
 
       async function refreshDashboard() {{
@@ -3743,8 +3915,29 @@ def home(request: Request) -> HTMLResponse:
         }}
       }}
 
-      async function refreshPreviewFrame() {{
+      async function refreshPreviewFrame(forceReload = false) {{
         if (!scanPreviewImage || !scanModal || scanModal.classList.contains("hidden") || previewLoading || scanBusy) {{
+          return;
+        }}
+        if (previewMode === "stream") {{
+          if (forceReload || !scanPreviewImage.getAttribute("src")) {{
+            previewLoading = true;
+            scanPreviewImage.onload = () => {{
+              previewLoading = false;
+              setPreviewVisible(true);
+              if (!scanBusy) {{
+                setScanStatus("Live USB camera stream is running. Hold the QR in frame and auto-detect will scan it.", "ok");
+              }}
+            }};
+            scanPreviewImage.onerror = () => {{
+              previewLoading = false;
+              setPreviewVisible(false);
+              setScanStatus("USB camera stream failed.", "error");
+              renderScanGuidance(scanGuidanceFallback.CAMERA_PREVIEW_FAILED);
+              setBanner("error", "USB camera stream failed. Falling back to snapshot preview may help.");
+            }};
+            scanPreviewImage.src = `${{previewUrl}}?t=${{Date.now()}}`;
+          }}
           return;
         }}
         previewLoading = true;
@@ -3752,7 +3945,7 @@ def home(request: Request) -> HTMLResponse:
           previewLoading = false;
           setPreviewVisible(true);
           if (!scanBusy) {{
-            setScanStatus("Live preview ready. Align the QR and tap Capture and scan QR.", "ok");
+            setScanStatus("Live preview ready. Hold the QR in frame and auto-detect will scan it.", "ok");
           }}
         }};
         scanPreviewImage.onerror = () => {{
@@ -3762,7 +3955,7 @@ def home(request: Request) -> HTMLResponse:
           renderScanGuidance(scanGuidanceFallback.CAMERA_PREVIEW_FAILED);
           setBanner("error", "USB camera preview failed. Check the camera connection and Raspberry Pi permissions.");
         }};
-        scanPreviewImage.src = `/camera/usb/preview.jpg?t=${{Date.now()}}`;
+        scanPreviewImage.src = `${{previewUrl}}?t=${{Date.now()}}`;
       }}
 
       async function preparePreview() {{
@@ -3781,10 +3974,23 @@ def home(request: Request) -> HTMLResponse:
             setBanner("error", payload.message || "USB camera preview failed.");
             return;
           }}
-          setScanStatus(payload.message || "USB camera preview is ready.", "ok");
+          previewMode = payload.preview_mode || "snapshot";
+          previewUrl = payload.preview_url || "/camera/usb/preview.jpg";
+          scanIntervalMs = payload.scan_interval_ms || autoScanFallbackIntervalMs;
+          setScanStatus(
+            previewMode === "stream"
+              ? `USB camera stream is ready at about ${{payload.stream_fps || 0}} FPS. Hold the QR in frame.`
+              : (payload.message || "USB camera preview is ready."),
+            "ok"
+          );
           renderScanGuidance(payload.guidance || scanGuidanceFallback.NO_QR_DETECTED);
-          await refreshPreviewFrame();
-          startPreviewLoop(payload.interval_ms || previewFallbackIntervalMs);
+          await refreshPreviewFrame(true);
+          if (previewMode !== "stream") {{
+            startPreviewLoop(payload.interval_ms || previewFallbackIntervalMs);
+          }}
+          if (payload.auto_scan !== false) {{
+            startAutoScanLoop(scanIntervalMs);
+          }}
         }} catch (_error) {{
           setScanStatus("USB camera preview failed.", "error");
           renderScanGuidance(scanGuidanceFallback.CAMERA_PREVIEW_FAILED);
@@ -3803,6 +4009,7 @@ def home(request: Request) -> HTMLResponse:
 
       function closeScanModal() {{
         stopPreviewLoop();
+        stopAutoScanLoop();
         previewLoading = false;
         scanBusy = false;
         if (scanModal) {{
@@ -3813,26 +4020,34 @@ def home(request: Request) -> HTMLResponse:
         if (scanPreviewImage) {{
           scanPreviewImage.removeAttribute("src");
         }}
+        previewMode = "snapshot";
+        previewUrl = "/camera/usb/preview.jpg";
         setPreviewVisible(false);
         if (scanCaptureButton) {{
           scanCaptureButton.disabled = false;
-          scanCaptureButton.textContent = "Capture and scan QR";
+          scanCaptureButton.textContent = "Scan now";
         }}
       }}
 
-      async function submitUsbScan(event) {{
-        event.preventDefault();
+      async function submitUsbScan(event, automatic = false) {{
+        if (event) {{
+          event.preventDefault();
+        }}
         if (!scanCaptureForm || scanBusy) {{
           return;
         }}
         scanBusy = true;
         stopPreviewLoop();
+        stopAutoScanLoop();
         hideScanResult();
         if (scanCaptureButton) {{
           scanCaptureButton.disabled = true;
-          scanCaptureButton.textContent = "Scanning...";
+          scanCaptureButton.textContent = automatic ? "Auto-scanning..." : "Scanning...";
         }}
-        setScanStatus("Capturing image and scanning QR...", "warn");
+        setScanStatus(
+          automatic ? "Watching the preview and checking for a QR..." : "Capturing image and scanning QR...",
+          "warn"
+        );
         try {{
           const response = await fetch("/camera/usb/scan", {{
             method: "POST",
@@ -3842,9 +4057,16 @@ def home(request: Request) -> HTMLResponse:
           }});
           const payload = await response.json().catch(() => ({{ ok: false, code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}));
           if (!response.ok || payload.ok === false) {{
-            setScanStatus(payload.message || "USB camera scan failed.", "error");
+            const isWaitingForQr = automatic && (payload.code || "") === "NO_QR_DETECTED";
+            setScanStatus(
+              isWaitingForQr ? "No QR detected yet. Keep the code centered and steady." : (payload.message || "USB camera scan failed."),
+              isWaitingForQr ? "warn" : "error"
+            );
             renderScanGuidance(payload.guidance || scanGuidanceFallback[payload.code] || scanGuidanceFallback.NO_QR_DETECTED);
-            setBanner("error", payload.message || "USB camera scan failed.");
+            const nonFatalCodes = new Set(["NO_QR_DETECTED"]);
+            if (!automatic || !nonFatalCodes.has(payload.code || "")) {{
+              setBanner("error", payload.message || "USB camera scan failed.");
+            }}
             return;
           }}
 
@@ -3858,11 +4080,13 @@ def home(request: Request) -> HTMLResponse:
           showScanResult(summary);
           setScanStatus(payload.message || "QR code detected and item added.", "ok");
           renderScanGuidance([
-            "Scan complete. You can scan another item or close this scanner.",
-            "Use Refresh preview if the next QR looks blurry or too dark.",
+            "QR detected and added. Closing the camera now.",
+            "Open the scanner again for the next item.",
           ]);
           setBanner("notice", payload.message || "QR code detected and item added.");
           await refreshDashboard();
+          closeScanModal();
+          return;
         }} catch (_error) {{
           setScanStatus("USB camera scan failed unexpectedly.", "error");
           renderScanGuidance(scanGuidanceFallback.SCAN_FAILED);
@@ -3871,11 +4095,16 @@ def home(request: Request) -> HTMLResponse:
           scanBusy = false;
           if (scanCaptureButton) {{
             scanCaptureButton.disabled = false;
-            scanCaptureButton.textContent = "Capture and scan QR";
+            scanCaptureButton.textContent = "Scan now";
           }}
           if (scanModal && !scanModal.classList.contains("hidden")) {{
-            startPreviewLoop(previewFallbackIntervalMs);
-            void refreshPreviewFrame();
+            if (previewMode !== "stream") {{
+              startPreviewLoop(previewFallbackIntervalMs);
+            }}
+            startAutoScanLoop(scanIntervalMs);
+            if (!automatic) {{
+              void refreshPreviewFrame(previewMode === "stream");
+            }}
           }}
         }}
       }}
@@ -3888,7 +4117,7 @@ def home(request: Request) -> HTMLResponse:
       }}
       if (scanRefreshButton) {{
         scanRefreshButton.addEventListener("click", () => {{
-          void refreshPreviewFrame();
+          void refreshPreviewFrame(true);
         }});
       }}
       if (scanCaptureForm) {{

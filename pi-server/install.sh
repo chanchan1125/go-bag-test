@@ -152,7 +152,7 @@ render_template() {
 
 log "Installing system packages..."
 ${SUDO} apt-get update
-${SUDO} apt-get install -y python3 python3-venv python3-pip sqlite3 rsync curl xdg-utils desktop-file-utils libcamera-apps v4l-utils fswebcam zbar-tools
+${SUDO} apt-get install -y python3 python3-venv python3-pip sqlite3 rsync curl xdg-utils desktop-file-utils libcamera-apps v4l-utils fswebcam zbar-tools ffmpeg
 install_browser_if_needed
 
 log "Creating installation directories..."

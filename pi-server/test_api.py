@@ -306,6 +306,10 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn("Pairing QR", body)
         self.assertIn("Pair code", body)
         self.assertIn("USB Camera Scanner", body)
+        self.assertIn("Auto-detect active while this screen is open", body)
+        self.assertIn("height: 100vh", body)
+        self.assertIn("startAutoScanLoop", body)
+        self.assertIn("USB camera stream is ready at about", body)
         self.assertIn("/camera/usb/preview/status", body)
         self.assertIn("/camera/usb/scan", body)
         self.assertIn('fetch("/ui/state"', body)
@@ -433,11 +437,34 @@ class PiServerApiTests(unittest.TestCase):
     def test_usb_preview_status_and_json_scan_return_structured_payloads(self):
         bag_id = self.client.get("/bags").json()[0]["id"]
 
-        with mock.patch.object(self.module, "resolve_usb_camera_device", return_value="/dev/video0"):
+        with mock.patch.object(self.module, "resolve_usb_camera_device", return_value="/dev/video0"), mock.patch.object(
+            self.module,
+            "usb_stream_available",
+            return_value=True,
+        ):
             preview = self.client.get("/camera/usb/preview/status")
         self.assertEqual(preview.status_code, 200)
         self.assertTrue(preview.json()["ok"])
         self.assertEqual(preview.json()["device"], "/dev/video0")
+        self.assertEqual(preview.json()["preview_mode"], "stream")
+        self.assertEqual(preview.json()["preview_url"], "/camera/usb/stream.mjpg")
+        self.assertTrue(preview.json()["auto_scan"])
+        self.assertTrue(preview.json()["auto_close_on_success"])
+        self.assertGreaterEqual(preview.json()["scan_interval_ms"], 1500)
+        self.assertGreaterEqual(preview.json()["stream_fps"], 2)
+
+        with mock.patch.object(self.module, "usb_stream_available", return_value=True), mock.patch.object(
+            self.module,
+            "resolve_usb_camera_device",
+            return_value="/dev/video0",
+        ), mock.patch.object(
+            self.module,
+            "generate_usb_camera_stream",
+            return_value=iter([b"--ffmpeg\r\nContent-Type: image/jpeg\r\n\r\njpegdata\r\n"]),
+        ):
+            stream = self.client.get("/camera/usb/stream.mjpg")
+        self.assertEqual(stream.status_code, 200)
+        self.assertIn("multipart/x-mixed-replace", stream.headers["content-type"])
 
         with mock.patch.object(
             self.module,
