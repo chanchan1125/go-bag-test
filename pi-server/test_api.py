@@ -306,8 +306,97 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn("Pairing QR", body)
         self.assertIn("Pair code", body)
         self.assertIn('fetch("/ui/state"', body)
+        self.assertIn(".hero .panel {", body)
+        self.assertIn("input::placeholder", body)
+        self.assertIn("option:checked", body)
         self.assertNotIn('panel-title">Bags<', body)
         self.assertNotIn('"pair_code"', body)
+
+    def test_ui_form_fallback_parses_urlencoded_without_python_multipart(self):
+        class FakeRequest:
+            headers = {"content-type": "application/x-www-form-urlencoded"}
+
+            async def form(self):
+                raise AssertionError("The `python-multipart` library must be installed to use form parsing.")
+
+            async def body(self):
+                return b"bag_type=66l&name=Field+Bag&notes=ready"
+
+        payload = asyncio.run(self.module.read_ui_form(FakeRequest()))
+        self.assertEqual(payload["bag_type"], "66l")
+        self.assertEqual(payload["name"], "Field Bag")
+        self.assertEqual(payload["notes"], "ready")
+
+    def test_ui_bag_settings_save_updates_single_local_bag(self):
+        response = self.client.post("/ui/bag/settings", data={"bag_type": "66l"}, follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("Bag%20size%20set%20to%2066L", response.headers["location"])
+
+        bag = self.client.get("/device/bag")
+        self.assertEqual(bag.status_code, 200)
+        self.assertEqual(bag.json()["bag_type"], "66l")
+
+    def test_ui_manual_add_saves_item_and_reports_validation_errors(self):
+        bag_id = self.client.get("/bags").json()[0]["id"]
+        category_id = self.client.get("/categories").json()[0]["id"]
+
+        created = self.client.post(
+            "/ui/items/save",
+            data={
+                "category_id": category_id,
+                "name": "Water Pouch",
+                "quantity": "2",
+                "unit": "pcs",
+                "notes": "Front pocket",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(created.status_code, 303)
+        self.assertIn("Inventory%20item%20saved", created.headers["location"])
+
+        items = self.client.get(f"/bags/{bag_id}/items")
+        self.assertEqual(items.status_code, 200)
+        self.assertEqual(len(items.json()), 1)
+        self.assertEqual(items.json()[0]["name"], "Water Pouch")
+
+        invalid = self.client.post(
+            "/ui/items/save",
+            data={
+                "category_id": category_id,
+                "name": "Broken Quantity",
+                "quantity": "zero",
+                "unit": "pcs",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(invalid.status_code, 303)
+        self.assertIn("Quantity%20must%20be%20a%20valid%20number", invalid.headers["location"])
+
+    def test_ui_usb_scan_redirects_with_item_or_helpful_error(self):
+        bag_id = self.client.get("/bags").json()[0]["id"]
+
+        with mock.patch.object(
+            self.module,
+            "scan_qr_from_usb_camera",
+            return_value="Thermal Blanket/pcs/Tools & Protection/2027-01-01",
+        ):
+            created = self.client.post("/ui/items/scan", data={"bag_id": bag_id}, follow_redirects=False)
+        self.assertEqual(created.status_code, 303)
+        self.assertIn("Scanned%20Thermal%20Blanket%20into%20inventory", created.headers["location"])
+
+        items = self.client.get(f"/bags/{bag_id}/items")
+        self.assertEqual(items.status_code, 200)
+        self.assertEqual(len(items.json()), 1)
+        self.assertEqual(items.json()[0]["name"], "Thermal Blanket")
+
+        with mock.patch.object(
+            self.module,
+            "scan_qr_from_usb_camera",
+            side_effect=self.module.HTTPException(status_code=503, detail="USB camera unavailable"),
+        ):
+            error = self.client.post("/ui/items/scan", data={"bag_id": bag_id}, follow_redirects=False)
+        self.assertEqual(error.status_code, 303)
+        self.assertIn("USB%20camera%20unavailable", error.headers["location"])
 
     def test_single_bag_endpoints_keep_one_local_bag_and_update_size(self):
         initial = self.client.get("/bags")

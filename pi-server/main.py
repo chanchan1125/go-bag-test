@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from html import escape
 from typing import Dict, List, Literal, Optional, Union
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote
 
 import qrcode
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -1287,6 +1287,81 @@ def available_usb_camera_devices() -> List[str]:
     return sorted(path for path in glob.glob("/dev/video*") if os.path.exists(path))
 
 
+async def read_ui_form(request: Request) -> Dict[str, str]:
+    try:
+        form = await request.form()
+        return {key: str(form.get(key) or "") for key in form.keys()}
+    except AssertionError as exc:
+        if "python-multipart" not in str(exc).lower():
+            raise
+        content_type = request.headers.get("content-type", "").lower()
+        if "application/x-www-form-urlencoded" not in content_type:
+            raise HTTPException(
+                status_code=500,
+                detail="Form support is unavailable for this request. Install python-multipart for multipart forms.",
+            )
+        raw = await request.body()
+        if not raw:
+            return {}
+        parsed = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
+        return {key: values[-1] if values else "" for key, values in parsed.items()}
+
+
+def canonical_ui_bag_row(conn: sqlite3.Connection) -> sqlite3.Row:
+    bag_row = ensure_single_bag(conn)
+    return conn.execute("SELECT * FROM bags WHERE bag_id = ?", (bag_row["bag_id"],)).fetchone() or bag_row
+
+
+def parse_ui_bag_type(raw_bag_type: str) -> tuple[str, int]:
+    bag_type = (raw_bag_type or "").strip().lower()
+    if not bag_type:
+        raise HTTPException(status_code=400, detail="Choose a bag size.")
+    return bag_type, size_liters_for_bag_type(bag_type)
+
+
+def build_ui_item_payload(form: Dict[str, str]) -> ItemWriteRequest:
+    category_id = str(form.get("category_id") or "").strip()
+    name = str(form.get("name") or "").strip()
+    unit = str(form.get("unit") or "").strip()
+    if not category_id:
+        raise HTTPException(status_code=400, detail="Choose a category.")
+    if not name:
+        raise HTTPException(status_code=400, detail="Item name is required.")
+    if not unit:
+        raise HTTPException(status_code=400, detail="Unit is required.")
+
+    quantity_raw = str(form.get("quantity") or "1").strip()
+    try:
+        quantity = float(quantity_raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Quantity must be a valid number.")
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be greater than 0.")
+
+    expiry_date = str(form.get("expiry_date") or "").strip() or None
+    if expiry_date and parse_yyyy_mm_dd_to_epoch_ms(expiry_date) is None:
+        raise HTTPException(status_code=400, detail="Expiry date must use YYYY-MM-DD.")
+
+    return ItemWriteRequest(
+        category_id=category_id,
+        name=name,
+        quantity=quantity,
+        unit=unit,
+        packed_status=str(form.get("packed_status") or "").lower() in {"on", "true", "1"},
+        essential=False,
+        expiry_date=expiry_date,
+        minimum_quantity=0,
+        condition_status="good",
+        notes=str(form.get("notes") or "").strip(),
+    )
+
+
+def unexpected_ui_error_message(action: str, exc: Exception) -> str:
+    detail = " ".join((str(exc) or exc.__class__.__name__).split())
+    clipped = detail[:200] if detail else exc.__class__.__name__
+    return f"{action} failed unexpectedly: {clipped}"
+
+
 def scan_qr_from_usb_camera() -> str:
     if not usb_scan_available():
         raise HTTPException(status_code=503, detail=f"USB scan command not found: {USB_SCAN_CMD}")
@@ -1300,6 +1375,11 @@ def scan_qr_from_usb_camera() -> str:
         available_devices = available_usb_camera_devices()
         if available_devices:
             scan_device = available_devices[0]
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="No USB camera device was detected. Check the USB camera connection and Raspberry Pi video permissions.",
+            )
 
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         out_path = tmp.name
@@ -2282,12 +2362,11 @@ def ui_state(request: Request) -> dict:
 
 @app.post("/ui/bag/settings")
 async def ui_save_bag_settings(request: Request) -> RedirectResponse:
-    form = await request.form()
-    bag_type = str(form.get("bag_type") or "").strip()
     try:
-        size_liters = size_liters_for_bag_type(bag_type)
+        form = await read_ui_form(request)
+        bag_type, size_liters = parse_ui_bag_type(form.get("bag_type", ""))
         with db_conn() as conn:
-            bag_row = ensure_single_bag(conn)
+            bag_row = canonical_ui_bag_row(conn)
             current_name = (bag_row["name"] or "").strip()
             target_name = (
                 default_bag_name_for_size(size_liters)
@@ -2307,6 +2386,8 @@ async def ui_save_bag_settings(request: Request) -> RedirectResponse:
         return RedirectResponse(ui_redirect_url(notice=f"Bag size set to {bag_size_label(size_liters)}."), status_code=303)
     except HTTPException as exc:
         return RedirectResponse(ui_redirect_url(error=str(exc.detail)), status_code=303)
+    except Exception as exc:
+        return RedirectResponse(ui_redirect_url(error=unexpected_ui_error_message("Bag size save", exc)), status_code=303)
 
 
 @app.post("/ui/pair-code/new")
@@ -2333,28 +2414,13 @@ def ui_revoke_tokens(request: Request) -> RedirectResponse:
 
 @app.post("/ui/items/save")
 async def ui_save_item(request: Request) -> RedirectResponse:
-    form = await request.form()
-    bag_id = str(form.get("bag_id") or "").strip()
-    item_id = str(form.get("item_id") or "").strip() or None
     try:
-        quantity = float(str(form.get("quantity") or "1").strip())
-    except ValueError:
-        return RedirectResponse(ui_redirect_url(bag_id=bag_id, error="Quantity must be a valid number", edit_item_id=item_id or ""), status_code=303)
-
-    payload = ItemWriteRequest(
-        category_id=str(form.get("category_id") or "").strip(),
-        name=str(form.get("name") or "").strip(),
-        quantity=quantity,
-        unit=str(form.get("unit") or "").strip(),
-        packed_status=str(form.get("packed_status") or "").lower() in {"on", "true", "1"},
-        essential=False,
-        expiry_date=str(form.get("expiry_date") or "").strip() or None,
-        minimum_quantity=0,
-        condition_status="good",
-        notes=str(form.get("notes") or "").strip(),
-    )
-    try:
+        form = await read_ui_form(request)
+        item_id = str(form.get("item_id") or "").strip() or None
+        payload = build_ui_item_payload(form)
         with db_conn() as conn:
+            bag_row = canonical_ui_bag_row(conn)
+            bag_id = bag_row["bag_id"]
             merge_or_write_item_record(conn, bag_id, payload, item_id=item_id)
             conn.commit()
         return RedirectResponse(
@@ -2365,14 +2431,26 @@ async def ui_save_item(request: Request) -> RedirectResponse:
             status_code=303,
         )
     except HTTPException as exc:
+        bag_id = str(locals().get("bag_id") or "")
+        item_id = str(locals().get("item_id") or "")
         return RedirectResponse(ui_redirect_url(bag_id=bag_id, error=str(exc.detail), edit_item_id=item_id or ""), status_code=303)
+    except Exception as exc:
+        bag_id = str(locals().get("bag_id") or "")
+        item_id = str(locals().get("item_id") or "")
+        return RedirectResponse(
+            ui_redirect_url(
+                bag_id=bag_id,
+                error=unexpected_ui_error_message("Manual add", exc),
+                edit_item_id=item_id or "",
+            ),
+            status_code=303,
+        )
 
 
 @app.post("/ui/items/scan")
 async def ui_scan_item(request: Request) -> RedirectResponse:
-    form = await request.form()
-    bag_id = str(form.get("bag_id") or "").strip()
     try:
+        await read_ui_form(request)
         parsed = parse_item_qr_content(scan_qr_from_usb_camera())
         payload = ItemWriteRequest(
             category_id=category_id_for_name(parsed.category),
@@ -2387,6 +2465,8 @@ async def ui_scan_item(request: Request) -> RedirectResponse:
             notes="Added from QR scan",
         )
         with db_conn() as conn:
+            bag_row = canonical_ui_bag_row(conn)
+            bag_id = bag_row["bag_id"]
             merge_or_write_item_record(conn, bag_id, payload)
             conn.commit()
         return RedirectResponse(
@@ -2394,22 +2474,23 @@ async def ui_scan_item(request: Request) -> RedirectResponse:
             status_code=303,
         )
     except HTTPException as exc:
+        bag_id = str(locals().get("bag_id") or "")
         return RedirectResponse(ui_redirect_url(bag_id=bag_id, error=str(exc.detail)), status_code=303)
     except Exception as exc:
-        detail = str(exc).strip() or exc.__class__.__name__
+        bag_id = str(locals().get("bag_id") or "")
         return RedirectResponse(
-            ui_redirect_url(bag_id=bag_id, error=f"USB camera scan failed unexpectedly: {detail[:200]}"),
+            ui_redirect_url(bag_id=bag_id, error=unexpected_ui_error_message("USB camera scan", exc)),
             status_code=303,
         )
 
 
 @app.post("/ui/items/{item_id}/delete")
 async def ui_delete_item(item_id: str, request: Request) -> RedirectResponse:
-    form = await request.form()
-    bag_id = str(form.get("bag_id") or "").strip()
     try:
+        await read_ui_form(request)
         with db_conn() as conn:
             current = get_item_row_or_404(conn, item_id)
+            bag_id = current["bag_id"]
             conn.execute(
                 """
                 UPDATE items
@@ -2423,7 +2504,14 @@ async def ui_delete_item(item_id: str, request: Request) -> RedirectResponse:
             conn.commit()
         return RedirectResponse(ui_redirect_url(bag_id=bag_id, notice="Inventory batch deleted."), status_code=303)
     except HTTPException as exc:
+        bag_id = str(locals().get("bag_id") or "")
         return RedirectResponse(ui_redirect_url(bag_id=bag_id, error=str(exc.detail)), status_code=303)
+    except Exception as exc:
+        bag_id = str(locals().get("bag_id") or "")
+        return RedirectResponse(
+            ui_redirect_url(bag_id=bag_id, error=unexpected_ui_error_message("Inventory delete", exc)),
+            status_code=303,
+        )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -2470,6 +2558,10 @@ def home(request: Request) -> HTMLResponse:
       --warn-soft: #f4e5bd;
       --danger: #8c2f39;
       --danger-soft: #f6d8d9;
+      --input-bg: #fffdf7;
+      --disabled-bg: #e7ddd0;
+      --placeholder: #677166;
+      --focus-ring: rgba(54, 95, 76, 0.28);
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -2530,7 +2622,7 @@ def home(request: Request) -> HTMLResponse:
       font-weight: 600;
       background: #f2ede3;
       border: 1px solid var(--line);
-      color: inherit;
+      color: var(--ink);
       text-decoration: none;
     }}
     .tag.ok, .pill.ok {{
@@ -2550,6 +2642,21 @@ def home(request: Request) -> HTMLResponse:
       border: 1px solid var(--line);
       border-radius: 22px;
       box-shadow: 0 8px 24px rgba(65, 52, 33, 0.08);
+      color: var(--ink);
+    }}
+    .hero .panel {{
+      background: rgba(255, 250, 240, 0.97);
+      color: var(--ink);
+    }}
+    .hero .panel-title {{
+      color: var(--ink);
+    }}
+    .hero .panel-note {{
+      color: var(--muted);
+    }}
+    .hero .tag, .hero .pill {{
+      background: rgba(255, 248, 234, 0.98);
+      color: var(--ink);
     }}
     .summary-grid {{
       display: grid;
@@ -2625,7 +2732,7 @@ def home(request: Request) -> HTMLResponse:
       border-radius: 14px;
       background: #f2ede3;
       border: 1px solid var(--line);
-      color: var(--muted);
+      color: var(--ink);
       margin-top: 10px;
     }}
     .qr-wrap {{
@@ -2645,6 +2752,7 @@ def home(request: Request) -> HTMLResponse:
       border-radius: 18px;
       background: #f2ede3;
       padding: 16px;
+      color: var(--ink);
     }}
     .pair-code-label {{
       text-transform: uppercase;
@@ -2674,7 +2782,30 @@ def home(request: Request) -> HTMLResponse:
       padding: 12px 14px;
       font: inherit;
       color: var(--ink);
-      background: #fffdf7;
+      background: var(--input-bg);
+      caret-color: var(--ink);
+    }}
+    input::placeholder, textarea::placeholder {{
+      color: var(--placeholder);
+      opacity: 1;
+    }}
+    select, option {{
+      color: var(--ink);
+      background: var(--input-bg);
+    }}
+    option:checked {{
+      background: var(--accent-soft);
+      color: var(--ink);
+    }}
+    input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {{
+      outline: 3px solid var(--focus-ring);
+      outline-offset: 2px;
+    }}
+    input:disabled, select:disabled, textarea:disabled, button:disabled {{
+      background: var(--disabled-bg);
+      color: var(--muted);
+      opacity: 1;
+      cursor: not-allowed;
     }}
     textarea {{
       min-height: 96px;
@@ -2699,6 +2830,7 @@ def home(request: Request) -> HTMLResponse:
       padding: 14px 16px;
       margin-bottom: 16px;
       border: 1px solid var(--line);
+      color: var(--ink);
     }}
     .banner.notice {{
       background: var(--accent-soft);
@@ -2727,6 +2859,7 @@ def home(request: Request) -> HTMLResponse:
       border-radius: 18px;
       background: #fffdf7;
       padding: 14px;
+      color: var(--ink);
     }}
     .pair-card img {{
       width: min(220px, 100%);
@@ -2749,6 +2882,12 @@ def home(request: Request) -> HTMLResponse:
       cursor: pointer;
       padding: 12px 14px;
     }}
+    button:hover {{
+      filter: brightness(0.96);
+    }}
+    button:active {{
+      transform: translateY(1px);
+    }}
     button.secondary {{
       background: #d9d3c4;
       color: var(--ink);
@@ -2762,6 +2901,12 @@ def home(request: Request) -> HTMLResponse:
     .empty-state {{
       color: var(--muted);
       padding: 8px 0 4px;
+    }}
+    .check-row.ok strong {{
+      color: var(--accent);
+    }}
+    .check-row.warn strong {{
+      color: var(--warn);
     }}
     @media (min-width: 720px) {{
       .qr-wrap {{
