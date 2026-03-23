@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import os
 import shutil
@@ -5,6 +6,7 @@ import time
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -295,6 +297,115 @@ class PiServerApiTests(unittest.TestCase):
 
         with self.assertRaises(self.module.HTTPException):
             self.module.parse_item_qr_content("bad-qr-value")
+
+    def test_home_dashboard_is_single_bag_ui_with_polling_and_pair_code_card(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        body = response.text
+        self.assertIn("Bag Settings", body)
+        self.assertIn("Pairing QR", body)
+        self.assertIn("Pair code", body)
+        self.assertIn('fetch("/ui/state"', body)
+        self.assertNotIn('panel-title">Bags<', body)
+        self.assertNotIn('"pair_code"', body)
+
+    def test_single_bag_endpoints_keep_one_local_bag_and_update_size(self):
+        initial = self.client.get("/bags")
+        self.assertEqual(initial.status_code, 200)
+        initial_payload = initial.json()
+        self.assertEqual(len(initial_payload), 1)
+        bag_id = initial_payload[0]["id"]
+
+        created = self.client.post("/bags", json={"name": "Field Bag", "bag_type": "25l"})
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["id"], bag_id)
+        self.assertEqual(created.json()["bag_type"], "25l")
+
+        updated = self.client.put("/device/bag", json={"name": "Field Bag", "bag_type": "66l", "last_checked_at": None})
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["id"], bag_id)
+        self.assertEqual(updated.json()["bag_type"], "66l")
+
+        bags = self.client.get("/bags")
+        self.assertEqual(bags.status_code, 200)
+        payload = bags.json()
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["id"], bag_id)
+        self.assertEqual(payload[0]["bag_type"], "66l")
+
+    def test_ui_state_reflects_synced_item_changes_for_kiosk_refresh(self):
+        device_status = self.client.get("/device/status")
+        self.assertEqual(device_status.status_code, 200)
+
+        initial_bag = self.client.get("/bags").json()[0]
+        bag_id = initial_bag["id"]
+
+        pair = self.client.post(
+            "/pair",
+            json={
+                "phone_device_id": "phone-kiosk-refresh",
+                "pair_code": device_status.json()["pair_code"],
+            },
+        )
+        self.assertEqual(pair.status_code, 200)
+        token = pair.json()["auth_token"]
+
+        sync = self.client.post(
+            "/sync",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "phone_device_id": "phone-kiosk-refresh",
+                "last_sync_at": 0,
+                "changed_bags": [
+                    {
+                        "bag_id": bag_id,
+                        "name": "Field Bag",
+                        "size_liters": 44,
+                        "template_id": "template_44l",
+                        "updated_at": 1000,
+                        "updated_by": "phone-kiosk-refresh",
+                    }
+                ],
+                "changed_items": [
+                    {
+                        "id": str(uuid.uuid4()),
+                        "bag_id": bag_id,
+                        "name": "Emergency Blanket",
+                        "category": "Tools & Protection",
+                        "quantity": 1,
+                        "unit": "pcs",
+                        "packed_status": True,
+                        "notes": "",
+                        "deleted": False,
+                        "updated_at": 1001,
+                        "updated_by": "phone-kiosk-refresh",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(sync.status_code, 200)
+
+        ui_state = self.client.get("/ui/state")
+        self.assertEqual(ui_state.status_code, 200)
+        payload = ui_state.json()
+        self.assertIn("Emergency Blanket", payload["inventory_groups_html"])
+        self.assertTrue(payload["state_version"])
+
+    def test_ui_routes_redirect_instead_of_dumping_raw_json_or_500_errors(self):
+        bag_id = self.client.get("/bags").json()[0]["id"]
+
+        new_pair = self.client.post("/ui/pair-code/new", follow_redirects=False)
+        self.assertEqual(new_pair.status_code, 303)
+        self.assertIn("/?notice=", new_pair.headers["location"])
+
+        class FakeRequest:
+            async def form(self):
+                return {"bag_id": bag_id}
+
+        with mock.patch.object(self.module, "scan_qr_from_usb_camera", side_effect=RuntimeError("camera offline")):
+            scan = asyncio.run(self.module.ui_scan_item(FakeRequest()))
+        self.assertEqual(scan.status_code, 303)
+        self.assertIn("USB%20camera%20scan%20failed%20unexpectedly", scan.headers["location"])
 
 
 if __name__ == "__main__":

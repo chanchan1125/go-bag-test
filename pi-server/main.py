@@ -1,5 +1,6 @@
 import base64
 import calendar
+import glob
 import io
 import json
 import os
@@ -43,6 +44,8 @@ USB_SCAN_WIDTH = int(os.getenv("GOBAG_USB_SCAN_WIDTH", "1280"))
 USB_SCAN_HEIGHT = int(os.getenv("GOBAG_USB_SCAN_HEIGHT", "720"))
 USB_SCAN_TIMEOUT_S = float(os.getenv("GOBAG_USB_SCAN_TIMEOUT_S", "12"))
 QR_DECODE_CMD = os.getenv("GOBAG_QR_DECODE_CMD", "zbarimg")
+UI_REFRESH_INTERVAL_MS = max(int(os.getenv("GOBAG_UI_REFRESH_INTERVAL_MS", "5000")), 2000)
+SINGLE_BAG_META_KEY = "single_bag_id"
 CHECKLIST_CATEGORIES = [
     "Water & Food",
     "Medical & Health",
@@ -272,6 +275,25 @@ def format_time_ms(value: int) -> str:
     if not value:
         return "Never"
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(value / 1000))
+
+
+def bag_size_label(size_liters: int) -> str:
+    return f"{size_liters}L"
+
+
+def default_bag_name_for_size(size_liters: int) -> str:
+    return f"{bag_size_label(size_liters)} Bag"
+
+
+def is_default_bag_name(name: str) -> bool:
+    normalized = " ".join((name or "").strip().lower().split())
+    return normalized in {
+        "25l bag",
+        "44l bag",
+        "66l bag",
+        "go bag",
+        "go-bag",
+    }
 
 
 @contextmanager
@@ -554,6 +576,179 @@ def upsert_item(conn: sqlite3.Connection, item: Item) -> None:
     )
 
 
+def preferred_single_bag_row(conn: sqlite3.Connection, preferred_bag_id: Optional[str] = None) -> Optional[sqlite3.Row]:
+    rows = conn.execute(
+        """
+        SELECT bags.*, COALESCE(item_counts.item_count, 0) AS item_count
+        FROM bags
+        LEFT JOIN (
+          SELECT bag_id, COUNT(*) AS item_count
+          FROM items
+          WHERE deleted = 0
+          GROUP BY bag_id
+        ) item_counts ON item_counts.bag_id = bags.bag_id
+        """
+    ).fetchall()
+    if not rows:
+        return None
+
+    def match_bag_id(target_bag_id: Optional[str]) -> Optional[sqlite3.Row]:
+        if not target_bag_id:
+            return None
+        return next((row for row in rows if row["bag_id"] == target_bag_id), None)
+
+    preferred = match_bag_id(preferred_bag_id)
+    if preferred is not None:
+        return preferred
+
+    preferred = match_bag_id(get_meta(conn, SINGLE_BAG_META_KEY))
+    if preferred is not None:
+        return preferred
+
+    settings_row = conn.execute("SELECT default_bag_id FROM settings WHERE id = 'primary'").fetchone()
+    preferred = match_bag_id(settings_row["default_bag_id"] if settings_row else None)
+    if preferred is not None:
+        return preferred
+
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            -int(row["item_count"] or 0),
+            0 if int(row["size_liters"] or 44) == 44 else 1,
+            int(row["created_at"] or row["updated_at"] or 0),
+            (row["name"] or "").lower(),
+        ),
+    )
+    return ordered[0]
+
+
+def rename_bag_id(conn: sqlite3.Connection, current_bag_id: str, target_bag_id: str) -> None:
+    if not current_bag_id or not target_bag_id or current_bag_id == target_bag_id:
+        return
+
+    current_row = conn.execute("SELECT * FROM bags WHERE bag_id = ?", (current_bag_id,)).fetchone()
+    if not current_row:
+        return
+
+    changed_at = now_ms()
+    updated_by = get_meta(conn, "pi_device_id") or "pi"
+    existing_target = conn.execute("SELECT * FROM bags WHERE bag_id = ?", (target_bag_id,)).fetchone()
+    conn.execute(
+        "UPDATE items SET bag_id = ?, updated_at = ?, updated_by = ? WHERE bag_id = ?",
+        (target_bag_id, changed_at, updated_by, current_bag_id),
+    )
+    if existing_target:
+        conn.execute("DELETE FROM bags WHERE bag_id = ?", (current_bag_id,))
+        return
+    conn.execute(
+        "UPDATE bags SET bag_id = ?, updated_at = ?, updated_by = ? WHERE bag_id = ?",
+        (target_bag_id, changed_at, updated_by, current_bag_id),
+    )
+
+
+def ensure_single_bag(
+    conn: sqlite3.Connection,
+    preferred_bag_id: Optional[str] = None,
+    preferred_size_liters: Optional[int] = None,
+    preferred_name: Optional[str] = None,
+) -> sqlite3.Row:
+    canonical = preferred_single_bag_row(conn, preferred_bag_id=preferred_bag_id)
+    if canonical is None:
+        current_time = now_ms()
+        size_liters = preferred_size_liters if preferred_size_liters in {25, 44, 66} else 44
+        upsert_bag(
+            conn,
+            Bag(
+                bag_id=preferred_bag_id or str(uuid.uuid4()),
+                name=(preferred_name or "").strip() or default_bag_name_for_size(size_liters),
+                size_liters=size_liters,
+                template_id=template_id_for_size(size_liters),
+                updated_at=current_time,
+                updated_by=get_meta(conn, "pi_device_id") or "pi",
+            ),
+        )
+        canonical = preferred_single_bag_row(conn, preferred_bag_id=preferred_bag_id)
+        if canonical is None:
+            raise HTTPException(status_code=500, detail="Unable to initialize the Raspberry Pi bag")
+
+    if preferred_bag_id and canonical["bag_id"] != preferred_bag_id:
+        rename_bag_id(conn, canonical["bag_id"], preferred_bag_id)
+        canonical = conn.execute("SELECT * FROM bags WHERE bag_id = ?", (preferred_bag_id,)).fetchone()
+        if canonical is None:
+            raise HTTPException(status_code=500, detail="Unable to align the Raspberry Pi bag identity")
+
+    extras = conn.execute("SELECT bag_id FROM bags WHERE bag_id != ?", (canonical["bag_id"],)).fetchall()
+    if extras:
+        changed_at = now_ms()
+        updated_by = get_meta(conn, "pi_device_id") or "pi"
+        for row in extras:
+            conn.execute(
+                "UPDATE items SET bag_id = ?, updated_at = ?, updated_by = ? WHERE bag_id = ?",
+                (canonical["bag_id"], changed_at, updated_by, row["bag_id"]),
+            )
+        conn.executemany("DELETE FROM bags WHERE bag_id = ?", [(row["bag_id"],) for row in extras])
+        canonical = conn.execute("SELECT * FROM bags WHERE bag_id = ?", (canonical["bag_id"],)).fetchone()
+
+    target_size = preferred_size_liters if preferred_size_liters in {25, 44, 66} else int(canonical["size_liters"] or 44)
+    target_name = (preferred_name or "").strip()
+    if not target_name:
+        current_name = (canonical["name"] or "").strip()
+        if not current_name:
+            target_name = default_bag_name_for_size(target_size)
+        elif is_default_bag_name(current_name) and int(canonical["size_liters"] or target_size) != target_size:
+            target_name = default_bag_name_for_size(target_size)
+        else:
+            target_name = current_name
+
+    target_template_id = template_id_for_size(target_size)
+    target_bag_type = bag_type_for_template(target_template_id, target_size)
+    if (
+        canonical["name"] != target_name
+        or int(canonical["size_liters"] or 44) != target_size
+        or canonical["template_id"] != target_template_id
+        or (canonical["bag_type"] or "") != target_bag_type
+        or canonical["created_at"] is None
+        or not canonical["readiness_status"]
+    ):
+        changed_at = max(now_ms(), int(canonical["updated_at"] or 0))
+        conn.execute(
+            """
+            UPDATE bags
+            SET
+              name = ?,
+              size_liters = ?,
+              template_id = ?,
+              updated_at = ?,
+              updated_by = ?,
+              bag_type = ?,
+              readiness_status = COALESCE(readiness_status, 'incomplete'),
+              created_at = COALESCE(created_at, ?)
+            WHERE bag_id = ?
+            """,
+            (
+                target_name,
+                target_size,
+                target_template_id,
+                changed_at,
+                get_meta(conn, "pi_device_id") or "pi",
+                target_bag_type,
+                canonical["updated_at"] or changed_at,
+                canonical["bag_id"],
+            ),
+        )
+
+    conn.execute(
+        """
+        INSERT INTO settings(id, default_bag_id, language, notifications_enabled, last_connected_device)
+        VALUES('primary', ?, 'en', 1, NULL)
+        ON CONFLICT(id) DO UPDATE SET default_bag_id = excluded.default_bag_id
+        """,
+        (canonical["bag_id"],),
+    )
+    set_meta(conn, SINGLE_BAG_META_KEY, canonical["bag_id"])
+    return conn.execute("SELECT * FROM bags WHERE bag_id = ?", (canonical["bag_id"],)).fetchone()
+
+
 def create_pair_code(conn: sqlite3.Connection) -> sqlite3.Row:
     code = f"{secrets.randbelow(900000) + 100000}"
     created = now_ms()
@@ -798,9 +993,18 @@ def init_db() -> None:
         )
         if conn.execute("SELECT COUNT(*) AS c FROM bags").fetchone()["c"] == 0:
             t = now_ms()
-            device = get_meta(conn, "pi_device_id") or "pi"
-            for name, liters, template_id in [("25L Bag", 25, "template_25l"), ("44L Bag", 44, "template_44l"), ("66L Bag", 66, "template_66l")]:
-                upsert_bag(conn, Bag(bag_id=str(uuid.uuid4()), name=name, size_liters=liters, template_id=template_id, updated_at=t, updated_by=device))
+            size_liters = 44
+            upsert_bag(
+                conn,
+                Bag(
+                    bag_id=str(uuid.uuid4()),
+                    name=default_bag_name_for_size(size_liters),
+                    size_liters=size_liters,
+                    template_id=template_id_for_size(size_liters),
+                    updated_at=t,
+                    updated_by=get_meta(conn, "pi_device_id") or "pi",
+                ),
+            )
         conn.execute(
             """
             UPDATE bags
@@ -835,6 +1039,7 @@ def init_db() -> None:
             ON CONFLICT(id) DO NOTHING
             """
         )
+        ensure_single_bag(conn)
         update_bag_readiness(conn)
         update_device_state(conn)
         conn.commit()
@@ -1072,11 +1277,29 @@ def qr_decode_available() -> bool:
     return shutil.which(QR_DECODE_CMD) is not None
 
 
+def decode_process_output(raw: Optional[bytes]) -> str:
+    if not raw:
+        return ""
+    return raw.decode("utf-8", errors="replace").strip()
+
+
+def available_usb_camera_devices() -> List[str]:
+    return sorted(path for path in glob.glob("/dev/video*") if os.path.exists(path))
+
+
 def scan_qr_from_usb_camera() -> str:
     if not usb_scan_available():
         raise HTTPException(status_code=503, detail=f"USB scan command not found: {USB_SCAN_CMD}")
     if not qr_decode_available():
         raise HTTPException(status_code=503, detail=f"QR decode command not found: {QR_DECODE_CMD}")
+
+    scan_device = USB_SCAN_DEVICE
+    if scan_device and not os.path.exists(scan_device):
+        raise HTTPException(status_code=503, detail=f"Configured USB camera device was not found: {scan_device}")
+    if not scan_device:
+        available_devices = available_usb_camera_devices()
+        if available_devices:
+            scan_device = available_devices[0]
 
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         out_path = tmp.name
@@ -1087,8 +1310,8 @@ def scan_qr_from_usb_camera() -> str:
         f"{USB_SCAN_WIDTH}x{USB_SCAN_HEIGHT}",
         "--no-banner",
     ]
-    if USB_SCAN_DEVICE:
-        capture_cmd.extend(["-d", USB_SCAN_DEVICE])
+    if scan_device:
+        capture_cmd.extend(["-d", scan_device])
     capture_cmd.append(out_path)
 
     try:
@@ -1096,33 +1319,46 @@ def scan_qr_from_usb_camera() -> str:
             capture_cmd,
             check=False,
             capture_output=True,
-            text=True,
             timeout=USB_SCAN_TIMEOUT_S,
         )
         if capture.returncode != 0:
+            capture_error = decode_process_output(capture.stderr) or decode_process_output(capture.stdout)
             raise HTTPException(
-                status_code=500,
-                detail=f"fswebcam failed ({capture.returncode}): {(capture.stderr or capture.stdout).strip()[:200]}",
+                status_code=503,
+                detail=f"USB camera capture failed ({capture.returncode}): {capture_error[:200] or 'fswebcam could not read from the camera'}",
             )
+        if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            raise HTTPException(status_code=503, detail="USB camera did not produce an image. Check camera access and file permissions.")
 
-        decode = subprocess.run(
+        decode_attempts = [
             [QR_DECODE_CMD, "--quiet", "--raw", out_path],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=USB_SCAN_TIMEOUT_S,
-        )
-        if decode.returncode != 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"QR scan failed: {(decode.stderr or decode.stdout).strip()[:200] or 'No QR code detected'}",
+            [QR_DECODE_CMD, "--raw", out_path],
+        ]
+        decode = None
+        decode_error = ""
+        for command in decode_attempts:
+            decode = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                timeout=USB_SCAN_TIMEOUT_S,
             )
-        content = decode.stdout.strip().splitlines()[0].strip() if decode.stdout.strip() else ""
+            decode_output = decode_process_output(decode.stdout)
+            decode_error = decode_process_output(decode.stderr) or decode_output
+            if decode.returncode == 0 and decode_output:
+                break
+            if "--quiet" in command and "option" in decode_error.lower() and "quiet" in decode_error.lower():
+                continue
+        if decode is None or decode.returncode != 0:
+            raise HTTPException(status_code=400, detail=f"QR scan failed: {decode_error[:200] or 'No QR code detected'}")
+        content = decode_process_output(decode.stdout).splitlines()[0].strip() if decode_process_output(decode.stdout) else ""
         if not content:
             raise HTTPException(status_code=400, detail="QR scan returned no readable content")
         return content
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="USB camera scan timed out")
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail=f"USB camera scan could not start: {exc.strerror or str(exc)}")
     finally:
         try:
             os.remove(out_path)
@@ -1339,17 +1575,23 @@ def capture_camera_jpeg() -> bytes:
             cmd,
             check=False,
             capture_output=True,
-            text=True,
             timeout=CAMERA_TIMEOUT_S,
         )
         if proc.returncode != 0:
-            stderr = proc.stderr.strip()[:200]
-            raise HTTPException(status_code=500, detail=f"Camera capture failed ({proc.returncode}): {stderr}")
+            error_text = decode_process_output(proc.stderr) or decode_process_output(proc.stdout)
+            raise HTTPException(
+                status_code=503,
+                detail=f"Camera capture failed ({proc.returncode}): {error_text[:200] or 'camera command returned an error'}",
+            )
+        if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            raise HTTPException(status_code=503, detail="Camera did not produce an image. Check camera access and file permissions.")
 
         with open(out_path, "rb") as f:
             return f.read()
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Camera capture timed out")
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail=f"Camera capture could not start: {exc.strerror or str(exc)}")
     finally:
         try:
             os.remove(out_path)
@@ -1438,7 +1680,8 @@ def get_categories() -> List[CategoryRecord]:
 @app.get("/bags", response_model=List[BagRecord])
 def get_bags() -> List[BagRecord]:
     with db_conn() as conn:
-        update_bag_readiness(conn)
+        bag_row = ensure_single_bag(conn)
+        update_bag_readiness(conn, bag_row["bag_id"])
         update_device_state(conn)
         rows = conn.execute("SELECT * FROM bags ORDER BY name").fetchall()
         conn.commit()
@@ -1450,10 +1693,16 @@ def create_bag(payload: BagCreateRequest) -> BagRecord:
     if not payload.name.strip():
         raise HTTPException(status_code=400, detail="Bag name is required")
     with db_conn() as conn:
-        bag = write_bag_record(conn, str(uuid.uuid4()), payload)
-        settings = conn.execute("SELECT default_bag_id FROM settings WHERE id = 'primary'").fetchone()
-        if not settings or not settings["default_bag_id"]:
-            conn.execute("UPDATE settings SET default_bag_id = ? WHERE id = 'primary'", (bag.id,))
+        bag_row = ensure_single_bag(conn)
+        bag = write_bag_record(
+            conn,
+            bag_row["bag_id"],
+            BagUpdateRequest(
+                name=payload.name.strip(),
+                bag_type=payload.bag_type,
+                last_checked_at=bag_row["last_checked_at"],
+            ),
+        )
         conn.commit()
         return bag
 
@@ -1463,7 +1712,9 @@ def update_bag(bag_id: str, payload: BagUpdateRequest) -> BagRecord:
     if not payload.name.strip():
         raise HTTPException(status_code=400, detail="Bag name is required")
     with db_conn() as conn:
-        get_bag_row_or_404(conn, bag_id)
+        bag_row = ensure_single_bag(conn)
+        if bag_id != bag_row["bag_id"]:
+            raise HTTPException(status_code=404, detail="Bag not found")
         bag = write_bag_record(conn, bag_id, payload)
         conn.commit()
         return bag
@@ -1472,13 +1723,10 @@ def update_bag(bag_id: str, payload: BagUpdateRequest) -> BagRecord:
 @app.delete("/bags/{bag_id}")
 def delete_bag(bag_id: str) -> dict:
     with db_conn() as conn:
-        get_bag_row_or_404(conn, bag_id)
-        conn.execute("DELETE FROM items WHERE bag_id = ?", (bag_id,))
-        conn.execute("DELETE FROM bags WHERE bag_id = ?", (bag_id,))
-        conn.execute("UPDATE settings SET default_bag_id = NULL WHERE id = 'primary' AND default_bag_id = ?", (bag_id,))
-        update_device_state(conn)
-        conn.commit()
-    return {"deleted": True, "bag_id": bag_id}
+        bag_row = ensure_single_bag(conn)
+        if bag_id != bag_row["bag_id"]:
+            raise HTTPException(status_code=404, detail="Bag not found")
+    raise HTTPException(status_code=400, detail="This Raspberry Pi keeps one local GO BAG. Update its size instead of deleting it.")
 
 
 @app.get("/bags/{bag_id}/items", response_model=List[ItemRecord])
@@ -1550,6 +1798,7 @@ def sync_status() -> SyncStatusResponse:
 @app.get("/settings", response_model=SettingsRecord)
 def get_settings() -> SettingsRecord:
     with db_conn() as conn:
+        ensure_single_bag(conn)
         row = conn.execute("SELECT * FROM settings WHERE id = 'primary'").fetchone()
     return SettingsRecord(
         id=row["id"],
@@ -1558,6 +1807,28 @@ def get_settings() -> SettingsRecord:
         notifications_enabled=bool(row["notifications_enabled"]),
         last_connected_device=row["last_connected_device"],
     )
+
+
+@app.get("/device/bag", response_model=BagRecord)
+def get_device_bag() -> BagRecord:
+    with db_conn() as conn:
+        bag_row = ensure_single_bag(conn)
+        update_bag_readiness(conn, bag_row["bag_id"])
+        update_device_state(conn)
+        bag_row = conn.execute("SELECT * FROM bags WHERE bag_id = ?", (bag_row["bag_id"],)).fetchone()
+        conn.commit()
+    return row_to_bag_record(bag_row)
+
+
+@app.put("/device/bag", response_model=BagRecord)
+def update_device_bag(payload: BagUpdateRequest) -> BagRecord:
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Bag name is required")
+    with db_conn() as conn:
+        bag_row = ensure_single_bag(conn)
+        bag = write_bag_record(conn, bag_row["bag_id"], payload)
+        conn.commit()
+        return bag
 
 
 @app.post("/pair", response_model=PairResponse)
@@ -1579,9 +1850,35 @@ def sync(req: SyncRequest, _: str = Depends(require_token)) -> SyncResponse:
     with db_conn() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            requested_bag_ids = {
+                bag.bag_id.strip()
+                for bag in req.changed_bags
+                if bag.bag_id.strip()
+            } | {
+                item.bag_id.strip()
+                for item in req.changed_items
+                if item.bag_id.strip()
+            }
+            preferred_bag_id = next(iter(requested_bag_ids)) if len(requested_bag_ids) == 1 else None
+            preferred_bag = next((bag for bag in req.changed_bags if bag.bag_id == preferred_bag_id), None)
+            canonical_bag = ensure_single_bag(
+                conn,
+                preferred_bag_id=preferred_bag_id,
+                preferred_size_liters=preferred_bag.size_liters if preferred_bag else None,
+                preferred_name=preferred_bag.name if preferred_bag else None,
+            )
+            canonical_bag_id = canonical_bag["bag_id"]
             ls = req.last_sync_at
-            phone_bags = {b.bag_id: b for b in req.changed_bags}
-            phone_items = {i.id: i for i in req.changed_items}
+            phone_bags = {
+                canonical_bag_id: bag.model_copy(update={"bag_id": canonical_bag_id})
+                for bag in req.changed_bags
+                if bag.bag_id == (preferred_bag_id or canonical_bag_id)
+            }
+            phone_items = {
+                item.id: item.model_copy(update={"bag_id": canonical_bag_id})
+                for item in req.changed_items
+                if item.bag_id == (preferred_bag_id or canonical_bag_id)
+            }
             server_bags = {r["bag_id"]: row_to_bag(r) for r in conn.execute("SELECT * FROM bags").fetchall()}
             server_items = {r["id"]: row_to_item(r) for r in conn.execute("SELECT * FROM items").fetchall()}
 
@@ -1674,9 +1971,15 @@ def sync(req: SyncRequest, _: str = Depends(require_token)) -> SyncResponse:
 def kiosk_state(request: Request) -> dict:
     with db_conn() as conn:
         pair = active_pair_code(conn) or create_pair_code(conn)
+        bag_row = ensure_single_bag(conn)
+        update_bag_readiness(conn, bag_row["bag_id"])
+        update_device_state(conn)
         conn.commit()
         bags = [row_to_bag(r).model_dump() for r in conn.execute("SELECT * FROM bags ORDER BY name").fetchall()]
-        items = [row_to_item(r).model_dump() for r in conn.execute("SELECT * FROM items ORDER BY category, name").fetchall()]
+        items = [
+            row_to_item(r).model_dump()
+            for r in conn.execute("SELECT * FROM items WHERE deleted = 0 ORDER BY category, name").fetchall()
+        ]
         current_time = now_ms()
         alerts = [a.model_dump() for a in compute_alerts(conn, current_time)]
         templates = [dict(r) for r in conn.execute("SELECT * FROM templates ORDER BY template_id, category, name").fetchall()]
@@ -1725,6 +2028,225 @@ def admin_revoke_tokens(request: Request) -> dict:
     return {"revoked": True}
 
 
+def pair_qr_payload(base_url: str, pair_code: str, pi_device_id: str, bag: Bag) -> dict:
+    return {
+        "base_url": base_url,
+        "pair_code": pair_code,
+        "pi_device_id": pi_device_id,
+        "bag_id": bag.bag_id,
+        "bag_name": bag.name,
+        "size_liters": bag.size_liters,
+        "template_id": bag.template_id,
+    }
+
+
+def render_summary_html(summary_cards: List[tuple[str, str, str]]) -> str:
+    return "".join(
+        [
+            f"""
+            <div class="stat-card">
+              <div class="stat-label">{escape(label)}</div>
+              <div class="stat-value">{escape(value)}</div>
+              <div class="stat-note">{escape(note)}</div>
+            </div>
+            """
+            for label, value, note in summary_cards
+        ]
+    )
+
+
+def render_phone_rows_html(paired_rows: List[sqlite3.Row]) -> str:
+    return "".join(
+        [
+            f"""
+            <div class="list-row">
+              <div>
+                <div class="row-title">{escape(row['phone_device_id'])}</div>
+                <div class="row-subtitle">Paired {escape(format_time_ms(int(row['issued_at'])))}</div>
+              </div>
+              <div class="pill ok">Active</div>
+            </div>
+            """
+            for row in paired_rows
+        ]
+    ) or '<div class="empty-state">No paired phones yet.</div>'
+
+
+def render_inventory_groups_html(inventory_groups: List[InventoryGroupView]) -> str:
+    return "".join(
+        [
+            f"""
+            <div class="inventory-group">
+              <div class="panel-head" style="margin-bottom: 8px;">
+                <div>
+                  <div class="panel-title">{escape(group.name)}</div>
+                  <div class="panel-note">{escape(group.category)} | Total {group.total_quantity:g} {escape(group.unit)}</div>
+                </div>
+              </div>
+              {''.join(
+                  [
+                      f'''
+                      <div class="batch-card">
+                        <div class="row-title">Batch: {batch.item.quantity:g} {escape(batch.item.unit)}</div>
+                        <div class="row-subtitle">{escape(batch.expiry_label)} | {"Packed" if batch.item.packed_status else "Needs pack"}</div>
+                        {f'<div class="row-subtitle">{escape(batch.item.notes)}</div>' if batch.item.notes else ''}
+                        <div class="button-row compact">
+                          <form method="get" action="/">
+                            <input type="hidden" name="edit_item_id" value="{escape(batch.item.id)}">
+                            <button type="submit" class="secondary">Edit batch</button>
+                          </form>
+                          <form method="post" action="/ui/items/{escape(batch.item.id)}/delete">
+                            <input type="hidden" name="bag_id" value="{escape(group.bag_id)}">
+                            <button type="submit" class="secondary danger">Delete batch</button>
+                          </form>
+                        </div>
+                      </div>
+                      '''
+                      for batch in group.batches
+                  ]
+              )}
+            </div>
+            """
+            for group in inventory_groups
+        ]
+    ) or '<div class="empty-state">No inventory for this GO BAG yet.</div>'
+
+
+def render_pairing_card_html(base_url: str, pair: sqlite3.Row, pi_device_id: str, bag: Bag, paired: bool) -> str:
+    return f"""
+    <div class="pair-card">
+      <div class="row-title">{escape(bag.name)}</div>
+      <div class="row-subtitle">{escape(bag_size_label(bag.size_liters))} physical GO BAG on this Raspberry Pi</div>
+      <div class="qr-wrap" style="margin-top: 12px;">
+        <img src="{qr_data_uri_for_payload(pair_qr_payload(base_url, pair['code'], pi_device_id, bag))}" alt="Pair {escape(bag.name)} QR">
+        <div class="pair-code-card">
+          <div class="pair-code-label">Pair code</div>
+          <div class="pair-code-value">{escape(pair['code'])}</div>
+          <div class="panel-note">Scan this QR code from the phone app Pair screen or enter the code manually.</div>
+          <div class="panel-note">{escape('A phone is already paired and can sync now.' if paired else 'Waiting for a phone to pair with this GO BAG.')}</div>
+        </div>
+      </div>
+    </div>
+    """
+
+
+def render_hero_tags_html(paired: bool, readiness: dict, bag: Bag, item_count: int) -> str:
+    return "".join(
+        [
+            f'<span class="tag {"ok" if paired else "warn"}">{escape(readiness["device_status"])}</span>',
+            f'<span class="tag {"ok" if readiness["bag_readiness"] == "Ready" else "warn"}">{escape(readiness["bag_readiness"])}</span>',
+            f'<span class="tag">{escape(bag_size_label(bag.size_liters))} bag</span>',
+            f'<span class="tag">{item_count} active item(s)</span>',
+        ]
+    )
+
+
+def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict:
+    with db_conn() as conn:
+        pair = active_pair_code(conn) or create_pair_code(conn)
+        bag_row = ensure_single_bag(conn)
+        update_bag_readiness(conn, bag_row["bag_id"])
+        update_device_state(conn)
+        bag_row = conn.execute("SELECT * FROM bags WHERE bag_id = ?", (bag_row["bag_id"],)).fetchone()
+        bag = row_to_bag(bag_row)
+        item_rows = conn.execute(
+            "SELECT * FROM items WHERE bag_id = ? AND deleted = 0 ORDER BY category, name",
+            (bag.bag_id,),
+        ).fetchall()
+        items = [row_to_item(row) for row in item_rows]
+        category_rows = conn.execute("SELECT * FROM categories ORDER BY name").fetchall()
+        current_time = now_ms()
+        alerts = compute_alerts(conn, current_time)
+        pi_device_id = get_meta(conn, "pi_device_id") or ""
+        paired_rows = conn.execute(
+            "SELECT phone_device_id, issued_at FROM tokens WHERE revoked = 0 ORDER BY issued_at DESC"
+        ).fetchall()
+        paired = len(paired_rows) > 0
+        last_sync_time_ms = int(get_meta(conn, "last_sync_time_ms") or "0")
+        readiness = build_readiness_summary(items, paired, current_time)
+        inventory_groups = build_inventory_groups(item_rows)
+        edit_item_row = None
+        if edit_item_id:
+            candidate = conn.execute("SELECT * FROM items WHERE id = ? AND deleted = 0", (edit_item_id,)).fetchone()
+            if candidate and candidate["bag_id"] == bag.bag_id:
+                edit_item_row = candidate
+        edit_item = row_to_item_record(edit_item_row) if edit_item_row else None
+        conn.commit()
+
+    base_url = compute_base_url(request)
+    checked_count = sum(1 for row in readiness["checklist"] if row["checked"])
+    missing_categories = [row["name"] for row in readiness["checklist"] if not row["checked"]]
+    expiring_items = [a for a in alerts if a.type == "expiring_soon"]
+    expired_items = [a for a in alerts if a.type == "expired"]
+    next_step = (
+        "Generate or scan the pairing QR so a phone can connect to this GO BAG."
+        if not paired
+        else "Use the Android app or this Pi inventory manager, then sync this GO BAG."
+    )
+    summary_cards = [
+        ("Status", readiness["device_status"], "Connected" if paired else "Waiting for a phone"),
+        ("Readiness", readiness["bag_readiness"], f"{checked_count} of {readiness['checklist_total']} categories covered"),
+        ("Last Sync", format_time_ms(last_sync_time_ms), f"{len(expired_items)} expired, {len(expiring_items)} near expiry"),
+    ]
+    readiness_alert_rows = "".join(
+        [f'<div class="alert-row">{escape(alert)}</div>' for alert in readiness["alerts"]]
+    ) or '<div class="empty-state">No readiness alerts.</div>'
+    expiry_alert_rows = "".join(
+        [
+            f'<div class="alert-row"><strong>{escape(a.item_name)}</strong><br>{escape(a.bag_name)} | {escape("Expired" if a.type == "expired" else "Expiring soon")} | {escape(format_expiry_date_ms(a.expiry_date_ms))}</div>'
+            for a in alerts
+        ]
+    ) or '<div class="empty-state">No expiry alerts.</div>'
+    missing_html = (
+        "".join([f'<span class="tag warn">{escape(category)}</span>' for category in missing_categories])
+        if missing_categories
+        else '<span class="tag ok">All core categories covered</span>'
+    )
+    bag_size_options = "".join(
+        [
+            f'<option value="{bag_type}" {"selected" if bag.bag_id and bag_type == bag_type_for_template(bag.template_id, bag.size_liters) else ""}>{escape(label)}</option>'
+            for _, bag_type, label in [(25, "25l", "25L"), (44, "44l", "44L"), (66, "66l", "66L")]
+        ]
+    )
+    inventory_notice = (
+        f"USB scan is ready with {USB_SCAN_CMD}."
+        if usb_scan_available() and qr_decode_available()
+        else f"USB scan unavailable. {USB_SCAN_CMD}: {'ok' if usb_scan_available() else 'missing'}, {QR_DECODE_CMD}: {'ok' if qr_decode_available() else 'missing'}."
+    )
+    return {
+        "bag": bag,
+        "bag_record": row_to_bag_record(bag_row),
+        "category_rows": category_rows,
+        "edit_item": edit_item,
+        "readiness": readiness,
+        "checked_count": checked_count,
+        "last_sync_time_ms": last_sync_time_ms,
+        "pair": pair,
+        "paired": paired,
+        "next_step": next_step,
+        "summary_html": render_summary_html(summary_cards),
+        "hero_tags_html": render_hero_tags_html(paired, readiness, bag, len(items)),
+        "readiness_alert_rows": readiness_alert_rows,
+        "expiry_alert_rows": expiry_alert_rows,
+        "missing_html": missing_html,
+        "pairing_card_html": render_pairing_card_html(base_url, pair, pi_device_id, bag, paired),
+        "inventory_groups_html": render_inventory_groups_html(inventory_groups),
+        "phone_rows_html": render_phone_rows_html(paired_rows),
+        "inventory_notice": inventory_notice,
+        "bag_size_options": bag_size_options,
+        "state_version": str(
+            max(
+                int(bag.updated_at or 0),
+                max((item.updated_at for item in items), default=0),
+                int(last_sync_time_ms or 0),
+                int(pair["created_at"] or 0),
+                max((int(row["issued_at"]) for row in paired_rows), default=0),
+            )
+        ),
+        "base_url": base_url,
+    }
+
+
 def ui_redirect_url(bag_id: str = "", notice: str = "", error: str = "", edit_item_id: str = "") -> str:
     params: List[str] = []
     if bag_id:
@@ -1736,6 +2258,77 @@ def ui_redirect_url(bag_id: str = "", notice: str = "", error: str = "", edit_it
     if error:
         params.append(f"error={quote(error)}")
     return "/" if not params else "/?" + "&".join(params)
+
+
+@app.get("/ui/state")
+def ui_state(request: Request) -> dict:
+    view_model = build_dashboard_view_model(request)
+    return {
+        "state_version": view_model["state_version"],
+        "next_step": view_model["next_step"],
+        "summary_html": view_model["summary_html"],
+        "hero_tags_html": view_model["hero_tags_html"],
+        "readiness_alert_rows": view_model["readiness_alert_rows"],
+        "expiry_alert_rows": view_model["expiry_alert_rows"],
+        "pairing_card_html": view_model["pairing_card_html"],
+        "pair_expires_label": format_time_ms(int(view_model["pair"]["expires_at"])),
+        "inventory_groups_html": view_model["inventory_groups_html"],
+        "inventory_notice": view_model["inventory_notice"],
+        "phone_rows_html": view_model["phone_rows_html"],
+        "bag_name": view_model["bag"].name,
+        "bag_size_label": bag_size_label(view_model["bag"].size_liters),
+    }
+
+
+@app.post("/ui/bag/settings")
+async def ui_save_bag_settings(request: Request) -> RedirectResponse:
+    form = await request.form()
+    bag_type = str(form.get("bag_type") or "").strip()
+    try:
+        size_liters = size_liters_for_bag_type(bag_type)
+        with db_conn() as conn:
+            bag_row = ensure_single_bag(conn)
+            current_name = (bag_row["name"] or "").strip()
+            target_name = (
+                default_bag_name_for_size(size_liters)
+                if is_default_bag_name(current_name)
+                else current_name or default_bag_name_for_size(size_liters)
+            )
+            write_bag_record(
+                conn,
+                bag_row["bag_id"],
+                BagUpdateRequest(
+                    name=target_name,
+                    bag_type=bag_type,
+                    last_checked_at=bag_row["last_checked_at"],
+                ),
+            )
+            conn.commit()
+        return RedirectResponse(ui_redirect_url(notice=f"Bag size set to {bag_size_label(size_liters)}."), status_code=303)
+    except HTTPException as exc:
+        return RedirectResponse(ui_redirect_url(error=str(exc.detail)), status_code=303)
+
+
+@app.post("/ui/pair-code/new")
+def ui_new_pair_code(request: Request) -> RedirectResponse:
+    require_admin_access(request)
+    with db_conn() as conn:
+        pair = create_pair_code(conn)
+        conn.commit()
+    return RedirectResponse(
+        ui_redirect_url(notice=f"New pair code ready until {format_time_ms(int(pair['expires_at']))}."),
+        status_code=303,
+    )
+
+
+@app.post("/ui/revoke_tokens")
+def ui_revoke_tokens(request: Request) -> RedirectResponse:
+    require_admin_access(request)
+    with db_conn() as conn:
+        conn.execute("UPDATE tokens SET revoked = 1")
+        update_device_state(conn, "waiting_for_pair")
+        conn.commit()
+    return RedirectResponse(ui_redirect_url(notice="All phone access was revoked."), status_code=303)
 
 
 @app.post("/ui/items/save")
@@ -1802,6 +2395,12 @@ async def ui_scan_item(request: Request) -> RedirectResponse:
         )
     except HTTPException as exc:
         return RedirectResponse(ui_redirect_url(bag_id=bag_id, error=str(exc.detail)), status_code=303)
+    except Exception as exc:
+        detail = str(exc).strip() or exc.__class__.__name__
+        return RedirectResponse(
+            ui_redirect_url(bag_id=bag_id, error=f"USB camera scan failed unexpectedly: {detail[:200]}"),
+            status_code=303,
+        )
 
 
 @app.post("/ui/items/{item_id}/delete")
@@ -1829,222 +2428,26 @@ async def ui_delete_item(item_id: str, request: Request) -> RedirectResponse:
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
-    with db_conn() as conn:
-        pair = active_pair_code(conn) or create_pair_code(conn)
-        conn.commit()
-        bags = [row_to_bag(r) for r in conn.execute("SELECT * FROM bags ORDER BY name").fetchall()]
-        items = [row_to_item(r) for r in conn.execute("SELECT * FROM items WHERE deleted = 0 ORDER BY name").fetchall()]
-        category_rows = conn.execute("SELECT * FROM categories ORDER BY name").fetchall()
-        current_time = now_ms()
-        alerts = compute_alerts(conn, current_time)
-        pi_device_id = get_meta(conn, "pi_device_id") or ""
-        paired_rows = conn.execute(
-            "SELECT phone_device_id, issued_at FROM tokens WHERE revoked = 0 ORDER BY issued_at DESC"
-        ).fetchall()
-        settings_row = conn.execute("SELECT default_bag_id FROM settings WHERE id = 'primary'").fetchone()
-        paired = len(paired_rows) > 0
-        last_sync_time_ms = int(get_meta(conn, "last_sync_time_ms") or "0")
-        readiness = build_readiness_summary(items, paired, current_time)
-        requested_bag_id = request.query_params.get("bag", "").strip()
-        selected_bag_id = (
-            requested_bag_id
-            if requested_bag_id and any(b.bag_id == requested_bag_id for b in bags)
-            else settings_row["default_bag_id"]
-            if settings_row and settings_row["default_bag_id"] and any(b.bag_id == settings_row["default_bag_id"] for b in bags)
-            else bags[0].bag_id if bags else ""
-        )
-        if settings_row and selected_bag_id and settings_row["default_bag_id"] != selected_bag_id:
-            conn.execute("UPDATE settings SET default_bag_id = ? WHERE id = 'primary'", (selected_bag_id,))
-            conn.commit()
-        selected_bag = next((bag for bag in bags if bag.bag_id == selected_bag_id), None)
-        selected_item_rows = (
-            conn.execute("SELECT * FROM items WHERE bag_id = ? AND deleted = 0 ORDER BY category, name", (selected_bag_id,)).fetchall()
-            if selected_bag_id
-            else []
-        )
-        inventory_groups = build_inventory_groups(selected_item_rows)
-        edit_item_id = request.query_params.get("edit_item_id", "").strip()
-        edit_item_row = None
-        if edit_item_id:
-            candidate = conn.execute("SELECT * FROM items WHERE id = ? AND deleted = 0", (edit_item_id,)).fetchone()
-            if candidate and candidate["bag_id"] == selected_bag_id:
-                edit_item_row = candidate
-        edit_item = row_to_item_record(edit_item_row) if edit_item_row else None
-    base_url = compute_base_url(request)
+    edit_item_id = request.query_params.get("edit_item_id", "").strip()
+    view_model = build_dashboard_view_model(request, edit_item_id=edit_item_id)
+    bag = view_model["bag"]
+    edit_item = view_model["edit_item"]
+    readiness = view_model["readiness"]
+    category_rows = view_model["category_rows"]
     notice = request.query_params.get("notice", "").strip()
     error = request.query_params.get("error", "").strip()
     admin_query = f"?token={ADMIN_TOKEN}" if ADMIN_TOKEN else ""
-
-    checked_count = sum(1 for row in readiness["checklist"] if row["checked"])
-    missing_categories = [row["name"] for row in readiness["checklist"] if not row["checked"]]
-    expiring_items = [a for a in alerts if a.type == "expiring_soon"]
-    expired_items = [a for a in alerts if a.type == "expired"]
-    item_count_by_bag = {bag.bag_id: 0 for bag in bags}
-    for item in items:
-        item_count_by_bag[item.bag_id] = item_count_by_bag.get(item.bag_id, 0) + 1
-
-    summary_cards = [
-        ("Status", readiness["device_status"], "Connected" if paired else "Waiting for a phone"),
-        ("Readiness", readiness["bag_readiness"], f"{checked_count} of {readiness['checklist_total']} categories covered"),
-        ("Last Sync", format_time_ms(last_sync_time_ms), f"{len(expired_items)} expired, {len(expiring_items)} near expiry"),
-    ]
-
-    summary_html = "".join(
-        [
-            f"""
-            <div class="stat-card">
-              <div class="stat-label">{escape(label)}</div>
-              <div class="stat-value">{escape(value)}</div>
-              <div class="stat-note">{escape(note)}</div>
-            </div>
-            """
-            for label, value, note in summary_cards
-        ]
-    )
-
-    next_step = (
-        "Generate or scan the pairing QR so a phone can connect."
-        if not paired
-        else "Use the Android app or this Pi inventory manager, then sync the selected primary bag."
-    )
-
-    bag_rows = "".join(
-        [
-            f"""
-            <div class="list-row">
-              <div>
-                <div class="row-title">{escape(bag.name)}</div>
-                <div class="row-subtitle">{bag.size_liters}L bag - Template {escape(bag.template_id)}</div>
-              </div>
-              <div class="tag-row">
-                <span class="pill">{item_count_by_bag.get(bag.bag_id, 0)} items</span>
-                <a class="pill {'ok' if bag.bag_id == selected_bag_id else ''}" href="/?bag={quote(bag.bag_id)}">{'Selected' if bag.bag_id == selected_bag_id else 'Open'}</a>
-              </div>
-            </div>
-            """
-            for bag in bags
-        ]
-    ) or '<div class="empty-state">No bags configured.</div>'
-
-    phone_rows = "".join(
-        [
-            f"""
-            <div class="list-row">
-              <div>
-                <div class="row-title">{escape(row['phone_device_id'])}</div>
-                <div class="row-subtitle">Paired {escape(format_time_ms(int(row['issued_at'])))}</div>
-              </div>
-              <div class="pill ok">Active</div>
-            </div>
-            """
-            for row in paired_rows
-        ]
-    ) or '<div class="empty-state">No paired phones yet.</div>'
-
-    checklist_rows = "".join(
-        [
-            f'<div class="check-row {"ok" if c["checked"] else "warn"}"><span>{escape(c["name"])}</span><strong>{"Ready" if c["checked"] else "Missing"}</strong></div>'
-            for c in readiness["checklist"]
-        ]
-    )
-
-    readiness_alert_rows = "".join(
-        [f'<div class="alert-row">{escape(alert)}</div>' for alert in readiness["alerts"]]
-    ) or '<div class="empty-state">No readiness alerts.</div>'
-    expiry_alert_rows = "".join(
-        [
-            f'<div class="alert-row"><strong>{escape(a.item_name)}</strong><br>{escape(a.bag_name)} | {escape("Expired" if a.type == "expired" else "Expiring soon")} | {escape(format_expiry_date_ms(a.expiry_date_ms))}</div>'
-            for a in alerts
-        ]
-    ) or '<div class="empty-state">No expiry alerts.</div>'
-    missing_html = (
-        "".join([f'<span class="tag warn">{escape(category)}</span>' for category in missing_categories])
-        if missing_categories
-        else '<span class="tag ok">All core categories covered</span>'
-    )
-    pairing_cards = "".join(
-        [
-            f"""
-            <div class="pair-card">
-              <div class="row-title">{escape(bag.name)}</div>
-              <div class="row-subtitle">{bag.size_liters}L physical GO BAG</div>
-              <img src="{qr_data_uri_for_payload({
-                  "base_url": base_url,
-                  "pair_code": pair["code"],
-                  "pi_device_id": pi_device_id,
-                  "bag_id": bag.bag_id,
-                  "bag_name": bag.name,
-                  "size_liters": bag.size_liters,
-                  "template_id": bag.template_id,
-              })}" alt="Pair {escape(bag.name)} QR">
-              <div class="code">{escape(json.dumps({
-                  "base_url": base_url,
-                  "pair_code": pair["code"],
-                  "pi_device_id": pi_device_id,
-                  "bag_id": bag.bag_id,
-                  "bag_name": bag.name,
-                  "size_liters": bag.size_liters,
-                  "template_id": bag.template_id,
-              }, indent=2))}</div>
-            </div>
-            """
-            for bag in bags
-        ]
-    ) or '<div class="empty-state">No bags available to pair.</div>'
-    bag_selector_options = "".join(
-        [
-            f'<option value="{escape(bag.bag_id)}" {"selected" if bag.bag_id == selected_bag_id else ""}>{escape(bag.name)} ({bag.size_liters}L)</option>'
-            for bag in bags
-        ]
-    )
     category_options = "".join(
         [
             f'<option value="{escape(row["id"])}" {"selected" if edit_item and edit_item.category_id == row["id"] else ""}>{escape(row["name"])}</option>'
             for row in category_rows
         ]
     )
-    inventory_groups_html = "".join(
+    checklist_rows = "".join(
         [
-            f"""
-            <div class="inventory-group">
-              <div class="panel-head" style="margin-bottom: 8px;">
-                <div>
-                  <div class="panel-title">{escape(group.name)}</div>
-                  <div class="panel-note">{escape(group.category)} | Total {group.total_quantity:g} {escape(group.unit)}</div>
-                </div>
-              </div>
-              {''.join(
-                  [
-                      f'''
-                      <div class="batch-card">
-                        <div class="row-title">Batch: {batch.item.quantity:g} {escape(batch.item.unit)}</div>
-                        <div class="row-subtitle">{escape(batch.expiry_label)} | {"Packed" if batch.item.packed_status else "Needs pack"}</div>
-                        {f'<div class="row-subtitle">{escape(batch.item.notes)}</div>' if batch.item.notes else ''}
-                        <div class="button-row compact">
-                          <form method="get" action="/">
-                            <input type="hidden" name="bag" value="{escape(group.bag_id)}">
-                            <input type="hidden" name="edit_item_id" value="{escape(batch.item.id)}">
-                            <button type="submit" class="secondary">Edit batch</button>
-                          </form>
-                          <form method="post" action="/ui/items/{escape(batch.item.id)}/delete">
-                            <input type="hidden" name="bag_id" value="{escape(group.bag_id)}">
-                            <button type="submit" class="secondary danger">Delete batch</button>
-                          </form>
-                        </div>
-                      </div>
-                      '''
-                      for batch in group.batches
-                  ]
-              )}
-            </div>
-            """
-            for group in inventory_groups
+            f'<div class="check-row {"ok" if c["checked"] else "warn"}"><span>{escape(c["name"])}</span><strong>{"Ready" if c["checked"] else "Missing"}</strong></div>'
+            for c in readiness["checklist"]
         ]
-    ) or '<div class="empty-state">No inventory for the selected bag yet.</div>'
-    inventory_notice = (
-        "USB scan is ready with fswebcam."
-        if usb_scan_available() and qr_decode_available()
-        else f"USB scan unavailable. fswebcam: {'ok' if usb_scan_available() else 'missing'}, QR decode: {'ok' if qr_decode_available() else 'missing'}."
     )
     html = f"""
 <!doctype html>
@@ -2148,16 +2551,11 @@ def home(request: Request) -> HTMLResponse:
       border-radius: 22px;
       box-shadow: 0 8px 24px rgba(65, 52, 33, 0.08);
     }}
-    .summary-grid, .content-grid {{
+    .summary-grid {{
       display: grid;
       gap: 18px;
-    }}
-    .summary-grid {{
       grid-template-columns: 1fr;
       margin-bottom: 20px;
-    }}
-    .content-grid {{
-      grid-template-columns: 1fr;
     }}
     .stat-card {{
       padding: 18px;
@@ -2222,11 +2620,6 @@ def home(request: Request) -> HTMLResponse:
     }}
     .check-row strong.ok {{ color: var(--accent); }}
     .check-row strong.warn {{ color: var(--warn); }}
-    .two-column {{
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 16px;
-    }}
     .alert-row {{
       padding: 10px 12px;
       border-radius: 14px;
@@ -2247,20 +2640,30 @@ def home(request: Request) -> HTMLResponse:
       background: white;
       padding: 10px;
     }}
-    .code {{
-      font-family: "Cascadia Code", Consolas, monospace;
-      background: #f2ede3;
+    .pair-code-card {{
       border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 12px;
-      color: var(--ink);
-      white-space: pre-wrap;
-      word-break: break-word;
+      border-radius: 18px;
+      background: #f2ede3;
+      padding: 16px;
+    }}
+    .pair-code-label {{
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 0.76rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }}
+    .pair-code-value {{
+      font-family: "Cascadia Code", Consolas, monospace;
+      font-size: clamp(1.8rem, 8vw, 2.5rem);
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      margin-bottom: 10px;
     }}
     form {{
       margin-top: 14px;
     }}
-    form.inline, .button-row form, .bag-picker form {{
+    form.inline, .button-row form {{
       margin-top: 0;
       flex: 1;
     }}
@@ -2319,11 +2722,6 @@ def home(request: Request) -> HTMLResponse:
       background: #f9f2e4;
       margin-top: 10px;
     }}
-    .pair-grid {{
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 16px;
-    }}
     .pair-card {{
       border: 1px solid var(--line);
       border-radius: 18px;
@@ -2372,39 +2770,34 @@ def home(request: Request) -> HTMLResponse:
       .field-grid {{
         grid-template-columns: 1.1fr 0.7fr 0.9fr;
       }}
-      .pair-grid {{
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+      .field-grid.settings-grid {{
+        grid-template-columns: 1fr auto;
       }}
     }}
   </style>
 </head>
-<body>
+<body data-state-version="{escape(view_model['state_version'])}">
   <main>
     <section class="hero">
       <div class="hero-grid">
         <div>
           <div class="hero-kicker">Go-Bag Pi Command Center</div>
-          <h1>Home base for every bag, phone, and sync.</h1>
-          <p>{escape(next_step)}</p>
-          <div class="hero-tags">
-            <span class="tag {'ok' if paired else 'warn'}">{escape(readiness['device_status'])}</span>
-            <span class="tag {'ok' if readiness['bag_readiness'] == 'Ready' else 'warn'}">{escape(readiness['bag_readiness'])}</span>
-            <span class="tag">{len(bags)} bag(s)</span>
-            <span class="tag">{len(items)} active item(s)</span>
-          </div>
+          <h1>Home base for this GO BAG, phone, and sync.</h1>
+          <p id="hero-next-step">{escape(view_model['next_step'])}</p>
+          <div class="hero-tags" id="hero-tags">{view_model['hero_tags_html']}</div>
         </div>
         <div class="panel">
           <div class="panel-title">What to do next</div>
-          <p class="panel-note">Pair a phone, manage packing on the Android app, then sync back here for a full-picture dashboard.</p>
+          <p class="panel-note">This Raspberry Pi manages one physical GO BAG. Pair a phone, update inventory, and keep the kiosk view current.</p>
           <div class="tag-row" style="margin-top: 12px;">
-            {missing_html}
+            {view_model['missing_html']}
           </div>
         </div>
       </div>
     </section>
 
-    <section class="summary-grid" aria-label="Status">
-      {summary_html}
+    <section class="summary-grid" aria-label="Status" id="summary-grid">
+      {view_model['summary_html']}
     </section>
 
     {f'<div class="banner notice">{escape(notice)}</div>' if notice else ''}
@@ -2417,32 +2810,44 @@ def home(request: Request) -> HTMLResponse:
           <div class="panel-note">Use this section to catch issues before you leave.</div>
         </div>
       </div>
-      {readiness_alert_rows}
-      {expiry_alert_rows}
+      <div id="alerts-readiness">{view_model['readiness_alert_rows']}</div>
+      <div id="alerts-expiry">{view_model['expiry_alert_rows']}</div>
     </section>
 
     <section class="panel">
       <div class="panel-head">
         <div>
-          <div class="panel-title">Bags</div>
-          <div class="panel-note">Pick a bag below to manage its inventory and generate a bag-specific pairing QR.</div>
+          <div class="panel-title">Bag Settings</div>
+          <div class="panel-note">This Raspberry Pi keeps one local GO BAG. The only bag-specific setting here is the bag size.</div>
+        </div>
+        <div class="pill" id="bag-size-badge">{escape(bag_size_label(bag.size_liters))}</div>
+      </div>
+      <div class="list-row" style="padding-top: 0; border-top: none;">
+        <div>
+          <div class="row-title" id="bag-name-label">{escape(bag.name)}</div>
+          <div class="row-subtitle">Device: {escape(DEVICE_NAME)}</div>
         </div>
       </div>
-      {bag_rows}
+      <form method="post" action="/ui/bag/settings">
+        <div class="field-grid settings-grid">
+          <select name="bag_type" aria-label="Bag size">
+            {view_model['bag_size_options']}
+          </select>
+          <button type="submit">Save bag size</button>
+        </div>
+      </form>
     </section>
 
     <section class="panel">
       <div class="panel-head">
         <div>
-          <div class="panel-title">Bag Pairing QR Codes</div>
-          <div class="panel-note">Open the Android app, go to Pair, and scan the QR under the specific physical bag you want to add.</div>
+          <div class="panel-title">Pairing QR</div>
+          <div class="panel-note">Open the Android app, go to Pair, and scan this GO BAG QR code.</div>
         </div>
-        <div class="pill warn">Expires {escape(format_time_ms(int(pair['expires_at'])))}</div>
+        <div class="pill warn" id="pair-expires">Expires {escape(format_time_ms(int(view_model['pair']['expires_at'])))}</div>
       </div>
-      <div class="pair-grid">
-        {pairing_cards}
-      </div>
-      <form method="post" action="/admin/new_pair_code{admin_query}">
+      <div id="pairing-card">{view_model['pairing_card_html']}</div>
+      <form method="post" action="/ui/pair-code/new{admin_query}">
         <button type="submit">Generate new pair code</button>
       </form>
     </section>
@@ -2454,17 +2859,9 @@ def home(request: Request) -> HTMLResponse:
           <div class="panel-note">Manual add and QR scan both merge by item name, unit, and category. Different expiration dates stay as separate batches under one grouped item.</div>
         </div>
       </div>
-      <div class="row-subtitle" style="margin-bottom: 12px;">{escape(inventory_notice)}</div>
-      <form method="get" action="/" class="bag-picker">
-        <div class="field-grid" style="grid-template-columns: 1fr auto;">
-          <select name="bag">
-            {bag_selector_options}
-          </select>
-          <button type="submit" class="secondary">Open bag</button>
-        </div>
-      </form>
+      <div class="row-subtitle" id="inventory-live-note" style="margin-bottom: 12px;">{escape(view_model['inventory_notice'])}</div>
       <form method="post" action="/ui/items/save">
-        <input type="hidden" name="bag_id" value="{escape(selected_bag_id)}">
+        <input type="hidden" name="bag_id" value="{escape(bag.bag_id)}">
         <input type="hidden" name="item_id" value="{escape(edit_item.id if edit_item else '')}">
         <div class="field-grid">
           <input type="text" name="name" placeholder="Item name" value="{escape(edit_item.name if edit_item else '')}" required>
@@ -2475,7 +2872,7 @@ def home(request: Request) -> HTMLResponse:
           <select name="category_id" required>
             {category_options}
           </select>
-          <input type="date" name="expiry_date" value="{escape(edit_item.expiry_date or '' if edit_item else '')}">
+          <input type="date" name="expiry_date" value="{escape(edit_item.expiry_date if edit_item and edit_item.expiry_date else '')}">
           <label style="display:flex; align-items:center; gap:8px; padding: 12px 0;">
             <input type="checkbox" name="packed_status" {"checked" if edit_item and edit_item.packed_status else ""} style="width:auto;">
             Mark batch as packed
@@ -2487,10 +2884,10 @@ def home(request: Request) -> HTMLResponse:
         </div>
       </form>
       <form method="post" action="/ui/items/scan" class="inline">
-        <input type="hidden" name="bag_id" value="{escape(selected_bag_id)}">
+        <input type="hidden" name="bag_id" value="{escape(bag.bag_id)}">
         <button type="submit" class="secondary">Scan with USB camera</button>
       </form>
-      {inventory_groups_html}
+      <div id="inventory-groups">{view_model['inventory_groups_html']}</div>
     </section>
 
     <section class="panel">
@@ -2500,8 +2897,8 @@ def home(request: Request) -> HTMLResponse:
           <div class="panel-note">Devices currently allowed to sync with this Raspberry Pi.</div>
         </div>
       </div>
-      {phone_rows}
-      <form method="post" action="/admin/revoke_tokens{admin_query}">
+      <div id="paired-phones">{view_model['phone_rows_html']}</div>
+      <form method="post" action="/ui/revoke_tokens{admin_query}">
         <button type="submit" class="secondary danger">Revoke all phone access</button>
       </form>
     </section>
@@ -2512,11 +2909,62 @@ def home(request: Request) -> HTMLResponse:
           <div class="panel-title">Checklist</div>
           <div class="panel-note">These are the core categories every go-bag should cover.</div>
         </div>
-        <div class="pill">{checked_count}/{readiness['checklist_total']}</div>
+        <div class="pill">{view_model['checked_count']}/{readiness['checklist_total']}</div>
       </div>
       {checklist_rows}
     </section>
   </main>
+  <script>
+    (() => {{
+      const refreshIntervalMs = {UI_REFRESH_INTERVAL_MS};
+      let lastStateVersion = document.body.dataset.stateVersion || "";
+
+      async function refreshDashboard() {{
+        try {{
+          const response = await fetch("/ui/state", {{
+            headers: {{ "Accept": "application/json" }},
+            cache: "no-store",
+          }});
+          if (!response.ok) {{
+            return;
+          }}
+          const state = await response.json();
+          if (state.state_version === lastStateVersion) {{
+            return;
+          }}
+          lastStateVersion = state.state_version || "";
+          document.body.dataset.stateVersion = lastStateVersion;
+          const heroNextStep = document.getElementById("hero-next-step");
+          const heroTags = document.getElementById("hero-tags");
+          const summaryGrid = document.getElementById("summary-grid");
+          const alertsReadiness = document.getElementById("alerts-readiness");
+          const alertsExpiry = document.getElementById("alerts-expiry");
+          const pairExpires = document.getElementById("pair-expires");
+          const pairingCard = document.getElementById("pairing-card");
+          const inventoryLiveNote = document.getElementById("inventory-live-note");
+          const inventoryGroups = document.getElementById("inventory-groups");
+          const pairedPhones = document.getElementById("paired-phones");
+          const bagNameLabel = document.getElementById("bag-name-label");
+          const bagSizeBadge = document.getElementById("bag-size-badge");
+          if (heroNextStep) heroNextStep.textContent = state.next_step || "";
+          if (heroTags) heroTags.innerHTML = state.hero_tags_html || "";
+          if (summaryGrid) summaryGrid.innerHTML = state.summary_html || "";
+          if (alertsReadiness) alertsReadiness.innerHTML = state.readiness_alert_rows || "";
+          if (alertsExpiry) alertsExpiry.innerHTML = state.expiry_alert_rows || "";
+          if (pairExpires) pairExpires.textContent = `Expires ${{state.pair_expires_label || ""}}`;
+          if (pairingCard) pairingCard.innerHTML = state.pairing_card_html || "";
+          if (inventoryLiveNote) inventoryLiveNote.textContent = state.inventory_notice || "";
+          if (inventoryGroups) inventoryGroups.innerHTML = state.inventory_groups_html || "";
+          if (pairedPhones) pairedPhones.innerHTML = state.phone_rows_html || "";
+          if (bagNameLabel) bagNameLabel.textContent = state.bag_name || "";
+          if (bagSizeBadge) bagSizeBadge.textContent = state.bag_size_label || "";
+        }} catch (_error) {{
+        }}
+      }}
+
+      window.setInterval(refreshDashboard, refreshIntervalMs);
+    }})();
+  </script>
 </body>
 </html>
 """
