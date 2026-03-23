@@ -7,8 +7,11 @@ APP_ROOT="$(cd "${APP_DIR}/.." && pwd)"
 CONFIG_FILE="${GOBAG_CONFIG_FILE:-${APP_ROOT}/config/gobag.env}"
 
 if [[ -f "${CONFIG_FILE}" ]]; then
+  # Export config values so uvicorn inherits the configured runtime paths.
+  set -a
   # shellcheck disable=SC1090
   source "${CONFIG_FILE}"
+  set +a
 fi
 
 HOST="${GOBAG_HOST:-0.0.0.0}"
