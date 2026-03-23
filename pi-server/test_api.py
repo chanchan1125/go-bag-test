@@ -1,6 +1,6 @@
 import importlib.util
 import os
-import tempfile
+import shutil
 import time
 import unittest
 import uuid
@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 
 ROOT = Path(__file__).resolve().parent
+TEST_TEMP_ROOT = ROOT.parent / ".tmp-pi-tests"
 
 
 def load_server_module(temp_dir: str):
@@ -24,14 +25,16 @@ def load_server_module(temp_dir: str):
 
 class PiServerApiTests(unittest.TestCase):
     def setUp(self):
-        self.temp_dir_ctx = tempfile.TemporaryDirectory()
-        self.temp_dir = self.temp_dir_ctx.name
+        TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        self.temp_dir = str(TEST_TEMP_ROOT / f"case-{uuid.uuid4().hex}")
+        os.makedirs(self.temp_dir, exist_ok=True)
         self.module = load_server_module(self.temp_dir)
+        self.module.init_db()
         self.client = TestClient(self.module.app)
 
     def tearDown(self):
         self.client.close()
-        self.temp_dir_ctx.cleanup()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_health_and_status_endpoints(self):
         health = self.client.get("/health")
@@ -53,7 +56,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(categories.status_code, 200)
         category_id = categories.json()[0]["id"]
 
-        bag = self.client.post("/bags", json={"name": "Family Bag", "bag_type": "custom"})
+        bag = self.client.post("/bags", json={"name": "Family Bag", "bag_type": "44l"})
         self.assertEqual(bag.status_code, 201)
         bag_id = bag.json()["id"]
 
@@ -193,7 +196,7 @@ class PiServerApiTests(unittest.TestCase):
 
     def test_alerts_include_item_bag_and_expiry_details(self):
         category_id = self.client.get("/categories").json()[0]["id"]
-        bag = self.client.post("/bags", json={"name": "Medic Bag", "bag_type": "custom"})
+        bag = self.client.post("/bags", json={"name": "Medic Bag", "bag_type": "44l"})
         self.assertEqual(bag.status_code, 201)
         bag_id = bag.json()["id"]
 
@@ -224,6 +227,74 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(payload[0]["item_name"], "Bandage Roll")
         self.assertEqual(payload[0]["type"], "expiring_soon")
         self.assertIsInstance(payload[0]["expiry_date_ms"], int)
+
+    def test_manual_add_merges_same_batch_and_preserves_separate_expiry_batches(self):
+        category_id = self.client.get("/categories").json()[0]["id"]
+        bag = self.client.post("/bags", json={"name": "Merge Bag", "bag_type": "25l"})
+        self.assertEqual(bag.status_code, 201)
+        bag_id = bag.json()["id"]
+
+        first = self.client.post(
+            f"/bags/{bag_id}/items",
+            json={
+                "category_id": category_id,
+                "name": "Canned Tuna",
+                "quantity": 2,
+                "unit": "1 can",
+                "packed_status": False,
+                "expiry_date": "2026-10-01",
+                "notes": "",
+            },
+        )
+        self.assertEqual(first.status_code, 201)
+
+        merged = self.client.post(
+            f"/bags/{bag_id}/items",
+            json={
+                "category_id": category_id,
+                "name": "Canned Tuna",
+                "quantity": 3,
+                "unit": "1 can",
+                "packed_status": False,
+                "expiry_date": "2026-10-01",
+                "notes": "",
+            },
+        )
+        self.assertEqual(merged.status_code, 201)
+        self.assertEqual(merged.json()["quantity"], 5)
+        self.assertEqual(merged.json()["id"], first.json()["id"])
+
+        second_batch = self.client.post(
+            f"/bags/{bag_id}/items",
+            json={
+                "category_id": category_id,
+                "name": "Canned Tuna",
+                "quantity": 4,
+                "unit": "1 can",
+                "packed_status": False,
+                "expiry_date": "2026-12-15",
+                "notes": "",
+            },
+        )
+        self.assertEqual(second_batch.status_code, 201)
+        self.assertNotEqual(second_batch.json()["id"], first.json()["id"])
+
+        items = self.client.get(f"/bags/{bag_id}/items")
+        self.assertEqual(items.status_code, 200)
+        payload = items.json()
+        self.assertEqual(len(payload), 2)
+        quantities = sorted(item["quantity"] for item in payload)
+        self.assertEqual(quantities, [4, 5])
+
+    def test_parse_item_qr_content_requires_expected_format(self):
+        parsed = self.module.parse_item_qr_content("Water/6 bottles/Food/2026-12-31")
+        self.assertEqual(parsed.name, "Water")
+        self.assertEqual(parsed.unit, "6 bottles")
+        self.assertEqual(parsed.category, "Water & Food")
+        self.assertEqual(parsed.expiry_date, "2026-12-31")
+
+        with self.assertRaises(self.module.HTTPException):
+            self.module.parse_item_qr_content("bad-qr-value")
 
 
 if __name__ == "__main__":

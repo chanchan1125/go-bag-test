@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -20,6 +21,8 @@ data class PairingUiState(
     val endpoint_detail: String = "Scan the Raspberry Pi QR code or test a local address.",
     val auth_status: String = "Not authenticated",
     val pairing_detail: String = "No Raspberry Pi has been paired with this phone yet.",
+    val paired_bag_count: Int = 0,
+    val selected_bag_name: String = "",
     val running: Boolean = false,
     val error: String = "",
     val feedback_message: String = ""
@@ -48,7 +51,7 @@ private data class PairingEndpointState(
 
 class PairingViewModel(
     private val pairing_repository: PairingRepository,
-    sync_repository: SyncRepository
+    private val sync_repository: SyncRepository
 ) : ViewModel() {
     private val running = MutableStateFlow(false)
     private val error = MutableStateFlow("")
@@ -99,24 +102,30 @@ class PairingViewModel(
         sync_repository.observe_device_state(),
         view_inputs
     ) { state, inputs ->
-        val paired = state.auth_token.isNotBlank() && state.base_url.isNotBlank()
-        val savedEndpointOnly = state.base_url.isNotBlank() && state.auth_token.isBlank()
+        val paired = state.paired_bags.isNotEmpty()
+        val savedEndpointOnly = state.saved_addresses.isNotEmpty() && state.paired_bags.isEmpty()
         PairingUiState(
             status = when {
-                paired -> "Paired to Raspberry Pi"
+                paired -> "Bag pairing ready"
                 savedEndpointOnly -> "Address saved only"
                 else -> "Not paired"
             },
             endpoint = state.base_url,
-            manual_endpoint = inputs.endpoint_input.ifBlank { state.base_url },
+            manual_endpoint = inputs.endpoint_input.ifBlank {
+                state.saved_addresses.firstOrNull { it.is_active }?.base_url ?: state.base_url
+            },
             endpoint_status = inputs.endpoint_status,
             endpoint_detail = inputs.endpoint_detail,
-            auth_status = if (state.auth_token.isNotBlank()) "Authenticated" else "Not authenticated",
+            auth_status = if (state.auth_token.isNotBlank()) "Authenticated for selected bag" else "Not authenticated",
             pairing_detail = when {
-                paired -> "This phone has pairing credentials and can sync inventory."
+                paired && state.selected_bag_id.isNotBlank() ->
+                    "This phone has ${state.paired_bags.size} paired bag(s). The selected bag is currently ready for sync."
+                paired -> "This phone has ${state.paired_bags.size} paired bag(s). Choose one as primary before syncing."
                 savedEndpointOnly -> "This phone knows the Raspberry Pi address, but it still needs QR pairing to authenticate."
                 else -> "No Raspberry Pi has been paired with this phone yet."
             },
+            paired_bag_count = state.paired_bags.size,
+            selected_bag_name = state.selected_bag_id,
             running = inputs.running,
             error = inputs.error,
             feedback_message = inputs.feedback
@@ -169,11 +178,16 @@ class PairingViewModel(
 
     fun unpair() {
         viewModelScope.launch {
-            pairing_repository.unpair()
+            val selectedBagId = sync_repository.observe_device_state().first().selected_bag_id
+            if (selectedBagId.isBlank()) {
+                error.value = "No paired bag is selected."
+                return@launch
+            }
+            pairing_repository.unpair_bag(selectedBagId)
             error.value = ""
             endpointStatus.value = "Unknown"
-            endpointDetail.value = "Pairing credentials removed from this phone."
-            feedback_message.value = "Device unpaired."
+            endpointDetail.value = "Selected bag removed from this phone."
+            feedback_message.value = "Bag unpaired."
         }
     }
 

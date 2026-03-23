@@ -35,7 +35,10 @@ class SyncViewModel(
 
     private val running = kotlinx.coroutines.flow.MutableStateFlow(false)
     private val feedback_message = kotlinx.coroutines.flow.MutableStateFlow("")
-    private val bags = item_repository.observe_bags()
+    private val bags = combine(item_repository.observe_bags(), sync_repository.observe_device_state()) { bagList, state ->
+        val pairedBagIds = state.paired_bags.map { it.bag_id }.toSet()
+        bagList.filter { it.bag_id in pairedBagIds }
+    }
     private val selectedBagId = combine(sync_repository.observe_device_state(), bags) { state, bagList ->
         when {
             state.selected_bag_id.isNotBlank() && bagList.any { it.bag_id == state.selected_bag_id } -> state.selected_bag_id

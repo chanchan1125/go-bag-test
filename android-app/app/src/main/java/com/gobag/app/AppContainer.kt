@@ -13,5 +13,5 @@ class AppContainer(context: Context) {
 
     val item_repository = GoBagItemRepository(db.bag_dao(), db.item_dao(), db.recommended_item_dao())
     val sync_repository = GoBagSyncRepository(context, item_repository, db.conflict_dao(), device_state_store)
-    val pairing_repository = GoBagPairingRepository(device_state_store, db.recommended_item_dao(), sync_repository)
+    val pairing_repository = GoBagPairingRepository(device_state_store, db.recommended_item_dao(), item_repository, sync_repository)
 }

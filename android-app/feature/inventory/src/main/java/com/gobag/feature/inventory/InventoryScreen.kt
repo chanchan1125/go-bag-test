@@ -168,7 +168,7 @@ fun InventoryScreen(view_model: InventoryViewModel, on_back: () -> Unit) {
                             if (state.bag_id.isBlank()) {
                                 "This screen stays local-first and can sync back to the Raspberry Pi whenever the phone is paired."
                             } else {
-                                "${state.items.size} visible item(s) in ${state.selected_bag_name}. Changes save here first, then sync to the Raspberry Pi."
+                                "${state.item_groups.size} grouped item(s) in ${state.selected_bag_name}. Changes save here first, then sync to the Raspberry Pi."
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -181,10 +181,7 @@ fun InventoryScreen(view_model: InventoryViewModel, on_back: () -> Unit) {
                         onSelectPrimaryBag = view_model::set_primary_bag,
                         onPrimaryBagNameChange = view_model::on_primary_bag_name_changed,
                         onPrimaryBagSizeChange = view_model::on_primary_bag_size_changed,
-                        onSavePrimaryBag = view_model::save_primary_bag,
-                        onCreateBag = view_model::create_bag,
-                        onCreateBagNameChange = view_model::on_new_bag_name_changed,
-                        onCreateBagSizeChange = view_model::on_new_bag_size_changed
+                        onSavePrimaryBag = view_model::save_primary_bag
                     )
                 }
                 item {
@@ -209,17 +206,17 @@ fun InventoryScreen(view_model: InventoryViewModel, on_back: () -> Unit) {
                         onCategoryFilterChange = view_model::on_category_filter_changed
                     )
                 }
-                if (state.items.isEmpty()) {
+                if (state.item_groups.isEmpty()) {
                     item {
                         EmptyInventoryCard(noBagSelected = state.bag_id.isBlank())
                     }
                 } else {
-                    items(state.items) { item ->
-                        InventoryItemRow(
-                            item = item,
-                            onToggle = { view_model.toggle_packed(item) },
-                            onDelete = { pendingDelete = item },
-                            onEdit = { view_model.load_item_for_edit(item) }
+                    items(state.item_groups) { group ->
+                        InventoryGroupRow(
+                            group = group,
+                            onToggle = view_model::toggle_packed,
+                            onDelete = { pendingDelete = it },
+                            onEdit = view_model::load_item_for_edit
                         )
                     }
                 }
@@ -238,10 +235,7 @@ private fun InventoryBagCard(
     onSelectPrimaryBag: (String) -> Unit,
     onPrimaryBagNameChange: (String) -> Unit,
     onPrimaryBagSizeChange: (String) -> Unit,
-    onSavePrimaryBag: () -> Unit,
-    onCreateBag: () -> Unit,
-    onCreateBagNameChange: (String) -> Unit,
-    onCreateBagSizeChange: (String) -> Unit
+    onSavePrimaryBag: () -> Unit
 ) {
     Card(
         shape = RoundedCornerShape(28.dp),
@@ -256,7 +250,7 @@ private fun InventoryBagCard(
             Text("Bag setup", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(
                 if (state.bag_id.isBlank()) {
-                    "Choose or create the bag that should act as the phone's current primary bag."
+                    "Pair a physical GO BAG by QR code before it becomes selectable here."
                 } else {
                     "Inventory below shows items from the current primary bag only."
                 },
@@ -282,13 +276,12 @@ private fun InventoryBagCard(
                         label = { Text("Bag name") },
                         singleLine = true
                     )
-                    OutlinedTextField(
-                        value = state.primary_bag_size_input,
-                        onValueChange = onPrimaryBagSizeChange,
-                        modifier = Modifier.weight(0.45f),
-                        label = { Text("Liters") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
+                    SimpleOptionDropdown(
+                        label = "Size",
+                        selected = "${state.primary_bag_size_input}L",
+                        options = state.bag_size_options.map { "${it}L" },
+                        modifier = Modifier.weight(0.52f),
+                        onSelected = { onPrimaryBagSizeChange(it.removeSuffix("L")) }
                     )
                 }
                 Button(
@@ -300,41 +293,12 @@ private fun InventoryBagCard(
                 ) {
                     Text("Save primary bag changes")
                 }
-            }
-
-            Text(
-                if (state.bags.isEmpty()) "Create your first bag" else "Add another bag",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedTextField(
-                    value = state.new_bag_name,
-                    onValueChange = onCreateBagNameChange,
-                    modifier = Modifier.weight(1f),
-                    label = { Text("New bag name") },
-                    singleLine = true
+            } else {
+                Text(
+                    "No paired bags are available yet. Open Pairing and scan a bag QR from the Raspberry Pi app.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                OutlinedTextField(
-                    value = state.new_bag_size_input,
-                    onValueChange = onCreateBagSizeChange,
-                    modifier = Modifier.weight(0.45f),
-                    label = { Text("Liters") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true
-                )
-            }
-            Button(
-                onClick = onCreateBag,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(20.dp)
-            ) {
-                Text("Create bag and set as primary")
             }
         }
     }
@@ -504,7 +468,7 @@ private fun InventoryFilterCard(
                 AssistChip(onClick = { onCategoryFilterChange("") }, label = { Text("All") })
                 Spacer(modifier = Modifier.weight(1f))
                 Text(
-                    "${state.items.size} item(s) shown",
+                    "${state.item_groups.size} grouped item(s) shown",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -580,6 +544,24 @@ private fun CategoryDropdown(label: String, selected: String, options: List<Stri
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun UnitDropdown(selected: String, options: List<String>, onSelected: (String) -> Unit, modifier: Modifier) {
+    SimpleOptionDropdown(
+        label = "Unit",
+        selected = selected,
+        options = options,
+        modifier = modifier,
+        onSelected = onSelected
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SimpleOptionDropdown(
+    label: String,
+    selected: String,
+    options: List<String>,
+    modifier: Modifier,
+    onSelected: (String) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = modifier) {
         OutlinedTextField(
@@ -589,7 +571,7 @@ private fun UnitDropdown(selected: String, options: List<String>, onSelected: (S
                 .fillMaxWidth()
                 .menuAnchor(),
             readOnly = true,
-            label = { Text("Unit") },
+            label = { Text(label) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) }
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -607,15 +589,24 @@ private fun UnitDropdown(selected: String, options: List<String>, onSelected: (S
 }
 
 @Composable
-private fun InventoryItemRow(item: Item, onToggle: () -> Unit, onDelete: () -> Unit, onEdit: () -> Unit) {
-    val normalizedCategory = PreparednessRules.normalize_category(item.category)
-    val expiryState = PreparednessRules.expiration_state(item)
+private fun InventoryGroupRow(
+    group: InventoryItemGroup,
+    onToggle: (Item) -> Unit,
+    onDelete: (Item) -> Unit,
+    onEdit: (Item) -> Unit
+) {
+    val normalizedCategory = PreparednessRules.normalize_category(group.category)
+    val allPacked = group.batches.all { it.packed_status }
+    val hasUnpacked = group.batches.any { !it.packed_status }
+    val expiryState = group.batches
+        .map { PreparednessRules.expiration_state(it) }
+        .firstOrNull { it == "EXPIRED" || it == "NEAR_EXPIRY" }
     val statusLabel = when {
-        !item.packed_status -> "Needs pack"
+        hasUnpacked -> "Needs pack"
         else -> "Packed"
     }
     val statusColor = when {
-        !item.packed_status -> MaterialTheme.colorScheme.tertiary
+        hasUnpacked -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.primary
     }
     val expiryLabel = when (expiryState) {
@@ -632,7 +623,7 @@ private fun InventoryItemRow(item: Item, onToggle: () -> Unit, onDelete: () -> U
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (item.packed_status) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant
+            containerColor = if (allPacked) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
         Column(
@@ -668,7 +659,7 @@ private fun InventoryItemRow(item: Item, onToggle: () -> Unit, onDelete: () -> U
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            item.name,
+                            group.name,
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
@@ -684,30 +675,59 @@ private fun InventoryItemRow(item: Item, onToggle: () -> Unit, onDelete: () -> U
                 }
             }
             Text(
-                "${item.quantity} ${item.unit} | Expiry: ${PreparednessRules.format_epoch_ms_to_yyyy_mm_dd(item.expiry_date_ms).ifBlank { "No expiration" }}",
+                "Total: ${group.total_quantity} ${group.unit}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            if (item.notes.isNotBlank()) {
-                Text(item.notes, style = MaterialTheme.typography.bodyMedium)
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Button(onClick = onToggle, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                    Text(if (item.packed_status) "Mark unpacked" else "Mark packed")
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                group.batches.forEach { batch ->
+                    Card(
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "Batch: ${batch.quantity} ${batch.unit} | ${PreparednessRules.format_epoch_ms_to_yyyy_mm_dd(batch.expiry_date_ms).ifBlank { "No expiration" }}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (batch.notes.isNotBlank()) {
+                                Text(batch.notes, style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Button(
+                                    onClick = { onToggle(batch) },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(18.dp)
+                                ) {
+                                    Text(if (batch.packed_status) "Mark unpacked" else "Mark packed")
+                                }
+                                OutlinedButton(
+                                    onClick = { onEdit(batch) },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(18.dp)
+                                ) {
+                                    Text("Edit batch")
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = { onDelete(batch) },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(18.dp)
+                            ) {
+                                Text("Delete batch", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
                 }
-                OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                    Text("Edit")
-                }
-            }
-            OutlinedButton(
-                onClick = onDelete,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp)
-            ) {
-                Text("Delete", color = MaterialTheme.colorScheme.error)
             }
         }
     }
@@ -761,7 +781,7 @@ private fun EmptyInventoryCard(noBagSelected: Boolean) {
     }
 }
 
-private fun bagLabel(bag: BagProfile): String = "${bag.name} | ${bag.size_liters}L"
+private fun bagLabel(bag: BagProfile): String = bag.name
 
 private fun categoryToken(category: String): String = when (category) {
     "Water & Food" -> "WF"
