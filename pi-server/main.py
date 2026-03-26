@@ -3504,108 +3504,12 @@ def home(request: Request) -> HTMLResponse:
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 0 8vw;
+      padding: 0;
       text-align: center;
       color: #f8f4ea;
-      background: radial-gradient(circle at center, rgba(44, 66, 53, 0.34), rgba(5, 8, 6, 0.96));
-      font-size: clamp(1rem, 2.4vw, 1.5rem);
-      line-height: 1.5;
-    }}
-    .scan-chrome {{
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      padding: max(16px, env(safe-area-inset-top)) 18px max(22px, env(safe-area-inset-bottom)) 18px;
-    }}
-    .scan-topbar {{
-      display: flex;
-      justify-content: flex-end;
-      align-items: flex-start;
-    }}
-    .scan-close-button {{
-      pointer-events: auto;
-      appearance: none;
-      border: 1px solid rgba(248, 244, 234, 0.32);
-      background: rgba(5, 8, 6, 0.52);
-      color: #fffdf7;
-      border-radius: 999px;
-      padding: 10px 16px;
-      font-size: 0.95rem;
-      font-weight: 700;
-      backdrop-filter: blur(8px);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
-    }}
-    .scan-close-button:focus-visible {{
-      outline: 2px solid #fffdf7;
-      outline-offset: 2px;
-    }}
-    .scan-viewfinder {{
-      position: absolute;
-      inset: clamp(64px, 14vh, 120px) clamp(28px, 12vw, 160px);
-      border-radius: 28px;
-      border: 2px solid rgba(255, 255, 255, 0.72);
-      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18) inset;
-      pointer-events: none;
-    }}
-    .scan-bottombar {{
-      display: grid;
-      gap: 10px;
-      width: min(100%, 920px);
-      padding: 22px 22px 26px;
-      border-radius: 28px;
-      background: linear-gradient(180deg, rgba(5, 8, 6, 0.38), rgba(5, 8, 6, 0.84));
-      color: #fffdf7;
-      backdrop-filter: blur(12px);
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
-      align-self: center;
-    }}
-    .scan-status {{
-      font-size: clamp(1.05rem, 2.5vw, 1.5rem);
-      font-weight: 700;
-      line-height: 1.35;
-      color: #fffdf7;
-    }}
-    .scan-status.ok {{
-      color: #dcffe8;
-    }}
-    .scan-status.warn {{
-      color: #fff7cf;
-    }}
-    .scan-status.error {{
-      color: #ffd7d7;
-    }}
-    .scan-helper {{
-      color: rgba(248, 244, 234, 0.92);
-      font-size: clamp(0.95rem, 1.8vw, 1.08rem);
-      line-height: 1.5;
-      min-height: 1.5em;
-    }}
-    .scan-error-banner {{
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      width: fit-content;
-      max-width: 100%;
-      padding: 10px 14px;
-      border-radius: 999px;
-      background: rgba(148, 57, 68, 0.92);
-      color: #fff7f7;
-      font-weight: 700;
-    }}
-    .scan-live-chip {{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      width: fit-content;
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: rgba(58, 118, 90, 0.78);
-      color: #effff4;
-      font-weight: 700;
-      letter-spacing: 0.01em;
+      background: #050806;
+      font-size: clamp(0.95rem, 3vw, 1.1rem);
+      line-height: 1.4;
     }}
     @media (min-width: 720px) {{
       .qr-wrap {{
@@ -3616,23 +3520,6 @@ def home(request: Request) -> HTMLResponse:
       }}
       .field-grid.settings-grid {{
         grid-template-columns: 1fr auto;
-      }}
-    }}
-    @media (max-width: 719px) {{
-      .scan-chrome {{
-        padding: max(10px, env(safe-area-inset-top)) 10px max(14px, env(safe-area-inset-bottom)) 10px;
-      }}
-      .scan-viewfinder {{
-        inset: 18vh 18px 24vh 18px;
-        border-radius: 20px;
-      }}
-      .scan-bottombar {{
-        width: 100%;
-        padding: 16px 16px 18px;
-        border-radius: 22px;
-      }}
-      .scan-close-button {{
-        padding: 9px 14px;
       }}
     }}
   </style>
@@ -3777,19 +3664,7 @@ def home(request: Request) -> HTMLResponse:
         <div class="scan-preview-shell">
           <div class="scan-preview-frame">
             <img id="scan-preview-image" class="hidden" alt="USB camera preview">
-            <div class="scan-preview-placeholder" id="scan-preview-placeholder">Starting USB camera preview...</div>
-            <div class="scan-viewfinder" aria-hidden="true"></div>
-            <div class="scan-chrome">
-              <div class="scan-topbar">
-                <button type="button" class="scan-close-button" id="scan-close-button">Close</button>
-              </div>
-              <div class="scan-bottombar">
-                <div class="scan-live-chip">Live scan active</div>
-                <div class="scan-status warn" id="scan-status">Align the QR code inside the camera view.</div>
-                <div class="scan-helper" id="scan-helper">The Raspberry Pi watches the live preview automatically and closes this screen after a successful scan.</div>
-                <div class="scan-error-banner hidden" id="scan-error-banner"></div>
-              </div>
-            </div>
+            <div class="scan-preview-placeholder" id="scan-preview-placeholder"></div>
           </div>
         </div>
         <form id="scan-capture-form" class="hidden">
@@ -3824,44 +3699,9 @@ def home(request: Request) -> HTMLResponse:
       const documentRoot = document.documentElement;
       const scanModal = document.getElementById("scan-modal");
       const scanOpenButton = document.getElementById("scan-open-button");
-      const scanCloseButton = document.getElementById("scan-close-button");
       const scanCaptureForm = document.getElementById("scan-capture-form");
       const scanPreviewImage = document.getElementById("scan-preview-image");
       const scanPreviewPlaceholder = document.getElementById("scan-preview-placeholder");
-      const scanStatus = document.getElementById("scan-status");
-      const scanHelper = document.getElementById("scan-helper");
-      const scanErrorBanner = document.getElementById("scan-error-banner");
-      const scanGuidanceFallback = {{
-        CAMERA_PREVIEW_FAILED: [
-          "Reconnect the USB camera and make sure another app is not already using it.",
-          "Confirm the Raspberry Pi user still has camera and video permissions.",
-        ],
-        CAMERA_CAPTURE_FAILED: [
-          "Hold the QR steady and make sure the live preview is sharp before scanning.",
-          "Improve lighting and keep the QR flat in front of the lens.",
-        ],
-        NO_QR_DETECTED: [
-          "Move the QR closer so it fills more of the frame.",
-          "Hold the QR steady and reduce glare or shadows.",
-          "Keep the QR flat and centered inside the camera view.",
-        ],
-        INVALID_QR_CONTENT: [
-          "Use a GO BAG item QR in the format Item/Unit/Category/YYYY-MM-DD.",
-          "Add the item manually if this QR belongs to a different workflow.",
-        ],
-        ITEM_CREATE_FAILED: [
-          "Check the QR content and try the scan again.",
-          "Add the item manually if the same QR keeps failing.",
-        ],
-        DATABASE_SAVE_FAILED: [
-          "Check that the Raspberry Pi storage is writable and has free space.",
-          "Retry the scan after restarting the GO BAG backend if needed.",
-        ],
-        SCAN_FAILED: [
-          "Retry the scan and keep the QR centered in the preview.",
-          "If the issue continues, inspect the backend logs for USB camera details.",
-        ],
-      }};
 
       function setBanner(kind, text) {{
         const target = kind === "notice" ? pageNotice : pageError;
@@ -3878,29 +3718,6 @@ def home(request: Request) -> HTMLResponse:
         if (text && other) {{
           other.textContent = "";
           other.classList.add("hidden");
-        }}
-      }}
-
-      function setScanStatus(message, tone = "warn") {{
-        if (!scanStatus) return;
-        scanStatus.textContent = message || "";
-        scanStatus.classList.remove("ok", "warn", "error");
-        scanStatus.classList.add(tone);
-      }}
-
-      function setScanHelper(message) {{
-        if (!scanHelper) return;
-        scanHelper.textContent = message || "";
-      }}
-
-      function showScanErrorBanner(message) {{
-        if (!scanErrorBanner) return;
-        if (message) {{
-          scanErrorBanner.textContent = message;
-          scanErrorBanner.classList.remove("hidden");
-        }} else {{
-          scanErrorBanner.textContent = "";
-          scanErrorBanner.classList.add("hidden");
         }}
       }}
 
@@ -3977,11 +3794,6 @@ def home(request: Request) -> HTMLResponse:
         return !!(scanModal && !scanModal.classList.contains("hidden"));
       }}
 
-      function scanPrimaryGuidance(code, fallbackMessage = "") {{
-        const tips = scanGuidanceFallback[code] || scanGuidanceFallback.NO_QR_DETECTED;
-        return tips[0] || fallbackMessage || "";
-      }}
-
       function resetScannerState() {{
         stopPreviewLoop();
         stopAutoScanLoop();
@@ -3992,7 +3804,7 @@ def home(request: Request) -> HTMLResponse:
         detectorFallbackActive = false;
         lastDetectedRawContent = "";
         lastDetectedAt = 0;
-        showScanErrorBanner("");
+        setPreviewPlaceholderMessage("");
       }}
 
       async function refreshDashboard() {{
@@ -4038,6 +3850,11 @@ def home(request: Request) -> HTMLResponse:
         }}
       }}
 
+      function closeScannerWithError(message) {{
+        setBanner("error", message || "USB camera scan failed.");
+        closeScanModal();
+      }}
+
       async function refreshPreviewFrame(forceReload = false) {{
         if (!scanPreviewImage || !scanIsOpen() || previewLoading || scanBusy) {{
           return;
@@ -4048,18 +3865,11 @@ def home(request: Request) -> HTMLResponse:
             scanPreviewImage.onload = () => {{
               previewLoading = false;
               setPreviewVisible(true);
-              showScanErrorBanner("");
-              if (!scanBusy) {{
-                setScanStatus("Align the QR code inside the camera view.", "warn");
-              }}
             }};
             scanPreviewImage.onerror = () => {{
               previewLoading = false;
               setPreviewVisible(false);
-              setPreviewPlaceholderMessage("USB camera preview could not start.");
-              setScanStatus("USB camera preview failed to start.", "error");
-              setScanHelper(scanPrimaryGuidance("CAMERA_PREVIEW_FAILED"));
-              showScanErrorBanner("USB camera preview failed to start.");
+              closeScannerWithError("USB camera is unavailable.");
             }};
             scanPreviewImage.src = `${{previewUrl}}?t=${{Date.now()}}`;
           }}
@@ -4069,18 +3879,11 @@ def home(request: Request) -> HTMLResponse:
         scanPreviewImage.onload = () => {{
           previewLoading = false;
           setPreviewVisible(true);
-          showScanErrorBanner("");
-          if (!scanBusy) {{
-            setScanStatus("Align the QR code inside the camera view.", "warn");
-          }}
         }};
         scanPreviewImage.onerror = () => {{
           previewLoading = false;
           setPreviewVisible(false);
-          setPreviewPlaceholderMessage("USB camera preview could not start.");
-          setScanStatus("USB camera preview failed to start.", "error");
-          setScanHelper(scanPrimaryGuidance("CAMERA_PREVIEW_FAILED"));
-          showScanErrorBanner("USB camera preview failed to start.");
+          closeScannerWithError("USB camera is unavailable.");
         }};
         scanPreviewImage.src = `${{previewUrl}}?t=${{Date.now()}}`;
       }}
@@ -4093,8 +3896,6 @@ def home(request: Request) -> HTMLResponse:
         }}
         const detector = await getBarcodeDetector();
         if (detector) {{
-          setScanStatus("Align the QR code inside the camera view.", "warn");
-          setScanHelper("Live scan starts automatically and closes this screen after a successful GO BAG QR scan.");
           liveDetectTimer = window.setInterval(() => {{
             void detectQrFromPreview();
           }}, 280);
@@ -4102,8 +3903,6 @@ def home(request: Request) -> HTMLResponse:
           return;
         }}
         detectorFallbackActive = true;
-        setScanStatus("Align the QR code inside the camera view.", "warn");
-        setScanHelper("This Pi is watching the USB camera automatically and will return to inventory after a successful scan.");
         startAutoScanLoop(scanIntervalMs);
       }}
 
@@ -4136,8 +3935,6 @@ def home(request: Request) -> HTMLResponse:
           stopLiveDetectLoop();
           if (!detectorFallbackActive && scanIsOpen()) {{
             detectorFallbackActive = true;
-            setScanStatus("Live camera view is ready. Falling back to Pi-side QR checks.", "warn");
-            setScanHelper("Keep the QR steady in the camera view while the Raspberry Pi continues scanning automatically.");
             startAutoScanLoop(scanIntervalMs);
           }}
         }}
@@ -4145,10 +3942,7 @@ def home(request: Request) -> HTMLResponse:
 
       async function preparePreview() {{
         setPreviewVisible(false);
-        setPreviewPlaceholderMessage("Starting USB camera preview...");
-        setScanStatus("Starting USB camera preview...", "warn");
-        setScanHelper("The scanner opens full-screen and begins scanning as soon as the camera view is ready.");
-        showScanErrorBanner("");
+        setPreviewPlaceholderMessage("");
         try {{
           const response = await fetch("/camera/usb/preview/status", {{
             headers: {{ "Accept": "application/json" }},
@@ -4156,16 +3950,16 @@ def home(request: Request) -> HTMLResponse:
           }});
           const payload = await response.json().catch(() => ({{ ok: false, code: "CAMERA_PREVIEW_FAILED", message: "USB camera preview failed." }}));
           if (!response.ok || payload.ok === false) {{
-            setPreviewPlaceholderMessage(payload.message || "USB camera preview failed.");
-            setScanStatus(payload.message || "USB camera preview failed.", "error");
-            setScanHelper((payload.guidance || scanGuidanceFallback.CAMERA_PREVIEW_FAILED)[0] || "");
-            showScanErrorBanner(payload.message || "USB camera preview failed.");
+            closeScannerWithError(payload.message || "USB camera preview failed.");
             return;
           }}
           previewMode = payload.preview_mode || "snapshot";
           previewUrl = payload.preview_url || "/camera/usb/preview.jpg";
           scanIntervalMs = payload.scan_interval_ms || autoScanFallbackIntervalMs;
           await refreshPreviewFrame(true);
+          if (!scanIsOpen()) {{
+            return;
+          }}
           if (previewMode !== "stream") {{
             startPreviewLoop(payload.interval_ms || previewFallbackIntervalMs);
           }}
@@ -4173,10 +3967,7 @@ def home(request: Request) -> HTMLResponse:
             await startAutomaticScanning();
           }}
         }} catch (_error) {{
-          setPreviewPlaceholderMessage("USB camera preview failed.");
-          setScanStatus("USB camera preview failed.", "error");
-          setScanHelper(scanPrimaryGuidance("CAMERA_PREVIEW_FAILED"));
-          showScanErrorBanner("USB camera preview failed. Check the camera connection and permissions.");
+          closeScannerWithError("USB camera preview failed.");
         }}
       }}
 
@@ -4204,38 +3995,20 @@ def home(request: Request) -> HTMLResponse:
         previewMode = "snapshot";
         previewUrl = "/camera/usb/preview.jpg";
         setPreviewVisible(false);
-        setPreviewPlaceholderMessage("Starting USB camera preview...");
-        setScanStatus("Align the QR code inside the camera view.", "warn");
-        setScanHelper("The Raspberry Pi watches the live preview automatically and closes this screen after a successful scan.");
+        setPreviewPlaceholderMessage("");
       }}
 
-      function applyScanFailure(payload, automatic = false) {{
+      function handleScanFailure(payload, automatic = false) {{
         const code = payload.code || "SCAN_FAILED";
-        const guidance = payload.guidance || scanGuidanceFallback[code] || scanGuidanceFallback.NO_QR_DETECTED;
         const message = payload.message || "USB camera scan failed.";
         if (automatic && code === "NO_QR_DETECTED") {{
-          setScanStatus("Align the QR code inside the camera view.", "warn");
-          setScanHelper(guidance[0] || scanPrimaryGuidance("NO_QR_DETECTED"));
-          showScanErrorBanner("");
           scanCooldownUntil = 0;
           return;
         }}
-        setScanStatus(message, "error");
-        setScanHelper(guidance[0] || scanPrimaryGuidance(code));
-        showScanErrorBanner(message);
-        scanCooldownUntil = Date.now() + (automatic ? 3200 : 1800);
+        closeScannerWithError(message);
       }}
 
       async function handleScanSuccess(payload) {{
-        const parsed = payload.parsed || {{}};
-        const summary = [
-          parsed.name || "Item added",
-          parsed.category || "",
-          parsed.expiry_date ? `Expires ${{parsed.expiry_date}}` : "",
-        ].filter(Boolean).join(" | ");
-        setScanStatus(payload.message || "QR code detected and item added.", "ok");
-        setScanHelper(summary ? `Added ${{summary}}. Returning to inventory now.` : "QR code detected. Returning to inventory now.");
-        showScanErrorBanner("");
         setBanner("notice", payload.message || "QR code detected and item added.");
         await refreshDashboard();
         closeScanModal();
@@ -4253,9 +4026,6 @@ def home(request: Request) -> HTMLResponse:
         stopPreviewLoop();
         stopAutoScanLoop();
         stopLiveDetectLoop();
-        setScanStatus("Checking the live camera feed for a QR code...", "warn");
-        setScanHelper("Keep the QR steady and centered in the camera view.");
-        showScanErrorBanner("");
         try {{
           const response = await fetch("/camera/usb/scan", {{
             method: "POST",
@@ -4265,13 +4035,13 @@ def home(request: Request) -> HTMLResponse:
           }});
           const payload = await response.json().catch(() => ({{ ok: false, code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}));
           if (!response.ok || payload.ok === false) {{
-            applyScanFailure(payload, automatic);
+            handleScanFailure(payload, automatic);
             return;
           }}
           await handleScanSuccess(payload);
           return;
         }} catch (_error) {{
-          applyScanFailure({{ code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}, automatic);
+          handleScanFailure({{ code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}, automatic);
         }} finally {{
           scanBusy = false;
           if (scanIsOpen()) {{
@@ -4297,9 +4067,6 @@ def home(request: Request) -> HTMLResponse:
         stopPreviewLoop();
         stopAutoScanLoop();
         stopLiveDetectLoop();
-        setScanStatus("QR detected. Adding item to inventory...", "ok");
-        setScanHelper("Hold steady for a moment while the Raspberry Pi saves the scanned item.");
-        showScanErrorBanner("");
         try {{
           const requestBody = new URLSearchParams(new FormData(scanCaptureForm));
           requestBody.set("content", content);
@@ -4311,12 +4078,12 @@ def home(request: Request) -> HTMLResponse:
           }});
           const payload = await response.json().catch(() => ({{ ok: false, code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}));
           if (!response.ok || payload.ok === false) {{
-            applyScanFailure(payload, automatic);
+            handleScanFailure(payload, automatic);
             return;
           }}
           await handleScanSuccess(payload);
         }} catch (_error) {{
-          applyScanFailure({{ code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}, automatic);
+          handleScanFailure({{ code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}, automatic);
         }} finally {{
           scanBusy = false;
           if (scanIsOpen()) {{
@@ -4331,9 +4098,6 @@ def home(request: Request) -> HTMLResponse:
 
       if (scanOpenButton) {{
         scanOpenButton.addEventListener("click", openScanModal);
-      }}
-      if (scanCloseButton) {{
-        scanCloseButton.addEventListener("click", closeScanModal);
       }}
       if (scanCaptureForm) {{
         scanCaptureForm.addEventListener("submit", submitUsbScan);
