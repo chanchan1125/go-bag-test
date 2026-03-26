@@ -3404,6 +3404,71 @@ def render_pairing_card_html(base_url: str, pair: sqlite3.Row, pi_device_id: str
     """
 
 
+def render_touch_keyboard_html() -> str:
+    return """
+    <div class="touch-keyboard hidden" id="touch-keyboard" aria-hidden="true" aria-label="Touch keyboard">
+      <div class="touch-keyboard-inner">
+        <div class="touch-keyboard-row ten">
+          <button type="button" data-key="1">1</button>
+          <button type="button" data-key="2">2</button>
+          <button type="button" data-key="3">3</button>
+          <button type="button" data-key="4">4</button>
+          <button type="button" data-key="5">5</button>
+          <button type="button" data-key="6">6</button>
+          <button type="button" data-key="7">7</button>
+          <button type="button" data-key="8">8</button>
+          <button type="button" data-key="9">9</button>
+          <button type="button" data-key="0">0</button>
+        </div>
+        <div class="touch-keyboard-row ten">
+          <button type="button" data-key="q">q</button>
+          <button type="button" data-key="w">w</button>
+          <button type="button" data-key="e">e</button>
+          <button type="button" data-key="r">r</button>
+          <button type="button" data-key="t">t</button>
+          <button type="button" data-key="y">y</button>
+          <button type="button" data-key="u">u</button>
+          <button type="button" data-key="i">i</button>
+          <button type="button" data-key="o">o</button>
+          <button type="button" data-key="p">p</button>
+        </div>
+        <div class="touch-keyboard-row ten">
+          <button type="button" data-key="a">a</button>
+          <button type="button" data-key="s">s</button>
+          <button type="button" data-key="d">d</button>
+          <button type="button" data-key="f">f</button>
+          <button type="button" data-key="g">g</button>
+          <button type="button" data-key="h">h</button>
+          <button type="button" data-key="j">j</button>
+          <button type="button" data-key="k">k</button>
+          <button type="button" data-key="l">l</button>
+          <button type="button" data-key="@">@</button>
+        </div>
+        <div class="touch-keyboard-row ten">
+          <button type="button" class="action wide" data-keyboard-action="shift">Shift</button>
+          <button type="button" data-key="z">z</button>
+          <button type="button" data-key="x">x</button>
+          <button type="button" data-key="c">c</button>
+          <button type="button" data-key="v">v</button>
+          <button type="button" data-key="b">b</button>
+          <button type="button" data-key="n">n</button>
+          <button type="button" data-key="m">m</button>
+          <button type="button" data-key=".">.</button>
+          <button type="button" class="action wide" data-keyboard-action="backspace">Bksp</button>
+        </div>
+        <div class="touch-keyboard-row six">
+          <button type="button" data-key="/">/</button>
+          <button type="button" data-key="-">-</button>
+          <button type="button" data-key=":">:</button>
+          <button type="button" class="action space" data-keyboard-action="space">Space</button>
+          <button type="button" class="action wide" data-keyboard-action="clear">Clear</button>
+          <button type="button" class="action wide done" data-keyboard-action="done">Done</button>
+        </div>
+      </div>
+    </div>
+    """
+
+
 def render_hero_tags_html(paired: bool, readiness: dict, bag: Bag, item_count: int) -> str:
     return "".join(
         [
@@ -3789,7 +3854,6 @@ def home(request: Request) -> HTMLResponse:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="300">
   <title>Go-Bag Pi Command Center</title>
   <style>
     :root {{
@@ -4151,6 +4215,65 @@ def home(request: Request) -> HTMLResponse:
     .hidden {{
       display: none !important;
     }}
+    body.keyboard-open {{
+      padding-bottom: 272px;
+      scroll-padding-bottom: 272px;
+    }}
+    .touch-keyboard {{
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 55;
+      padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px));
+      background: rgba(255, 250, 240, 0.98);
+      border-top: 1px solid var(--line);
+      box-shadow: 0 -12px 28px rgba(65, 52, 33, 0.16);
+      backdrop-filter: blur(6px);
+    }}
+    .touch-keyboard-inner {{
+      max-width: 760px;
+      margin: 0 auto;
+      display: grid;
+      gap: 6px;
+    }}
+    .touch-keyboard-row {{
+      display: grid;
+      gap: 6px;
+    }}
+    .touch-keyboard-row.ten {{
+      grid-template-columns: repeat(10, minmax(0, 1fr));
+    }}
+    .touch-keyboard-row.six {{
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }}
+    .touch-keyboard button {{
+      min-height: 40px;
+      padding: 8px 6px;
+      font-size: 0.92rem;
+      border-radius: 12px;
+      background: #f7f1e4;
+      color: var(--ink);
+      border: 1px solid rgba(31, 42, 35, 0.14);
+    }}
+    .touch-keyboard button.action {{
+      background: #d9d3c4;
+      color: var(--ink);
+    }}
+    .touch-keyboard button.done {{
+      background: var(--accent);
+      color: #f8f4ea;
+    }}
+    .touch-keyboard button.active {{
+      background: var(--accent-soft);
+      color: var(--accent);
+    }}
+    .touch-keyboard button.wide {{
+      grid-column: span 2;
+    }}
+    .touch-keyboard button.space {{
+      grid-column: span 2;
+    }}
     .check-row.ok strong {{
       color: var(--accent);
     }}
@@ -4390,6 +4513,7 @@ def home(request: Request) -> HTMLResponse:
         </form>
       </section>
     </div>
+    {render_touch_keyboard_html()}
   </main>
   <script>
     (() => {{
@@ -4426,6 +4550,203 @@ def home(request: Request) -> HTMLResponse:
       const scanCaptureForm = document.getElementById("scan-capture-form");
       const scanPreviewImage = document.getElementById("scan-preview-image");
       const scanPreviewPlaceholder = document.getElementById("scan-preview-placeholder");
+      const touchKeyboard = document.getElementById("touch-keyboard");
+      const scrollStateKey = "gobag-scroll-state";
+      const keyboardEligibleSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="date"]):not([type="file"]):not([type="radio"]):not([type="range"]):not([disabled]), textarea:not([disabled])';
+      let keyboardTarget = null;
+      let keyboardShift = false;
+
+      function saveScrollState() {{
+        try {{
+          sessionStorage.setItem(
+            scrollStateKey,
+            JSON.stringify({{
+              path: window.location.pathname,
+              y: Math.max(window.scrollY || 0, 0),
+              ts: Date.now(),
+            }}),
+          );
+        }} catch (_error) {{
+        }}
+      }}
+
+      function restoreScrollState() {{
+        try {{
+          const rawState = sessionStorage.getItem(scrollStateKey);
+          if (!rawState) {{
+            return;
+          }}
+          sessionStorage.removeItem(scrollStateKey);
+          const state = JSON.parse(rawState);
+          if (!state || state.path !== window.location.pathname) {{
+            return;
+          }}
+          const top = Math.max(Number(state.y || 0), 0);
+          const applyScroll = () => {{
+            window.scrollTo({{ top, left: 0, behavior: "auto" }});
+          }};
+          window.requestAnimationFrame(applyScroll);
+          window.setTimeout(applyScroll, 120);
+          window.setTimeout(applyScroll, 260);
+        }} catch (_error) {{
+        }}
+      }}
+
+      function keyboardTargetSupportsSelection(target) {{
+        return target && typeof target.selectionStart === "number" && typeof target.selectionEnd === "number";
+      }}
+
+      function focusKeyboardTarget() {{
+        if (!keyboardTarget) return;
+        try {{
+          keyboardTarget.focus({{ preventScroll: true }});
+        }} catch (_error) {{
+          keyboardTarget.focus();
+        }}
+      }}
+
+      function dispatchKeyboardInput(target) {{
+        target.dispatchEvent(new Event("input", {{ bubbles: true }}));
+      }}
+
+      function isKeyboardEligible(target) {{
+        return !!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && target.matches(keyboardEligibleSelector);
+      }}
+
+      function updateTouchKeyboard() {{
+        if (!touchKeyboard) return;
+        touchKeyboard.querySelectorAll("[data-key]").forEach((button) => {{
+          const key = button.getAttribute("data-key") || "";
+          if (/^[a-z]$/.test(key)) {{
+            button.textContent = keyboardShift ? key.toUpperCase() : key;
+          }}
+        }});
+        const shiftButton = touchKeyboard.querySelector('[data-keyboard-action="shift"]');
+        if (shiftButton) {{
+          shiftButton.classList.toggle("active", keyboardShift);
+        }}
+      }}
+
+      function dismissTouchKeyboard() {{
+        if (!touchKeyboard) return;
+        keyboardTarget = null;
+        keyboardShift = false;
+        touchKeyboard.classList.add("hidden");
+        touchKeyboard.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("keyboard-open");
+        updateTouchKeyboard();
+      }}
+
+      function showTouchKeyboard(target) {{
+        if (!touchKeyboard || !isKeyboardEligible(target) || scanIsOpen()) return;
+        keyboardTarget = target;
+        touchKeyboard.classList.remove("hidden");
+        touchKeyboard.setAttribute("aria-hidden", "false");
+        document.body.classList.add("keyboard-open");
+        updateTouchKeyboard();
+        window.setTimeout(() => {{
+          if (keyboardTarget === target) {{
+            target.scrollIntoView({{ block: "center", behavior: "smooth" }});
+          }}
+        }}, 80);
+      }}
+
+      function insertKeyboardText(rawText) {{
+        if (!keyboardTarget) return;
+        focusKeyboardTarget();
+        const supportsSelection = keyboardTargetSupportsSelection(keyboardTarget);
+        const currentValue = keyboardTarget.value || "";
+        const text = keyboardShift ? rawText.toUpperCase() : rawText;
+        let nextValue = currentValue + text;
+        let nextCaret = nextValue.length;
+        if (supportsSelection) {{
+          const start = keyboardTarget.selectionStart;
+          const end = keyboardTarget.selectionEnd;
+          nextValue = `${{currentValue.slice(0, start)}}${{text}}${{currentValue.slice(end)}}`;
+          nextCaret = start + text.length;
+        }}
+        keyboardTarget.value = nextValue;
+        if (supportsSelection) {{
+          try {{
+            keyboardTarget.setSelectionRange(nextCaret, nextCaret);
+          }} catch (_error) {{
+          }}
+        }}
+        dispatchKeyboardInput(keyboardTarget);
+        if (keyboardShift) {{
+          keyboardShift = false;
+          updateTouchKeyboard();
+        }}
+      }}
+
+      function backspaceKeyboardText() {{
+        if (!keyboardTarget) return;
+        focusKeyboardTarget();
+        const supportsSelection = keyboardTargetSupportsSelection(keyboardTarget);
+        const currentValue = keyboardTarget.value || "";
+        if (!currentValue) return;
+        let nextValue = currentValue.slice(0, -1);
+        let nextCaret = nextValue.length;
+        if (supportsSelection) {{
+          const start = keyboardTarget.selectionStart;
+          const end = keyboardTarget.selectionEnd;
+          if (start !== end) {{
+            nextValue = `${{currentValue.slice(0, start)}}${{currentValue.slice(end)}}`;
+            nextCaret = start;
+          }} else if (start > 0) {{
+            nextValue = `${{currentValue.slice(0, start - 1)}}${{currentValue.slice(end)}}`;
+            nextCaret = start - 1;
+          }}
+        }}
+        keyboardTarget.value = nextValue;
+        if (supportsSelection) {{
+          try {{
+            keyboardTarget.setSelectionRange(nextCaret, nextCaret);
+          }} catch (_error) {{
+          }}
+        }}
+        dispatchKeyboardInput(keyboardTarget);
+      }}
+
+      function clearKeyboardTarget() {{
+        if (!keyboardTarget) return;
+        focusKeyboardTarget();
+        keyboardTarget.value = "";
+        dispatchKeyboardInput(keyboardTarget);
+      }}
+
+      function handleTouchKeyboardButton(button) {{
+        if (!button) return;
+        const action = button.getAttribute("data-keyboard-action") || "";
+        const key = button.getAttribute("data-key") || "";
+        if (!action && key) {{
+          insertKeyboardText(key);
+          return;
+        }}
+        switch (action) {{
+          case "shift":
+            keyboardShift = !keyboardShift;
+            updateTouchKeyboard();
+            break;
+          case "backspace":
+            backspaceKeyboardText();
+            break;
+          case "space":
+            insertKeyboardText(" ");
+            break;
+          case "clear":
+            clearKeyboardTarget();
+            break;
+          case "done":
+            if (keyboardTarget) {{
+              keyboardTarget.blur();
+            }}
+            dismissTouchKeyboard();
+            break;
+          default:
+            break;
+        }}
+      }}
 
       function setBanner(kind, text) {{
         const target = kind === "notice" ? pageNotice : pageError;
@@ -4586,6 +4907,9 @@ def home(request: Request) -> HTMLResponse:
           if (pairedPhones) pairedPhones.innerHTML = state.phone_rows_html || "";
           if (bagNameLabel) bagNameLabel.textContent = state.bag_name || "";
           if (bagSizeBadge) bagSizeBadge.textContent = state.bag_size_label || "";
+          if (keyboardTarget && !document.contains(keyboardTarget)) {{
+            dismissTouchKeyboard();
+          }}
         }} catch (_error) {{
         }}
       }}
@@ -4703,6 +5027,7 @@ def home(request: Request) -> HTMLResponse:
 
       function openScanModal() {{
         if (!scanModal) return;
+        dismissTouchKeyboard();
         resetScannerState();
         scanModal.classList.remove("hidden");
         scanModal.setAttribute("aria-hidden", "false");
@@ -4831,6 +5156,51 @@ def home(request: Request) -> HTMLResponse:
       if (scanCaptureForm) {{
         scanCaptureForm.addEventListener("submit", submitUsbScan);
       }}
+
+      document.addEventListener("submit", (event) => {{
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || form === scanCaptureForm) {{
+          return;
+        }}
+        saveScrollState();
+      }});
+
+      document.addEventListener("focusin", (event) => {{
+        const target = event.target;
+        if (isKeyboardEligible(target)) {{
+          showTouchKeyboard(target);
+          return;
+        }}
+        if (!touchKeyboard || touchKeyboard.contains(target)) {{
+          return;
+        }}
+        dismissTouchKeyboard();
+      }});
+
+      document.addEventListener("pointerdown", (event) => {{
+        const target = event.target;
+        if (touchKeyboard && touchKeyboard.contains(target)) {{
+          return;
+        }}
+        if (isKeyboardEligible(target)) {{
+          return;
+        }}
+        dismissTouchKeyboard();
+      }});
+
+      if (touchKeyboard) {{
+        touchKeyboard.addEventListener("pointerdown", (event) => {{
+          if (event.target instanceof HTMLElement && event.target.closest("button")) {{
+            event.preventDefault();
+          }}
+        }});
+        touchKeyboard.addEventListener("click", (event) => {{
+          const button = event.target instanceof HTMLElement ? event.target.closest("button") : null;
+          handleTouchKeyboardButton(button);
+        }});
+      }}
+
+      restoreScrollState();
 
       window.addEventListener("keydown", (event) => {{
         if (event.key === "Escape" && scanIsOpen()) {{
