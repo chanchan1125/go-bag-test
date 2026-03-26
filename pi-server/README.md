@@ -1,18 +1,19 @@
 # Go-Bag Raspberry Pi Server
 
-`pi-server/` is the Raspberry Pi backend for Go-Bag. It provides the shared sync target, dashboard, pairing flow, template download, readiness summary, and optional CSI camera capture.
+`pi-server/` is the Raspberry Pi backend for Go-Bag. It provides the shared sync target, dashboard, pairing flow, template download, readiness summary, USB-camera support, and a local app-shell launcher for the touchscreen UI.
 
 ## Features
 
 - FastAPI service on port `8080`
 - SQLite storage at `${GOBAG_DATA_DIR}/gobag.db`
 - Persistent inventory schema for bags, items, categories, device state, and settings
-- Dashboard at `/` with QR pairing, readiness summary, bags, inventory snapshot, and paired phones
+- Native full-screen Raspberry Pi app shell via `pywebview` over the local backend
+- Dashboard at `/` with QR pairing, readiness summary, device bag settings, inventory snapshot, and paired phones
 - Pair-code-based phone pairing via `POST /pair`
 - Token-protected sync via `POST /sync`
 - REST CRUD for bags and items plus status endpoints for Android settings/sync screens
 - Template download via `GET /templates`
-- Camera inspection and JPEG capture endpoints
+- Camera inspection, USB preview/session scan, and JPEG capture endpoints
 
 ## Product-style Raspberry Pi install
 
@@ -53,6 +54,7 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 - Backups dir: `/opt/gobag/backups`
 - Service: `gobag-backend.service`
 - Desktop entry: `/usr/share/applications/gobag-inventory.desktop`
+- Local UI shell: `/opt/gobag/app/scripts/run_app_shell.py`
 
 ## Environment variables
 
@@ -62,9 +64,16 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 - `GOBAG_DATA_DIR` installed default `/opt/gobag/data`
 - `GOBAG_LOG_DIR` default `/opt/gobag/logs`
 - `GOBAG_BACKUP_DIR` default `/opt/gobag/backups`
-- `GOBAG_AUTO_OPEN_BROWSER` default `1`
+- `GOBAG_AUTO_OPEN_UI` default `1`
 - `GOBAG_ADMIN_TOKEN` generated at install time for admin actions
-- `GOBAG_BROWSER_CMD` optional explicit browser command
+- `GOBAG_UI_SHELL` default `pywebview`
+- `GOBAG_APP_URL` optional override for the local app-shell URL
+- `GOBAG_APP_FULLSCREEN` default `1`
+- `GOBAG_APP_FRAMELESS` default `1`
+- `GOBAG_APP_WIDTH` default `480`
+- `GOBAG_APP_HEIGHT` default `320`
+- `GOBAG_APP_WAIT_TIMEOUT_S` default `25`
+- `GOBAG_BROWSER_CMD` optional fallback browser command for troubleshooting
 - `GOBAG_ENABLE_CAMERA` default `1`
 - `GOBAG_CAMERA_CMD` default `libcamera-still`
 - `GOBAG_CAMERA_WIDTH` default `1280`
@@ -118,7 +127,9 @@ curl http://127.0.0.1:8080/camera/status
 
 Open `http://<pi-ip>:8080/` in a browser to confirm the dashboard and QR pairing flow.
 
-You can also launch the local UI with:
+The installer also creates a desktop icon and, in `--kiosk` mode, a desktop autostart entry that opens the native GO BAG app shell instead of Chromium.
+
+You can launch the local UI shell manually with:
 
 ```bash
 /opt/gobag/app/launch.sh

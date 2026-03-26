@@ -82,15 +82,50 @@ Override behavior:
 - used for admin actions on the Pi side
 - never commit a real generated admin token
 
-### `GOBAG_AUTO_OPEN_BROWSER`
+### `GOBAG_AUTO_OPEN_UI`
 
 - default: `1`
-- used by the launcher flow to decide whether a browser opens automatically
+- used by the launcher flow to decide whether the native GO BAG app shell opens automatically
+
+### `GOBAG_UI_SHELL`
+
+- default: `pywebview`
+- selects the local Raspberry Pi UI shell implementation
+
+### `GOBAG_APP_URL`
+
+- default: blank
+- when blank, the local app shell uses `http://127.0.0.1:<port>` so the touchscreen UI works without internet access
+
+### `GOBAG_APP_FULLSCREEN`
+
+- default: `1`
+- starts the local app shell in fullscreen mode for the 3.5-inch touchscreen
+
+### `GOBAG_APP_FRAMELESS`
+
+- default: `1`
+- removes normal window chrome from the local app shell
+
+### `GOBAG_APP_WIDTH`
+
+- default: `480`
+- fallback window width for non-fullscreen launches
+
+### `GOBAG_APP_HEIGHT`
+
+- default: `320`
+- fallback window height for non-fullscreen launches
+
+### `GOBAG_APP_WAIT_TIMEOUT_S`
+
+- default: `25`
+- how long the app shell waits for the local backend to become healthy before failing
 
 ### `GOBAG_BROWSER_CMD`
 
 - default: blank
-- optional explicit browser command for launcher or kiosk use
+- optional fallback browser command for troubleshooting only
 
 ### Camera-related values
 
@@ -116,7 +151,15 @@ GOBAG_LOG_DIR=/opt/gobag/logs
 GOBAG_BACKUP_DIR=/opt/gobag/backups
 GOBAG_BASE_URL=http://192.168.1.20:8080
 GOBAG_ADMIN_TOKEN=
-GOBAG_AUTO_OPEN_BROWSER=1
+GOBAG_AUTO_OPEN_UI=1
+GOBAG_UI_SHELL=pywebview
+GOBAG_APP_URL=
+GOBAG_APP_TITLE=GO BAG Inventory
+GOBAG_APP_FULLSCREEN=1
+GOBAG_APP_FRAMELESS=1
+GOBAG_APP_WIDTH=480
+GOBAG_APP_HEIGHT=320
+GOBAG_APP_WAIT_TIMEOUT_S=25
 GOBAG_BROWSER_CMD=
 GOBAG_ENABLE_CAMERA=1
 GOBAG_CAMERA_CMD=libcamera-still

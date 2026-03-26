@@ -2,7 +2,7 @@
 Version=1.0
 Type=Application
 Name=GO BAG Inventory
-Comment=Open the GO BAG Raspberry Pi inventory hub in a standalone window
+Comment=Open the GO BAG Raspberry Pi inventory app shell
 Exec=__LAUNCH_CMD__ --app
 Icon=applications-office
 Terminal=false

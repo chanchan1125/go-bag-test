@@ -7,14 +7,16 @@ APP_ROOT="$(cd "${APP_DIR}/.." && pwd)"
 CONFIG_FILE="${GOBAG_CONFIG_FILE:-${APP_ROOT}/config/gobag.env}"
 SERVICE_NAME="${GOBAG_SERVICE_NAME:-gobag-backend.service}"
 TIMEOUT_SECONDS=20
-NO_BROWSER=0
+NO_UI=0
 KIOSK_MODE=0
 APP_MODE=0
+WINDOWED_MODE=0
+FORCE_BROWSER=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --no-browser)
-      NO_BROWSER=1
+    --no-ui|--no-browser)
+      NO_UI=1
       shift
       ;;
     --kiosk)
@@ -23,6 +25,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --app)
       APP_MODE=1
+      shift
+      ;;
+    --windowed)
+      WINDOWED_MODE=1
+      shift
+      ;;
+    --browser)
+      FORCE_BROWSER=1
       shift
       ;;
     *)
@@ -41,15 +51,18 @@ HOST="${GOBAG_HOST:-127.0.0.1}"
 PORT="${GOBAG_PORT:-8080}"
 DATA_DIR="${GOBAG_DATA_DIR:-${APP_ROOT}/data}"
 LOG_DIR="${GOBAG_LOG_DIR:-${APP_ROOT}/logs}"
+VENV_DIR="${APP_ROOT}/.venv"
 BROWSER_CMD="${GOBAG_BROWSER_CMD:-}"
-AUTO_OPEN_BROWSER="${GOBAG_AUTO_OPEN_BROWSER:-1}"
+AUTO_OPEN_UI="${GOBAG_AUTO_OPEN_UI:-${GOBAG_AUTO_OPEN_BROWSER:-1}}"
+UI_SHELL="${GOBAG_UI_SHELL:-pywebview}"
 HEALTH_URL="http://127.0.0.1:${PORT}"
-APP_URL="${GOBAG_BASE_URL:-${HEALTH_URL}}"
+APP_URL="${GOBAG_APP_URL:-${HEALTH_URL}}"
 BACKEND_LOG="${LOG_DIR}/launcher-backend.log"
 LAUNCHER_LOG="${LOG_DIR}/launcher.log"
+APP_SHELL_LOG="${LOG_DIR}/app-shell.log"
 
 mkdir -p "${DATA_DIR}" "${LOG_DIR}"
-touch "${LAUNCHER_LOG}"
+touch "${LAUNCHER_LOG}" "${APP_SHELL_LOG}"
 
 log() {
   echo "[gobag-launch] $*" | tee -a "${LAUNCHER_LOG}"
@@ -93,18 +106,36 @@ launch_with_browser() {
 
   if [[ "${KIOSK_MODE}" -eq 1 ]]; then
     nohup "${browser_parts[@]}" "${browser_flags[@]}" --kiosk "${APP_URL}" >>"${LAUNCHER_LOG}" 2>&1 &
-    log "Opened GO BAG in kiosk mode."
+    log "Opened GO BAG in browser kiosk mode."
     return 0
   fi
 
   if [[ "${APP_MODE}" -eq 1 ]]; then
     nohup "${browser_parts[@]}" "${browser_flags[@]}" --app="${APP_URL}" --start-maximized >>"${LAUNCHER_LOG}" 2>&1 &
-    log "Opened GO BAG in standalone app mode."
+    log "Opened GO BAG in browser app mode."
     return 0
   fi
 
   nohup "${browser_parts[@]}" "${APP_URL}" >>"${LAUNCHER_LOG}" 2>&1 &
-  log "Opened GO BAG using configured browser command."
+  log "Opened GO BAG using the configured browser command."
+}
+
+launch_with_app_shell() {
+  local -a shell_args=()
+
+  if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+    log "GO BAG app shell cannot start because ${VENV_DIR}/bin/python is missing."
+    return 1
+  fi
+
+  if [[ "${WINDOWED_MODE}" -eq 1 ]]; then
+    shell_args+=(--windowed)
+  else
+    shell_args+=(--fullscreen)
+  fi
+
+  nohup "${VENV_DIR}/bin/python" "${APP_DIR}/scripts/run_app_shell.py" "${shell_args[@]}" --url "${APP_URL}" >>"${APP_SHELL_LOG}" 2>&1 &
+  log "Opened GO BAG in the native app shell."
 }
 
 if [[ ! -f "${DATA_DIR}/gobag.db" ]]; then
@@ -141,24 +172,23 @@ if ! health_ok; then
   exit 1
 fi
 
-if [[ "${NO_BROWSER}" -eq 1 || "${AUTO_OPEN_BROWSER}" == "0" ]]; then
-  log "Launch finished without opening a browser."
+if [[ "${NO_UI}" -eq 1 ]]; then
+  log "Launch finished without opening the GO BAG UI."
   exit 0
 fi
 
-if [[ -n "${BROWSER_CMD}" || "${KIOSK_MODE}" -eq 1 || "${APP_MODE}" -eq 1 ]]; then
+if [[ "${AUTO_OPEN_UI}" == "0" && "${KIOSK_MODE}" -eq 0 && "${APP_MODE}" -eq 0 && "${FORCE_BROWSER}" -eq 0 ]]; then
+  log "Launch finished without opening the GO BAG UI because automatic UI launch is disabled."
+  exit 0
+fi
+
+if [[ "${FORCE_BROWSER}" -eq 1 || "${UI_SHELL}" == "browser" ]]; then
   if resolved_browser_cmd="$(resolve_browser_cmd)"; then
     launch_with_browser "${resolved_browser_cmd}"
     exit 0
   fi
-  if [[ "${KIOSK_MODE}" -eq 1 || "${APP_MODE}" -eq 1 ]]; then
-    log "Chromium app mode is unavailable, so GO BAG will fall back to the default browser."
-  fi
+  log "A browser UI was requested, but no supported browser launcher is installed."
+  exit 1
 fi
 
-if command -v xdg-open >/dev/null 2>&1; then
-  nohup xdg-open "${APP_URL}" >>"${LAUNCHER_LOG}" 2>&1 &
-  log "Opened GO BAG in the default browser."
-else
-  log "No browser launcher found. Open ${APP_URL} manually."
-fi
+launch_with_app_shell

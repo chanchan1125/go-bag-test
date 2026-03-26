@@ -53,7 +53,7 @@ Optional modes implemented by the installer:
 
 What `pi-server/install.sh` does in the current codebase:
 
-- installs system packages including Python, SQLite, `curl`, `rsync`, and camera-related packages
+- installs system packages including Python, GTK/WebKit app-shell dependencies, SQLite, `curl`, `rsync`, and camera-related packages
 - copies the Pi app into `/opt/gobag/app`
 - creates `/opt/gobag/config/gobag.env` from `pi-server/config/gobag.env.example` if needed
 - creates a Python virtual environment in `/opt/gobag/.venv`
@@ -61,6 +61,7 @@ What `pi-server/install.sh` does in the current codebase:
 - initializes or migrates the database
 - installs `/etc/systemd/system/gobag-backend.service`
 - restarts the backend service
+- installs a desktop launcher and optional desktop-login autostart entry for the native GO BAG app shell
 
 ### Installed runtime paths
 
@@ -70,6 +71,7 @@ What `pi-server/install.sh` does in the current codebase:
 - logs: `/opt/gobag/logs`
 - backups: `/opt/gobag/backups`
 - service: `/etc/systemd/system/gobag-backend.service`
+- local app shell entrypoint: `/opt/gobag/app/scripts/run_app_shell.py`
 
 ### Verify the backend service
 
@@ -243,7 +245,7 @@ For pairing and sync to work, the phone must be able to reach the Pi address in 
 ### Practical pairing flow
 
 1. Make sure the Pi backend is running.
-2. Open the Pi dashboard in a browser at `http://<pi-ip>:8080/`.
+2. Open the GO BAG app shell from the desktop icon on the Pi, or open the Pi dashboard in a browser at `http://<pi-ip>:8080/`.
 3. Open the Android app.
 4. Go to the Pairing screen.
 5. If needed, enter a Pi address and use `Test Entered Address`.

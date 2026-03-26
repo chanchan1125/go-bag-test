@@ -33,7 +33,7 @@ Usage: ./install.sh [--autostart] [--no-autostart] [--kiosk] [--user <desktop-us
 
   --autostart      Enable backend service at boot (default)
   --no-autostart   Install service but do not enable it at boot
-  --kiosk          Enable backend autostart and desktop-login browser autostart
+  --kiosk          Enable backend autostart and desktop-login GO BAG app autostart
   --user USER      Override the detected desktop user
 EOF
 }
@@ -109,24 +109,6 @@ log "Detected model: ${MODEL}"
 log "Detected architecture: ${ARCH}"
 log "Using desktop user: ${DESKTOP_USER}"
 
-install_browser_if_needed() {
-  if [[ "${ENABLE_KIOSK}" -ne 1 ]]; then
-    return
-  fi
-  if command -v chromium-browser >/dev/null 2>&1 || command -v chromium >/dev/null 2>&1; then
-    return
-  fi
-  if ${SUDO} apt-get install -y chromium-browser >/dev/null 2>&1; then
-    log "Installed chromium-browser for kiosk mode."
-    return
-  fi
-  if ${SUDO} apt-get install -y chromium >/dev/null 2>&1; then
-    log "Installed chromium for kiosk mode."
-    return
-  fi
-  log "Warning: kiosk mode requested but Chromium could not be installed automatically."
-}
-
 replace_config_value() {
   local key="$1"
   local value="$2"
@@ -152,8 +134,7 @@ render_template() {
 
 log "Installing system packages..."
 ${SUDO} apt-get update
-${SUDO} apt-get install -y python3 python3-venv python3-pip sqlite3 rsync curl xdg-utils desktop-file-utils libcamera-apps v4l-utils fswebcam zbar-tools ffmpeg
-install_browser_if_needed
+${SUDO} apt-get install -y python3 python3-venv python3-pip python3-gi python3-gi-cairo sqlite3 rsync curl xdg-utils desktop-file-utils gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libcamera-apps v4l-utils fswebcam zbar-tools ffmpeg
 
 log "Creating installation directories..."
 ${SUDO} mkdir -p "${APP_DIR}" "${CONFIG_DIR}" "${DATA_DIR}" "${LOG_DIR}" "${BACKUP_DIR}"
@@ -169,6 +150,7 @@ ${SUDO} rsync -a --delete \
 log "Ensuring executable permissions for scripts..."
 ${SUDO} chmod +x "${APP_DIR}/install.sh" "${APP_DIR}/launch.sh"
 ${SUDO} chmod +x "${APP_DIR}/scripts/"*.sh
+${SUDO} chmod +x "${APP_DIR}/scripts/run_app_shell.py"
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   log "Creating default config at ${CONFIG_FILE}..."
@@ -179,17 +161,17 @@ replace_config_value "GOBAG_DATA_DIR" "${DATA_DIR}"
 replace_config_value "GOBAG_LOG_DIR" "${LOG_DIR}"
 replace_config_value "GOBAG_BACKUP_DIR" "${BACKUP_DIR}"
 replace_config_value "GOBAG_DEVICE_NAME" "\"GO BAG Raspberry Pi\""
+replace_config_value "GOBAG_AUTO_OPEN_UI" "1"
+replace_config_value "GOBAG_UI_SHELL" "pywebview"
+replace_config_value "GOBAG_APP_FULLSCREEN" "1"
+replace_config_value "GOBAG_APP_FRAMELESS" "1"
+replace_config_value "GOBAG_APP_WIDTH" "480"
+replace_config_value "GOBAG_APP_HEIGHT" "320"
+replace_config_value "GOBAG_APP_WAIT_TIMEOUT_S" "25"
+replace_config_value "GOBAG_AUTO_OPEN_BROWSER" "0"
 if ! grep -q '^GOBAG_ADMIN_TOKEN=[^[:space:]]' "${CONFIG_FILE}" || grep -q '^GOBAG_ADMIN_TOKEN=$' "${CONFIG_FILE}"; then
   GENERATED_ADMIN_TOKEN="$(${SUDO} python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
   replace_config_value "GOBAG_ADMIN_TOKEN" "${GENERATED_ADMIN_TOKEN}"
-fi
-if [[ "${ENABLE_KIOSK}" -eq 1 ]]; then
-  replace_config_value "GOBAG_AUTO_OPEN_BROWSER" "1"
-  if command -v chromium-browser >/dev/null 2>&1; then
-    replace_config_value "GOBAG_BROWSER_CMD" "chromium-browser"
-  elif command -v chromium >/dev/null 2>&1; then
-    replace_config_value "GOBAG_BROWSER_CMD" "chromium"
-  fi
 fi
 
 log "Creating Python virtual environment..."
