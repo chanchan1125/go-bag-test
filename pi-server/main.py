@@ -324,6 +324,10 @@ class UsbCameraCapability:
     device: str
     palette_sizes: Dict[str, List[tuple[int, int]]]
     technical: str = ""
+    device_label: str = ""
+    bus_info: str = ""
+    is_video_capture: bool = False
+    is_usb: bool = False
 
 
 def now_ms() -> int:
@@ -1354,7 +1358,42 @@ def available_usb_camera_devices() -> List[str]:
     return sorted(path for path in glob.glob("/dev/video*") if os.path.exists(path))
 
 
-def parse_v4l2_format_listing(device: str, output: str) -> UsbCameraCapability:
+def parse_v4l2_device_details(device: str, output: str) -> UsbCameraCapability:
+    device_label = ""
+    bus_info = ""
+    for raw_line in output.splitlines():
+        if ":" not in raw_line:
+            continue
+        key, value = raw_line.split(":", 1)
+        normalized_key = key.strip().lower()
+        normalized_value = value.strip()
+        if normalized_key == "card type":
+            device_label = normalized_value
+        elif normalized_key == "bus info":
+            bus_info = normalized_value
+    is_video_capture = bool(re.search(r"(?mi)^\s*Video Capture(?: Multiplanar)?\s*$", output))
+    is_usb = "usb" in bus_info.lower() or "usb" in device_label.lower()
+    technical_parts = []
+    if device_label:
+        technical_parts.append(device_label)
+    if bus_info:
+        technical_parts.append(bus_info)
+    if is_video_capture:
+        technical_parts.append("video capture")
+    if is_usb:
+        technical_parts.append("usb")
+    return UsbCameraCapability(
+        device=device,
+        palette_sizes={},
+        technical=", ".join(technical_parts) or "device details unavailable",
+        device_label=device_label,
+        bus_info=bus_info,
+        is_video_capture=is_video_capture,
+        is_usb=is_usb,
+    )
+
+
+def parse_v4l2_format_listing(base: UsbCameraCapability, output: str) -> UsbCameraCapability:
     palette_sizes: Dict[str, List[tuple[int, int]]] = {}
     current_palette = ""
     for raw_line in output.splitlines():
@@ -1371,8 +1410,26 @@ def parse_v4l2_format_listing(device: str, output: str) -> UsbCameraCapability:
             size = (int(size_match.group(1)), int(size_match.group(2)))
             if size not in palette_sizes[current_palette]:
                 palette_sizes[current_palette].append(size)
-    technical = "capture formats detected" if palette_sizes else "no capture formats listed"
-    return UsbCameraCapability(device=device, palette_sizes=palette_sizes, technical=technical)
+    technical_parts = [part for part in [base.device_label, base.bus_info] if part]
+    if base.is_video_capture:
+        technical_parts.append("video capture")
+    if base.is_usb:
+        technical_parts.append("usb")
+    technical_parts.append("capture formats detected" if palette_sizes else "no capture formats listed")
+    return UsbCameraCapability(
+        device=base.device,
+        palette_sizes=palette_sizes,
+        technical=", ".join(technical_parts),
+        device_label=base.device_label,
+        bus_info=base.bus_info,
+        is_video_capture=base.is_video_capture,
+        is_usb=base.is_usb,
+    )
+
+
+def video_device_sort_key(device: str) -> tuple[int, str]:
+    match = re.search(r"(\d+)$", device)
+    return (int(match.group(1)) if match else 10**6, device)
 
 
 def read_usb_camera_capability(device: str, force_refresh: bool = False) -> UsbCameraCapability:
@@ -1386,11 +1443,11 @@ def read_usb_camera_capability(device: str, force_refresh: bool = False) -> UsbC
         _usb_camera_capability_cache[device] = (now, capability)
         return capability
 
-    command = [USB_V4L2CTL_CMD, "--device", device, "--list-formats-ext"]
-    logger.info("USB camera capability command: %s", shlex.join(command))
+    details_command = [USB_V4L2CTL_CMD, "--device", device, "--all"]
+    logger.info("USB camera details command: %s", shlex.join(details_command))
     try:
-        result = subprocess.run(
-            command,
+        details_result = subprocess.run(
+            details_command,
             check=False,
             capture_output=True,
             timeout=USB_DEVICE_QUERY_TIMEOUT_S,
@@ -1404,10 +1461,42 @@ def read_usb_camera_capability(device: str, force_refresh: bool = False) -> UsbC
         _usb_camera_capability_cache[device] = (now, capability)
         return capability
 
-    output = "\n".join(part for part in [decode_process_output(result.stdout), decode_process_output(result.stderr)] if part).strip()
-    capability = parse_v4l2_format_listing(device, output)
-    if result.returncode != 0 and not capability.palette_sizes:
-        capability.technical = output[:240] or f"returncode={result.returncode}"
+    details_output = "\n".join(
+        part for part in [decode_process_output(details_result.stdout), decode_process_output(details_result.stderr)] if part
+    ).strip()
+    capability = parse_v4l2_device_details(device, details_output)
+    if details_result.returncode != 0 and not capability.is_video_capture:
+        capability.technical = details_output[:240] or f"returncode={details_result.returncode}"
+        _usb_camera_capability_cache[device] = (now, capability)
+        return capability
+    if not capability.is_video_capture:
+        _usb_camera_capability_cache[device] = (now, capability)
+        return capability
+
+    formats_command = [USB_V4L2CTL_CMD, "--device", device, "--list-formats-ext"]
+    logger.info("USB camera capability command: %s", shlex.join(formats_command))
+    try:
+        formats_result = subprocess.run(
+            formats_command,
+            check=False,
+            capture_output=True,
+            timeout=USB_DEVICE_QUERY_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        capability.technical = f"{capability.technical}, format query timed out"
+        _usb_camera_capability_cache[device] = (now, capability)
+        return capability
+    except OSError as exc:
+        capability.technical = f"{capability.technical}, {exc.strerror or str(exc)}"
+        _usb_camera_capability_cache[device] = (now, capability)
+        return capability
+
+    formats_output = "\n".join(
+        part for part in [decode_process_output(formats_result.stdout), decode_process_output(formats_result.stderr)] if part
+    ).strip()
+    capability = parse_v4l2_format_listing(capability, formats_output)
+    if formats_result.returncode != 0 and not capability.palette_sizes:
+        capability.technical = f"{capability.technical}, {formats_output[:240] or f'returncode={formats_result.returncode}'}"
     _usb_camera_capability_cache[device] = (now, capability)
     return capability
 
@@ -1418,8 +1507,12 @@ def available_usb_capture_devices() -> List[str]:
         return []
     if not usb_v4l2ctl_available():
         return devices
-    capture_devices = [device for device in devices if read_usb_camera_capability(device).palette_sizes]
-    return capture_devices or devices
+    capabilities = [read_usb_camera_capability(device) for device in devices]
+    capture_devices = [cap for cap in capabilities if cap.is_video_capture]
+    if not capture_devices:
+        return devices
+    capture_devices.sort(key=lambda cap: (0 if cap.is_usb else 1, *video_device_sort_key(cap.device)))
+    return [cap.device for cap in capture_devices]
 
 
 async def read_ui_form(request: Request) -> Dict[str, str]:

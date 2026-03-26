@@ -328,6 +328,48 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(attempts[0], (640, 480, "MJPG"))
         self.assertIn((640, 480, None), attempts)
 
+    def test_available_usb_capture_devices_prefers_real_usb_video_capture_nodes(self):
+        capabilities = {
+            "/dev/video10": self.module.UsbCameraCapability(
+                device="/dev/video10",
+                palette_sizes={"H264": [(1920, 1080)]},
+                technical="bcm codec",
+                device_label="bcm2835-codec-decode",
+                bus_info="platform:bcm2835-codec",
+                is_video_capture=False,
+                is_usb=False,
+            ),
+            "/dev/video2": self.module.UsbCameraCapability(
+                device="/dev/video2",
+                palette_sizes={"MJPG": [(640, 480)]},
+                technical="usb camera",
+                device_label="USB2.0 PC CAMERA",
+                bus_info="usb-0000:01:00.0-1.2",
+                is_video_capture=True,
+                is_usb=True,
+            ),
+            "/dev/video3": self.module.UsbCameraCapability(
+                device="/dev/video3",
+                palette_sizes={"MJPG": [(640, 480)]},
+                technical="usb camera alt node",
+                device_label="USB2.0 PC CAMERA",
+                bus_info="usb-0000:01:00.0-1.2",
+                is_video_capture=True,
+                is_usb=True,
+            ),
+        }
+        with mock.patch.object(self.module, "usb_v4l2ctl_available", return_value=True), mock.patch.object(
+            self.module,
+            "available_usb_camera_devices",
+            return_value=["/dev/video10", "/dev/video2", "/dev/video3"],
+        ), mock.patch.object(
+            self.module,
+            "read_usb_camera_capability",
+            side_effect=lambda device: capabilities[device],
+        ):
+            devices = self.module.available_usb_capture_devices()
+        self.assertEqual(devices[:2], ["/dev/video2", "/dev/video3"])
+
     def test_home_dashboard_is_single_bag_ui_with_polling_and_pair_code_card(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
