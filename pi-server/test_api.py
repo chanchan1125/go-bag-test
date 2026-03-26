@@ -311,6 +311,8 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn('id="scan-preview-placeholder"', body)
         self.assertIn("BarcodeDetector", body)
         self.assertIn("startAutoScanLoop", body)
+        self.assertIn("switchToSnapshotPreview", body)
+        self.assertIn("withCacheBust", body)
         self.assertIn("/camera/usb/preview/status", body)
         self.assertIn("/camera/usb/scan", body)
         self.assertIn("/camera/usb/scan/decoded", body)
@@ -450,17 +452,39 @@ class PiServerApiTests(unittest.TestCase):
             self.module,
             "usb_stream_available",
             return_value=True,
+        ), mock.patch.object(
+            self.module,
+            "probe_usb_stream_profile",
+            return_value=(True, ""),
         ):
             preview = self.client.get("/camera/usb/preview/status")
         self.assertEqual(preview.status_code, 200)
         self.assertTrue(preview.json()["ok"])
         self.assertEqual(preview.json()["device"], "/dev/video0")
         self.assertEqual(preview.json()["preview_mode"], "stream")
-        self.assertEqual(preview.json()["preview_url"], "/camera/usb/stream.mjpg")
+        self.assertIn("/camera/usb/stream.mjpg", preview.json()["preview_url"])
+        self.assertIn("width=", preview.json()["preview_url"])
         self.assertTrue(preview.json()["auto_scan"])
         self.assertTrue(preview.json()["auto_close_on_success"])
         self.assertGreaterEqual(preview.json()["scan_interval_ms"], 900)
         self.assertGreaterEqual(preview.json()["stream_fps"], 2)
+
+        with mock.patch.object(self.module, "resolve_usb_camera_device", return_value="/dev/video0"), mock.patch.object(
+            self.module,
+            "usb_stream_available",
+            return_value=True,
+        ), mock.patch.object(
+            self.module,
+            "probe_usb_stream_profile",
+            return_value=(False, "unsupported profile"),
+        ):
+            snapshot_preview = self.client.get("/camera/usb/preview/status")
+        self.assertEqual(snapshot_preview.status_code, 200)
+        self.assertTrue(snapshot_preview.json()["ok"])
+        self.assertEqual(snapshot_preview.json()["preview_mode"], "snapshot")
+        self.assertEqual(snapshot_preview.json()["preview_url"], "/camera/usb/preview.jpg")
+        self.assertEqual(snapshot_preview.json()["snapshot_preview_url"], "/camera/usb/preview.jpg")
+        self.assertEqual(snapshot_preview.json()["stream_fps"], 0)
 
         with mock.patch.object(self.module, "usb_stream_available", return_value=True), mock.patch.object(
             self.module,

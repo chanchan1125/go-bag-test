@@ -56,11 +56,14 @@ USB_PREVIEW_WIDTH = int(os.getenv("GOBAG_USB_PREVIEW_WIDTH", "960"))
 USB_PREVIEW_HEIGHT = int(os.getenv("GOBAG_USB_PREVIEW_HEIGHT", "720"))
 USB_PREVIEW_INTERVAL_MS = max(int(os.getenv("GOBAG_USB_PREVIEW_INTERVAL_MS", "1200")), 800)
 USB_AUTO_SCAN_INTERVAL_MS = max(int(os.getenv("GOBAG_USB_AUTO_SCAN_INTERVAL_MS", "1200")), 900)
+USB_PREVIEW_MODE = os.getenv("GOBAG_USB_PREVIEW_MODE", "auto").strip().lower()
 USB_STREAM_CMD = os.getenv("GOBAG_USB_STREAM_CMD", "ffmpeg")
 USB_STREAM_WIDTH = int(os.getenv("GOBAG_USB_STREAM_WIDTH", "960"))
 USB_STREAM_HEIGHT = int(os.getenv("GOBAG_USB_STREAM_HEIGHT", "720"))
 USB_STREAM_FPS = max(int(os.getenv("GOBAG_USB_STREAM_FPS", "15")), 2)
 USB_STREAM_TIMEOUT_S = float(os.getenv("GOBAG_USB_STREAM_TIMEOUT_S", "10"))
+USB_STREAM_PROBE_TIMEOUT_S = float(os.getenv("GOBAG_USB_STREAM_PROBE_TIMEOUT_S", "3"))
+USB_SCAN_SKIP_FRAMES = max(int(os.getenv("GOBAG_USB_SCAN_SKIP_FRAMES", "12")), 0)
 QR_DECODE_CMD = os.getenv("GOBAG_QR_DECODE_CMD", "zbarimg")
 UI_REFRESH_INTERVAL_MS = max(int(os.getenv("GOBAG_UI_REFRESH_INTERVAL_MS", "5000")), 2000)
 SINGLE_BAG_META_KEY = "single_bag_id"
@@ -297,6 +300,18 @@ class UsbCaptureResult:
     width: int
     height: int
     image_bytes: bytes
+
+
+@dataclass
+class UsbPreviewConfig:
+    mode: Literal["stream", "snapshot"]
+    device: str
+    width: int
+    height: int
+    fps: int
+    preview_url: str
+    interval_ms: int
+    technical: str = ""
 
 
 def now_ms() -> int:
@@ -1506,11 +1521,34 @@ def resolve_usb_camera_device(error_code: str) -> str:
     return scan_device
 
 
-def usb_preview_mode() -> str:
-    return "stream" if usb_stream_available() else "snapshot"
+def configured_usb_preview_mode() -> str:
+    mode = USB_PREVIEW_MODE if USB_PREVIEW_MODE in {"auto", "stream", "snapshot"} else "auto"
+    if mode != USB_PREVIEW_MODE:
+        logger.warning("Unknown USB preview mode %r, using auto", USB_PREVIEW_MODE)
+    return mode
 
 
-def build_usb_stream_command(device: str) -> List[str]:
+def candidate_usb_stream_profiles() -> List[tuple[int, int, int]]:
+    profiles: List[tuple[int, int, int]] = []
+    requested_profiles = [
+        (USB_STREAM_WIDTH, USB_STREAM_HEIGHT, USB_STREAM_FPS),
+        (USB_PREVIEW_WIDTH, USB_PREVIEW_HEIGHT, min(USB_STREAM_FPS, 12)),
+        (640, 480, min(USB_STREAM_FPS, 15)),
+        (640, 480, 10),
+    ]
+    for width, height, fps in requested_profiles:
+        profile = (max(int(width), 1), max(int(height), 1), max(int(fps), 2))
+        if profile not in profiles:
+            profiles.append(profile)
+    return profiles
+
+
+def build_usb_stream_command(
+    device: str,
+    width: int = USB_STREAM_WIDTH,
+    height: int = USB_STREAM_HEIGHT,
+    fps: int = USB_STREAM_FPS,
+) -> List[str]:
     return [
         USB_STREAM_CMD,
         "-hide_banner",
@@ -1523,14 +1561,14 @@ def build_usb_stream_command(device: str) -> List[str]:
         "-f",
         "video4linux2",
         "-framerate",
-        str(USB_STREAM_FPS),
+        str(max(int(fps), 2)),
         "-video_size",
-        f"{USB_STREAM_WIDTH}x{USB_STREAM_HEIGHT}",
+        f"{max(int(width), 1)}x{max(int(height), 1)}",
         "-i",
         device,
         "-an",
         "-vf",
-        f"fps={USB_STREAM_FPS}",
+        f"fps={max(int(fps), 2)}",
         "-q:v",
         "6",
         "-f",
@@ -1539,12 +1577,136 @@ def build_usb_stream_command(device: str) -> List[str]:
     ]
 
 
+def build_usb_stream_probe_command(device: str, width: int, height: int, fps: int) -> List[str]:
+    return [
+        USB_STREAM_CMD,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "video4linux2",
+        "-framerate",
+        str(max(int(fps), 2)),
+        "-video_size",
+        f"{max(int(width), 1)}x{max(int(height), 1)}",
+        "-i",
+        device,
+        "-frames:v",
+        "1",
+        "-an",
+        "-q:v",
+        "6",
+        "-vcodec",
+        "mjpeg",
+        "-f",
+        "image2pipe",
+        "pipe:1",
+    ]
+
+
+def probe_usb_stream_profile(device: str, width: int, height: int, fps: int) -> tuple[bool, str]:
+    if not usb_stream_available():
+        return False, f"missing command: {USB_STREAM_CMD}"
+    command = build_usb_stream_probe_command(device, width, height, fps)
+    logger.info("USB preview stream probe command: %s", shlex.join(command))
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            timeout=USB_STREAM_PROBE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        technical = "stream probe timeout"
+        logger.warning("USB preview stream probe timed out on %s with %sx%s@%sfps", device, width, height, fps)
+        return False, technical
+    except OSError as exc:
+        technical = exc.strerror or str(exc)
+        logger.warning("USB preview stream probe could not start on %s: %s", device, technical)
+        return False, technical
+
+    stdout_bytes = result.stdout or b""
+    stderr_text = decode_process_output(result.stderr)
+    if result.returncode == 0 and stdout_bytes:
+        logger.info(
+            "USB preview stream probe succeeded on %s with %sx%s@%sfps (%s bytes)",
+            device,
+            width,
+            height,
+            fps,
+            len(stdout_bytes),
+        )
+        return True, ""
+
+    technical = f"returncode={result.returncode}; bytes={len(stdout_bytes)}"
+    if stderr_text:
+        technical = f"{technical}; {stderr_text[:240]}"
+    logger.warning("USB preview stream probe failed on %s with %sx%s@%sfps: %s", device, width, height, fps, technical)
+    return False, technical
+
+
+def select_usb_preview_config(device: str) -> UsbPreviewConfig:
+    requested_mode = configured_usb_preview_mode()
+    snapshot_config = UsbPreviewConfig(
+        mode="snapshot",
+        device=device,
+        width=USB_PREVIEW_WIDTH,
+        height=USB_PREVIEW_HEIGHT,
+        fps=0,
+        preview_url="/camera/usb/preview.jpg",
+        interval_ms=USB_PREVIEW_INTERVAL_MS,
+    )
+    if requested_mode == "snapshot":
+        logger.info("USB preview mode forced to snapshot for %s", device)
+        return snapshot_config
+
+    if usb_stream_available():
+        probe_notes: List[str] = []
+        for width, height, fps in candidate_usb_stream_profiles():
+            ok, technical = probe_usb_stream_profile(device, width, height, fps)
+            probe_notes.append(f"{width}x{height}@{fps}: {'ok' if ok else technical or 'failed'}")
+            if ok:
+                return UsbPreviewConfig(
+                    mode="stream",
+                    device=device,
+                    width=width,
+                    height=height,
+                    fps=fps,
+                    preview_url=f"/camera/usb/stream.mjpg?width={width}&height={height}&fps={fps}",
+                    interval_ms=USB_PREVIEW_INTERVAL_MS,
+                    technical="; ".join(probe_notes[-3:]),
+                )
+        technical = "; ".join(probe_notes)[-500:]
+        logger.warning("USB preview stream unavailable on %s, falling back to snapshot: %s", device, technical)
+        snapshot_config.technical = technical
+        return snapshot_config
+
+    logger.info("USB preview streaming command is unavailable on this Pi; using snapshot preview")
+    return snapshot_config
+
+
 def image_dimensions_for_bytes(image_bytes: bytes) -> tuple[int, int]:
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
             return int(image.width), int(image.height)
     except Exception:
         return 0, 0
+
+
+def candidate_usb_capture_profiles(purpose: Literal["preview", "scan"], width: int, height: int) -> List[tuple[int, int]]:
+    candidates: List[tuple[int, int]] = []
+    requested = (max(int(width), 1), max(int(height), 1))
+    for candidate in [
+        requested,
+        (USB_PREVIEW_WIDTH, USB_PREVIEW_HEIGHT),
+        (640, 480),
+    ]:
+        normalized = (max(int(candidate[0]), 1), max(int(candidate[1]), 1))
+        if normalized not in candidates:
+            candidates.append(normalized)
+    if purpose == "scan" and (USB_SCAN_WIDTH, USB_SCAN_HEIGHT) not in candidates:
+        candidates.insert(0, (USB_SCAN_WIDTH, USB_SCAN_HEIGHT))
+    return candidates
 
 
 def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureResult:
@@ -1556,58 +1718,75 @@ def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureR
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         out_path = tmp.name
 
-    capture_cmd = [
-        USB_SCAN_CMD,
-        "-r",
-        f"{width}x{height}",
-        "--no-banner",
-        "-d",
-        device,
-        out_path,
-    ]
-    logger.info("USB %s command: %s", purpose, shlex.join(capture_cmd))
-
     try:
-        capture = subprocess.run(
-            capture_cmd,
-            check=False,
-            capture_output=True,
-            timeout=USB_SCAN_TIMEOUT_S,
-        )
-        if capture.returncode != 0:
-            capture_error = decode_process_output(capture.stderr) or decode_process_output(capture.stdout)
-            logger.warning("USB %s failed (%s): %s", purpose, capture.returncode, capture_error)
-            raise structured_http_exception(
-                503,
-                error_code,
-                "The USB camera could not capture an image.",
-                technical=f"returncode={capture.returncode}; {capture_error[:240]}",
+        attempt_notes: List[str] = []
+        skip_frames = USB_SCAN_SKIP_FRAMES if purpose == "scan" else min(USB_SCAN_SKIP_FRAMES, 4)
+        for attempt_index, (attempt_width, attempt_height) in enumerate(
+            candidate_usb_capture_profiles(purpose, width, height),
+            start=1,
+        ):
+            with open(out_path, "wb"):
+                pass
+            capture_cmd = [
+                USB_SCAN_CMD,
+                "-r",
+                f"{attempt_width}x{attempt_height}",
+                "--no-banner",
+                "-d",
+                device,
+            ]
+            if skip_frames > 0:
+                capture_cmd.extend(["-S", str(skip_frames)])
+            capture_cmd.append(out_path)
+            logger.info("USB %s command attempt %s: %s", purpose, attempt_index, shlex.join(capture_cmd))
+            capture = subprocess.run(
+                capture_cmd,
+                check=False,
+                capture_output=True,
+                timeout=USB_SCAN_TIMEOUT_S,
             )
-        if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-            raise structured_http_exception(
-                503,
-                error_code,
-                "The USB camera did not produce an image.",
-                technical="empty capture file",
+            if capture.returncode != 0:
+                capture_error = decode_process_output(capture.stderr) or decode_process_output(capture.stdout)
+                attempt_notes.append(
+                    f"{attempt_width}x{attempt_height}: returncode={capture.returncode}; {(capture_error or 'capture failed')[:200]}"
+                )
+                logger.warning("USB %s failed on attempt %s (%s)", purpose, attempt_index, attempt_notes[-1])
+                continue
+            if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+                attempt_notes.append(f"{attempt_width}x{attempt_height}: empty capture file")
+                logger.warning("USB %s produced no image on attempt %s", purpose, attempt_index)
+                continue
+            with open(out_path, "rb") as captured_file:
+                image_bytes = captured_file.read()
+            detected_width, detected_height = image_dimensions_for_bytes(image_bytes)
+            if detected_width <= 0 or detected_height <= 0:
+                attempt_notes.append(f"{attempt_width}x{attempt_height}: invalid image bytes")
+                logger.warning("USB %s returned unreadable image bytes on attempt %s", purpose, attempt_index)
+                continue
+            logger.info(
+                "USB %s image saved to %s (%sx%s, %s bytes) on attempt %s",
+                purpose,
+                out_path,
+                detected_width,
+                detected_height,
+                len(image_bytes),
+                attempt_index,
             )
-        with open(out_path, "rb") as captured_file:
-            image_bytes = captured_file.read()
-        detected_width, detected_height = image_dimensions_for_bytes(image_bytes)
-        logger.info(
-            "USB %s image saved to %s (%sx%s, %s bytes)",
-            purpose,
-            out_path,
-            detected_width or width,
-            detected_height or height,
-            len(image_bytes),
-        )
-        return UsbCaptureResult(
-            purpose=purpose,
-            device=device,
-            file_path=out_path,
-            width=detected_width or width,
-            height=detected_height or height,
-            image_bytes=image_bytes,
+            return UsbCaptureResult(
+                purpose=purpose,
+                device=device,
+                file_path=out_path,
+                width=detected_width,
+                height=detected_height,
+                image_bytes=image_bytes,
+            )
+
+        technical = "; ".join(attempt_notes)[-500:] or "capture returned no valid image"
+        raise structured_http_exception(
+            503,
+            error_code,
+            "The USB camera could not capture a usable image.",
+            technical=technical,
         )
     except subprocess.TimeoutExpired:
         raise structured_http_exception(504, error_code, "The USB camera timed out while capturing.", technical="capture timeout")
@@ -2097,6 +2276,15 @@ def system_info() -> dict:
 
 @app.get("/camera/status")
 def camera_status() -> dict:
+    available_devices = available_usb_camera_devices()
+    preview_mode_preference = configured_usb_preview_mode()
+    preview_config: Optional[UsbPreviewConfig] = None
+    preview_error = ""
+    if available_devices:
+        try:
+            preview_config = select_usb_preview_config(available_devices[0])
+        except HTTPException as exc:
+            preview_error = error_payload_from_detail(exc.detail, default_code="CAMERA_PREVIEW_FAILED").get("message", "")
     return {
         "camera_enabled": CAMERA_ENABLED,
         "camera_cmd": CAMERA_CMD,
@@ -2112,6 +2300,14 @@ def camera_status() -> dict:
         "usb_preview_resolution": {"width": USB_PREVIEW_WIDTH, "height": USB_PREVIEW_HEIGHT},
         "usb_stream_resolution": {"width": USB_STREAM_WIDTH, "height": USB_STREAM_HEIGHT},
         "usb_stream_fps": USB_STREAM_FPS,
+        "usb_preview_mode_preference": preview_mode_preference,
+        "usb_preview_mode_effective": preview_config.mode if preview_config else "unavailable",
+        "usb_preview_device": preview_config.device if preview_config else (available_devices[0] if available_devices else ""),
+        "usb_preview_url": preview_config.preview_url if preview_config else "",
+        "usb_preview_probe_timeout_s": USB_STREAM_PROBE_TIMEOUT_S,
+        "usb_scan_skip_frames": USB_SCAN_SKIP_FRAMES,
+        "usb_camera_devices": available_devices,
+        "usb_preview_error": preview_error,
         "usb_scan_resolution": {"width": USB_SCAN_WIDTH, "height": USB_SCAN_HEIGHT},
     }
 
@@ -2126,24 +2322,34 @@ def camera_capture() -> Response:
 def usb_camera_preview_status() -> JSONResponse:
     try:
         device = resolve_usb_camera_device("CAMERA_PREVIEW_FAILED")
-        preview_mode = usb_preview_mode()
+        preview_config = select_usb_preview_config(device)
         payload = {
             "ok": True,
             "message": "USB camera preview is ready.",
             "device": device,
-            "preview_url": "/camera/usb/stream.mjpg" if preview_mode == "stream" else "/camera/usb/preview.jpg",
-            "preview_mode": preview_mode,
+            "preview_url": preview_config.preview_url,
+            "snapshot_preview_url": "/camera/usb/preview.jpg",
+            "preview_mode": preview_config.mode,
             "resolution": {
-                "width": USB_STREAM_WIDTH if preview_mode == "stream" else USB_PREVIEW_WIDTH,
-                "height": USB_STREAM_HEIGHT if preview_mode == "stream" else USB_PREVIEW_HEIGHT,
+                "width": preview_config.width,
+                "height": preview_config.height,
             },
-            "interval_ms": USB_PREVIEW_INTERVAL_MS,
+            "interval_ms": preview_config.interval_ms,
             "scan_interval_ms": USB_AUTO_SCAN_INTERVAL_MS,
             "auto_scan": True,
             "auto_close_on_success": True,
-            "stream_fps": USB_STREAM_FPS if preview_mode == "stream" else 0,
+            "stream_fps": preview_config.fps if preview_config.mode == "stream" else 0,
+            "preview_mode_preference": configured_usb_preview_mode(),
+            "technical": preview_config.technical,
         }
-        logger.info("USB preview start result: ready on %s using %s mode", device, preview_mode)
+        logger.info(
+            "USB preview start result: ready on %s using %s mode (%sx%s @ %sfps)",
+            device,
+            preview_config.mode,
+            preview_config.width,
+            preview_config.height,
+            preview_config.fps,
+        )
         return JSONResponse(payload)
     except HTTPException as exc:
         payload = error_payload_from_detail(exc.detail, default_code="CAMERA_PREVIEW_FAILED")
@@ -2185,7 +2391,7 @@ def generate_usb_camera_stream(command: List[str]) -> Iterator[bytes]:
 
 
 @app.get("/camera/usb/stream.mjpg")
-def usb_camera_preview_stream() -> StreamingResponse:
+def usb_camera_preview_stream(width: int = USB_STREAM_WIDTH, height: int = USB_STREAM_HEIGHT, fps: int = USB_STREAM_FPS) -> StreamingResponse:
     if not usb_stream_available():
         raise structured_http_exception(
             503,
@@ -2194,7 +2400,10 @@ def usb_camera_preview_stream() -> StreamingResponse:
             technical=f"missing command: {USB_STREAM_CMD}",
         )
     device = resolve_usb_camera_device("CAMERA_PREVIEW_FAILED")
-    command = build_usb_stream_command(device)
+    width = max(min(int(width), 1920), 160)
+    height = max(min(int(height), 1080), 120)
+    fps = max(min(int(fps), 30), 2)
+    command = build_usb_stream_command(device, width=width, height=height, fps=fps)
     return StreamingResponse(
         generate_usb_camera_stream(command),
         media_type="multipart/x-mixed-replace; boundary=ffmpeg",
@@ -3689,6 +3898,8 @@ def home(request: Request) -> HTMLResponse:
       let scanIntervalMs = autoScanFallbackIntervalMs;
       let previewMode = "snapshot";
       let previewUrl = "/camera/usb/preview.jpg";
+      let snapshotPreviewUrl = "/camera/usb/preview.jpg";
+      let previewFailureCount = 0;
       let barcodeDetector = undefined;
       let detectorFallbackActive = false;
       let lastDetectedRawContent = "";
@@ -3729,6 +3940,11 @@ def home(request: Request) -> HTMLResponse:
       function setPreviewVisible(isVisible) {{
         if (scanPreviewImage) scanPreviewImage.classList.toggle("hidden", !isVisible);
         if (scanPreviewPlaceholder) scanPreviewPlaceholder.classList.toggle("hidden", isVisible);
+      }}
+
+      function withCacheBust(url) {{
+        const separator = url.includes("?") ? "&" : "?";
+        return `${{url}}${{separator}}t=${{Date.now()}}`;
       }}
 
       function stopPreviewLoop() {{
@@ -3799,6 +4015,7 @@ def home(request: Request) -> HTMLResponse:
         stopAutoScanLoop();
         stopLiveDetectLoop();
         previewLoading = false;
+        previewFailureCount = 0;
         scanBusy = false;
         scanCooldownUntil = 0;
         detectorFallbackActive = false;
@@ -3855,6 +4072,35 @@ def home(request: Request) -> HTMLResponse:
         closeScanModal();
       }}
 
+      function retrySnapshotPreview() {{
+        if (!scanIsOpen()) {{
+          return;
+        }}
+        window.setTimeout(() => {{
+          if (!scanIsOpen()) {{
+            return;
+          }}
+          void refreshPreviewFrame(true);
+        }}, 350);
+      }}
+
+      function switchToSnapshotPreview(reason = "") {{
+        if (!scanIsOpen()) {{
+          return;
+        }}
+        stopPreviewLoop();
+        previewMode = "snapshot";
+        previewUrl = snapshotPreviewUrl || "/camera/usb/preview.jpg";
+        previewFailureCount = 0;
+        previewLoading = false;
+        setPreviewVisible(false);
+        if (reason) {{
+          console.warn(reason);
+        }}
+        startPreviewLoop(previewFallbackIntervalMs);
+        void refreshPreviewFrame(true);
+      }}
+
       async function refreshPreviewFrame(forceReload = false) {{
         if (!scanPreviewImage || !scanIsOpen() || previewLoading || scanBusy) {{
           return;
@@ -3864,28 +4110,35 @@ def home(request: Request) -> HTMLResponse:
             previewLoading = true;
             scanPreviewImage.onload = () => {{
               previewLoading = false;
+              previewFailureCount = 0;
               setPreviewVisible(true);
             }};
             scanPreviewImage.onerror = () => {{
               previewLoading = false;
               setPreviewVisible(false);
-              closeScannerWithError("USB camera is unavailable.");
+              switchToSnapshotPreview("USB camera stream preview failed; falling back to fswebcam snapshots.");
             }};
-            scanPreviewImage.src = `${{previewUrl}}?t=${{Date.now()}}`;
+            scanPreviewImage.src = withCacheBust(previewUrl);
           }}
           return;
         }}
         previewLoading = true;
         scanPreviewImage.onload = () => {{
           previewLoading = false;
+          previewFailureCount = 0;
           setPreviewVisible(true);
         }};
         scanPreviewImage.onerror = () => {{
           previewLoading = false;
           setPreviewVisible(false);
-          closeScannerWithError("USB camera is unavailable.");
+          previewFailureCount += 1;
+          if (previewFailureCount < 3) {{
+            retrySnapshotPreview();
+            return;
+          }}
+          closeScannerWithError("USB camera preview failed. Check the USB camera connection.");
         }};
-        scanPreviewImage.src = `${{previewUrl}}?t=${{Date.now()}}`;
+        scanPreviewImage.src = withCacheBust(previewUrl);
       }}
 
       async function startAutomaticScanning() {{
@@ -3955,6 +4208,8 @@ def home(request: Request) -> HTMLResponse:
           }}
           previewMode = payload.preview_mode || "snapshot";
           previewUrl = payload.preview_url || "/camera/usb/preview.jpg";
+          snapshotPreviewUrl = payload.snapshot_preview_url || "/camera/usb/preview.jpg";
+          previewFailureCount = 0;
           scanIntervalMs = payload.scan_interval_ms || autoScanFallbackIntervalMs;
           await refreshPreviewFrame(true);
           if (!scanIsOpen()) {{
@@ -3994,6 +4249,8 @@ def home(request: Request) -> HTMLResponse:
         }}
         previewMode = "snapshot";
         previewUrl = "/camera/usb/preview.jpg";
+        snapshotPreviewUrl = "/camera/usb/preview.jpg";
+        previewFailureCount = 0;
         setPreviewVisible(false);
         setPreviewPlaceholderMessage("");
       }}
