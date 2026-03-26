@@ -175,7 +175,7 @@ if ! grep -q '^GOBAG_ADMIN_TOKEN=[^[:space:]]' "${CONFIG_FILE}" || grep -q '^GOB
 fi
 
 log "Creating Python virtual environment..."
-${SUDO} python3 -m venv --system-site-packages "${VENV_DIR}"
+${SUDO} python3 -m venv --clear --system-site-packages "${VENV_DIR}"
 ${SUDO} "${VENV_DIR}/bin/pip" install --upgrade pip
 
 log "Installing Python dependencies..."
