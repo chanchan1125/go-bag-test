@@ -298,6 +298,36 @@ class PiServerApiTests(unittest.TestCase):
         with self.assertRaises(self.module.HTTPException):
             self.module.parse_item_qr_content("bad-qr-value")
 
+    def test_resolve_usb_camera_device_prefers_capture_capable_video_node(self):
+        capability = self.module.UsbCameraCapability(
+            device="/dev/video2",
+            palette_sizes={"MJPG": [(640, 480)]},
+            technical="capture formats detected",
+        )
+        with mock.patch.object(self.module, "usb_scan_available", return_value=True), mock.patch.object(
+            self.module,
+            "available_usb_capture_devices",
+            return_value=["/dev/video2", "/dev/video0"],
+        ), mock.patch.object(
+            self.module,
+            "read_usb_camera_capability",
+            return_value=capability,
+        ):
+            device = self.module.resolve_usb_camera_device("CAMERA_PREVIEW_FAILED")
+        self.assertEqual(device, "/dev/video2")
+
+    def test_build_usb_capture_attempts_prefers_supported_palette(self):
+        capability = self.module.UsbCameraCapability(
+            device="/dev/video2",
+            palette_sizes={"MJPG": [(640, 480)], "YUYV": [(800, 600)]},
+            technical="capture formats detected",
+        )
+        with mock.patch.object(self.module, "read_usb_camera_capability", return_value=capability):
+            attempts = self.module.build_usb_capture_attempts("preview", "/dev/video2", 640, 480)
+        self.assertGreaterEqual(len(attempts), 2)
+        self.assertEqual(attempts[0], (640, 480, "MJPG"))
+        self.assertIn((640, 480, None), attempts)
+
     def test_home_dashboard_is_single_bag_ui_with_polling_and_pair_code_card(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)

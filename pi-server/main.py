@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import platform
+import re
 import secrets
 import shlex
 import shutil
@@ -49,9 +50,11 @@ CAMERA_WARMUP_MS = int(os.getenv("GOBAG_CAMERA_WARMUP_MS", "900"))
 CAMERA_TIMEOUT_S = float(os.getenv("GOBAG_CAMERA_TIMEOUT_S", "12"))
 USB_SCAN_CMD = os.getenv("GOBAG_USB_SCAN_CMD", "fswebcam")
 USB_SCAN_DEVICE = os.getenv("GOBAG_USB_CAMERA_DEVICE", "").strip()
+USB_V4L2CTL_CMD = os.getenv("GOBAG_USB_V4L2CTL_CMD", "v4l2-ctl")
 USB_SCAN_WIDTH = int(os.getenv("GOBAG_USB_SCAN_WIDTH", "1280"))
 USB_SCAN_HEIGHT = int(os.getenv("GOBAG_USB_SCAN_HEIGHT", "720"))
 USB_SCAN_TIMEOUT_S = float(os.getenv("GOBAG_USB_SCAN_TIMEOUT_S", "12"))
+USB_DEVICE_QUERY_TIMEOUT_S = float(os.getenv("GOBAG_USB_DEVICE_QUERY_TIMEOUT_S", "4"))
 USB_PREVIEW_WIDTH = int(os.getenv("GOBAG_USB_PREVIEW_WIDTH", "960"))
 USB_PREVIEW_HEIGHT = int(os.getenv("GOBAG_USB_PREVIEW_HEIGHT", "720"))
 USB_PREVIEW_INTERVAL_MS = max(int(os.getenv("GOBAG_USB_PREVIEW_INTERVAL_MS", "1200")), 800)
@@ -82,6 +85,8 @@ logger = logging.getLogger("gobag.pi")
 if not logging.getLogger().handlers:
     logging.basicConfig(level=os.getenv("GOBAG_LOG_LEVEL", "INFO").upper())
 IMAGE_RESAMPLING = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+USB_CAPABILITY_CACHE_TTL_S = 60.0
+_usb_camera_capability_cache: Dict[str, tuple[float, "UsbCameraCapability"]] = {}
 
 
 class Bag(BaseModel):
@@ -311,6 +316,13 @@ class UsbPreviewConfig:
     fps: int
     preview_url: str
     interval_ms: int
+    technical: str = ""
+
+
+@dataclass
+class UsbCameraCapability:
+    device: str
+    palette_sizes: Dict[str, List[tuple[int, int]]]
     technical: str = ""
 
 
@@ -1328,6 +1340,10 @@ def qr_decode_available() -> bool:
     return shutil.which(QR_DECODE_CMD) is not None
 
 
+def usb_v4l2ctl_available() -> bool:
+    return shutil.which(USB_V4L2CTL_CMD) is not None
+
+
 def decode_process_output(raw: Optional[bytes]) -> str:
     if not raw:
         return ""
@@ -1336,6 +1352,74 @@ def decode_process_output(raw: Optional[bytes]) -> str:
 
 def available_usb_camera_devices() -> List[str]:
     return sorted(path for path in glob.glob("/dev/video*") if os.path.exists(path))
+
+
+def parse_v4l2_format_listing(device: str, output: str) -> UsbCameraCapability:
+    palette_sizes: Dict[str, List[tuple[int, int]]] = {}
+    current_palette = ""
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        format_match = re.search(r"\[\d+\]:\s+'([^']+)'", line)
+        if format_match:
+            current_palette = format_match.group(1).strip().upper()
+            palette_sizes.setdefault(current_palette, [])
+            continue
+        size_match = re.search(r"Size:\s+Discrete\s+(\d+)x(\d+)", line)
+        if size_match and current_palette:
+            size = (int(size_match.group(1)), int(size_match.group(2)))
+            if size not in palette_sizes[current_palette]:
+                palette_sizes[current_palette].append(size)
+    technical = "capture formats detected" if palette_sizes else "no capture formats listed"
+    return UsbCameraCapability(device=device, palette_sizes=palette_sizes, technical=technical)
+
+
+def read_usb_camera_capability(device: str, force_refresh: bool = False) -> UsbCameraCapability:
+    cached = _usb_camera_capability_cache.get(device)
+    now = time.time()
+    if cached and not force_refresh and (now - cached[0]) < USB_CAPABILITY_CACHE_TTL_S:
+        return cached[1]
+
+    if not usb_v4l2ctl_available():
+        capability = UsbCameraCapability(device=device, palette_sizes={}, technical=f"missing command: {USB_V4L2CTL_CMD}")
+        _usb_camera_capability_cache[device] = (now, capability)
+        return capability
+
+    command = [USB_V4L2CTL_CMD, "--device", device, "--list-formats-ext"]
+    logger.info("USB camera capability command: %s", shlex.join(command))
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            timeout=USB_DEVICE_QUERY_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        capability = UsbCameraCapability(device=device, palette_sizes={}, technical="device capability query timed out")
+        _usb_camera_capability_cache[device] = (now, capability)
+        return capability
+    except OSError as exc:
+        capability = UsbCameraCapability(device=device, palette_sizes={}, technical=exc.strerror or str(exc))
+        _usb_camera_capability_cache[device] = (now, capability)
+        return capability
+
+    output = "\n".join(part for part in [decode_process_output(result.stdout), decode_process_output(result.stderr)] if part).strip()
+    capability = parse_v4l2_format_listing(device, output)
+    if result.returncode != 0 and not capability.palette_sizes:
+        capability.technical = output[:240] or f"returncode={result.returncode}"
+    _usb_camera_capability_cache[device] = (now, capability)
+    return capability
+
+
+def available_usb_capture_devices() -> List[str]:
+    devices = available_usb_camera_devices()
+    if not devices:
+        return []
+    if not usb_v4l2ctl_available():
+        return devices
+    capture_devices = [device for device in devices if read_usb_camera_capability(device).palette_sizes]
+    return capture_devices or devices
 
 
 async def read_ui_form(request: Request) -> Dict[str, str]:
@@ -1507,7 +1591,7 @@ def resolve_usb_camera_device(error_code: str) -> str:
             technical=scan_device,
         )
     if not scan_device:
-        available_devices = available_usb_camera_devices()
+        available_devices = available_usb_capture_devices()
         if available_devices:
             scan_device = available_devices[0]
         else:
@@ -1517,7 +1601,13 @@ def resolve_usb_camera_device(error_code: str) -> str:
                 "No USB camera device was detected.",
                 technical="no /dev/video* device found",
             )
-    logger.info("USB camera device selected for %s: %s", error_code, scan_device)
+    capability = read_usb_camera_capability(scan_device)
+    logger.info(
+        "USB camera device selected for %s: %s (%s)",
+        error_code,
+        scan_device,
+        capability.technical or "capability unknown",
+    )
     return scan_device
 
 
@@ -1709,6 +1799,49 @@ def candidate_usb_capture_profiles(purpose: Literal["preview", "scan"], width: i
     return candidates
 
 
+def preferred_usb_capture_palettes() -> List[str]:
+    preferred = ["MJPG", "YUYV", "YUY2", "YU12", "RGB3", "BGR3"]
+    return preferred
+
+
+def select_supported_size(sizes: List[tuple[int, int]], target_width: int, target_height: int) -> Optional[tuple[int, int]]:
+    if not sizes:
+        return None
+    target = (target_width, target_height)
+    if target in sizes:
+        return target
+    target_area = target_width * target_height
+    return min(
+        sizes,
+        key=lambda size: (
+            abs(size[0] - target_width) + abs(size[1] - target_height),
+            abs((size[0] * size[1]) - target_area),
+        ),
+    )
+
+
+def build_usb_capture_attempts(
+    purpose: Literal["preview", "scan"],
+    device: str,
+    width: int,
+    height: int,
+) -> List[tuple[int, int, Optional[str]]]:
+    capability = read_usb_camera_capability(device)
+    attempts: List[tuple[int, int, Optional[str]]] = []
+    for target_width, target_height in candidate_usb_capture_profiles(purpose, width, height):
+        for palette in preferred_usb_capture_palettes():
+            supported_sizes = capability.palette_sizes.get(palette, [])
+            selected_size = select_supported_size(supported_sizes, target_width, target_height)
+            if selected_size:
+                attempt = (selected_size[0], selected_size[1], palette)
+                if attempt not in attempts:
+                    attempts.append(attempt)
+        plain_attempt = (target_width, target_height, None)
+        if plain_attempt not in attempts:
+            attempts.append(plain_attempt)
+    return attempts
+
+
 def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureResult:
     error_code = "CAMERA_PREVIEW_FAILED" if purpose == "preview" else "CAMERA_CAPTURE_FAILED"
     device = resolve_usb_camera_device(error_code)
@@ -1720,9 +1853,9 @@ def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureR
 
     try:
         attempt_notes: List[str] = []
-        skip_frames = USB_SCAN_SKIP_FRAMES if purpose == "scan" else min(USB_SCAN_SKIP_FRAMES, 4)
-        for attempt_index, (attempt_width, attempt_height) in enumerate(
-            candidate_usb_capture_profiles(purpose, width, height),
+        skip_frames = USB_SCAN_SKIP_FRAMES if purpose == "scan" else min(max(USB_SCAN_SKIP_FRAMES, 6), 8)
+        for attempt_index, (attempt_width, attempt_height, palette) in enumerate(
+            build_usb_capture_attempts(purpose, device, width, height),
             start=1,
         ):
             with open(out_path, "wb"):
@@ -1735,6 +1868,8 @@ def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureR
                 "-d",
                 device,
             ]
+            if palette:
+                capture_cmd.extend(["-p", palette])
             if skip_frames > 0:
                 capture_cmd.extend(["-S", str(skip_frames)])
             capture_cmd.append(out_path)
@@ -1748,19 +1883,19 @@ def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureR
             if capture.returncode != 0:
                 capture_error = decode_process_output(capture.stderr) or decode_process_output(capture.stdout)
                 attempt_notes.append(
-                    f"{attempt_width}x{attempt_height}: returncode={capture.returncode}; {(capture_error or 'capture failed')[:200]}"
+                    f"{attempt_width}x{attempt_height}/{palette or 'auto'}: returncode={capture.returncode}; {(capture_error or 'capture failed')[:200]}"
                 )
                 logger.warning("USB %s failed on attempt %s (%s)", purpose, attempt_index, attempt_notes[-1])
                 continue
             if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-                attempt_notes.append(f"{attempt_width}x{attempt_height}: empty capture file")
+                attempt_notes.append(f"{attempt_width}x{attempt_height}/{palette or 'auto'}: empty capture file")
                 logger.warning("USB %s produced no image on attempt %s", purpose, attempt_index)
                 continue
             with open(out_path, "rb") as captured_file:
                 image_bytes = captured_file.read()
             detected_width, detected_height = image_dimensions_for_bytes(image_bytes)
             if detected_width <= 0 or detected_height <= 0:
-                attempt_notes.append(f"{attempt_width}x{attempt_height}: invalid image bytes")
+                attempt_notes.append(f"{attempt_width}x{attempt_height}/{palette or 'auto'}: invalid image bytes")
                 logger.warning("USB %s returned unreadable image bytes on attempt %s", purpose, attempt_index)
                 continue
             logger.info(
@@ -2277,6 +2412,7 @@ def system_info() -> dict:
 @app.get("/camera/status")
 def camera_status() -> dict:
     available_devices = available_usb_camera_devices()
+    capture_devices = available_usb_capture_devices()
     preview_mode_preference = configured_usb_preview_mode()
     preview_config: Optional[UsbPreviewConfig] = None
     preview_error = ""
@@ -2291,6 +2427,8 @@ def camera_status() -> dict:
         "camera_cmd_available": camera_command_available(),
         "usb_scan_cmd": USB_SCAN_CMD,
         "usb_scan_cmd_available": usb_scan_available(),
+        "usb_v4l2ctl_cmd": USB_V4L2CTL_CMD,
+        "usb_v4l2ctl_cmd_available": usb_v4l2ctl_available(),
         "usb_stream_cmd": USB_STREAM_CMD,
         "usb_stream_cmd_available": usb_stream_available(),
         "qr_decode_cmd": QR_DECODE_CMD,
@@ -2307,6 +2445,7 @@ def camera_status() -> dict:
         "usb_preview_probe_timeout_s": USB_STREAM_PROBE_TIMEOUT_S,
         "usb_scan_skip_frames": USB_SCAN_SKIP_FRAMES,
         "usb_camera_devices": available_devices,
+        "usb_capture_devices": capture_devices,
         "usb_preview_error": preview_error,
         "usb_scan_resolution": {"width": USB_SCAN_WIDTH, "height": USB_SCAN_HEIGHT},
     }
