@@ -56,6 +56,8 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 - Desktop entry: `/usr/share/applications/gobag-inventory.desktop`
 - Local UI shell: `/opt/gobag/app/scripts/run_app_shell.py`
 
+The Pi installer creates the virtualenv with system site packages so the app shell can use GTK/WebKit bindings from Raspberry Pi OS.
+
 ## Environment variables
 
 - `GOBAG_HOST` default `0.0.0.0`

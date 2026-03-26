@@ -175,11 +175,18 @@ if ! grep -q '^GOBAG_ADMIN_TOKEN=[^[:space:]]' "${CONFIG_FILE}" || grep -q '^GOB
 fi
 
 log "Creating Python virtual environment..."
-${SUDO} python3 -m venv "${VENV_DIR}"
+${SUDO} python3 -m venv --system-site-packages "${VENV_DIR}"
 ${SUDO} "${VENV_DIR}/bin/pip" install --upgrade pip
 
 log "Installing Python dependencies..."
 ${SUDO} "${VENV_DIR}/bin/pip" install -r "${APP_DIR}/requirements.txt"
+
+log "Verifying native app-shell dependencies..."
+if ${SUDO} "${VENV_DIR}/bin/python" -c "import gi; gi.require_version('Gtk', '3.0'); gi.require_version('WebKit2', '4.1'); from gi.repository import Gtk, WebKit2; import webview" >/dev/null 2>&1; then
+  log "Native app-shell dependencies are ready."
+else
+  log "Warning: native app-shell dependencies could not be fully verified. Check /opt/gobag/logs/app-shell.log after launch."
+fi
 
 log "Initializing or migrating the database..."
 ${SUDO} GOBAG_CONFIG_FILE="${CONFIG_FILE}" "${APP_DIR}/scripts/init_db.sh"

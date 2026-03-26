@@ -56,7 +56,7 @@ What `pi-server/install.sh` does in the current codebase:
 - installs system packages including Python, GTK/WebKit app-shell dependencies, SQLite, `curl`, `rsync`, and camera-related packages
 - copies the Pi app into `/opt/gobag/app`
 - creates `/opt/gobag/config/gobag.env` from `pi-server/config/gobag.env.example` if needed
-- creates a Python virtual environment in `/opt/gobag/.venv`
+- creates a Python virtual environment in `/opt/gobag/.venv` with system site packages so the native GTK/WebKit app shell can use Raspberry Pi OS desktop libraries
 - installs Python requirements from `pi-server/requirements.txt`
 - initializes or migrates the database
 - installs `/etc/systemd/system/gobag-backend.service`

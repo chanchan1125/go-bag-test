@@ -122,6 +122,7 @@ launch_with_browser() {
 
 launch_with_app_shell() {
   local -a shell_args=()
+  local app_pid=""
 
   if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
     log "GO BAG app shell cannot start because ${VENV_DIR}/bin/python is missing."
@@ -135,6 +136,12 @@ launch_with_app_shell() {
   fi
 
   nohup "${VENV_DIR}/bin/python" "${APP_DIR}/scripts/run_app_shell.py" "${shell_args[@]}" --url "${APP_URL}" >>"${APP_SHELL_LOG}" 2>&1 &
+  app_pid="$!"
+  sleep 2
+  if ! kill -0 "${app_pid}" >/dev/null 2>&1; then
+    log "GO BAG app shell exited immediately. Check ${APP_SHELL_LOG}."
+    return 1
+  fi
   log "Opened GO BAG in the native app shell."
 }
 
