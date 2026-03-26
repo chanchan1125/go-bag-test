@@ -381,12 +381,12 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn("object-fit: cover", body)
         self.assertIn('id="scan-preview-image"', body)
         self.assertIn('id="scan-preview-placeholder"', body)
-        self.assertIn("BarcodeDetector", body)
-        self.assertIn("startAutoScanLoop", body)
-        self.assertIn("switchToSnapshotPreview", body)
+        self.assertIn("pollScanSessionStatus", body)
+        self.assertIn("stopScanSession", body)
         self.assertIn("withCacheBust", body)
-        self.assertIn("/camera/usb/preview/status", body)
-        self.assertIn("/camera/usb/scan", body)
+        self.assertIn("/camera/usb/session/start", body)
+        self.assertIn("/camera/usb/session/status", body)
+        self.assertIn("/camera/usb/session/frame.jpg", body)
         self.assertIn("/camera/usb/scan/decoded", body)
         self.assertIn('fetch("/ui/state"', body)
         self.assertIn(".hero .panel {", body)
@@ -401,6 +401,50 @@ class PiServerApiTests(unittest.TestCase):
         self.assertNotIn("Align the QR code inside the camera view.", body)
         self.assertNotIn("Scan now", body)
         self.assertNotIn("Refresh preview", body)
+
+    def test_usb_camera_session_endpoints_return_structured_state(self):
+        bag_id = self.client.get("/bags").json()[0]["id"]
+        session_payload = {
+            "ok": True,
+            "session_id": "session-1",
+            "device": "/dev/video0",
+            "frame_url": "/camera/usb/session/frame.jpg",
+            "frame_id": 3,
+            "active": True,
+            "running": True,
+            "started_at": 100,
+            "last_frame_at": 120,
+            "decoded_content": "",
+            "decoded_at": 0,
+            "interval_ms": 850,
+            "resolution": {"width": 640, "height": 480},
+            "technical": "latest frame 640x480",
+        }
+        with mock.patch.object(self.module.usb_camera_session_manager, "start", return_value=session_payload):
+            started = self.client.post("/camera/usb/session/start", data={"bag_id": bag_id})
+        self.assertEqual(started.status_code, 200)
+        self.assertTrue(started.json()["ok"])
+        self.assertEqual(started.json()["session_id"], "session-1")
+
+        with mock.patch.object(self.module.usb_camera_session_manager, "snapshot", return_value=session_payload):
+            status = self.client.get("/camera/usb/session/status")
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["frame_id"], 3)
+        self.assertEqual(status.json()["frame_url"], "/camera/usb/session/frame.jpg")
+
+        with mock.patch.object(
+            self.module.usb_camera_session_manager,
+            "frame_response",
+            return_value=self.module.Response(content=b"jpegdata", media_type="image/jpeg"),
+        ):
+            frame = self.client.get("/camera/usb/session/frame.jpg")
+        self.assertEqual(frame.status_code, 200)
+        self.assertEqual(frame.content, b"jpegdata")
+
+        with mock.patch.object(self.module.usb_camera_session_manager, "stop") as mocked_stop:
+            stopped = self.client.post("/camera/usb/session/stop")
+        self.assertEqual(stopped.status_code, 200)
+        mocked_stop.assert_called_once()
 
     def test_ui_form_fallback_parses_urlencoded_without_python_multipart(self):
         class FakeRequest:

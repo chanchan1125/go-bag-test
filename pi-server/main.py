@@ -14,10 +14,11 @@ import socket
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html import escape
 from typing import Dict, Iterator, List, Literal, Optional, Union
 from urllib.parse import parse_qs, quote
@@ -59,6 +60,7 @@ USB_PREVIEW_WIDTH = int(os.getenv("GOBAG_USB_PREVIEW_WIDTH", "960"))
 USB_PREVIEW_HEIGHT = int(os.getenv("GOBAG_USB_PREVIEW_HEIGHT", "720"))
 USB_PREVIEW_INTERVAL_MS = max(int(os.getenv("GOBAG_USB_PREVIEW_INTERVAL_MS", "1200")), 800)
 USB_AUTO_SCAN_INTERVAL_MS = max(int(os.getenv("GOBAG_USB_AUTO_SCAN_INTERVAL_MS", "1200")), 900)
+USB_SESSION_INTERVAL_MS = max(int(os.getenv("GOBAG_USB_SESSION_INTERVAL_MS", "850")), 300)
 USB_PREVIEW_MODE = os.getenv("GOBAG_USB_PREVIEW_MODE", "auto").strip().lower()
 USB_STREAM_CMD = os.getenv("GOBAG_USB_STREAM_CMD", "ffmpeg")
 USB_STREAM_WIDTH = int(os.getenv("GOBAG_USB_STREAM_WIDTH", "960"))
@@ -328,6 +330,225 @@ class UsbCameraCapability:
     bus_info: str = ""
     is_video_capture: bool = False
     is_usb: bool = False
+
+
+@dataclass
+class UsbCameraSessionState:
+    session_id: str = ""
+    bag_id: str = ""
+    device: str = ""
+    width: int = 0
+    height: int = 0
+    interval_ms: int = USB_SESSION_INTERVAL_MS
+    active: bool = False
+    running: bool = False
+    started_at: int = 0
+    last_frame_at: int = 0
+    frame_id: int = 0
+    image_bytes: bytes = b""
+    decoded_content: str = ""
+    decoded_at: int = 0
+    error_payload: Optional[dict] = None
+    technical: str = ""
+
+
+class UsbCameraSessionManager:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._state = UsbCameraSessionState()
+
+    def start(self, bag_id: str = "") -> dict:
+        device = resolve_usb_camera_device("CAMERA_PREVIEW_FAILED")
+        width = max(USB_PREVIEW_WIDTH, min(USB_SCAN_WIDTH, 1280))
+        height = max(USB_PREVIEW_HEIGHT, min(USB_SCAN_HEIGHT, 720))
+        interval_ms = max(min(USB_SESSION_INTERVAL_MS, USB_AUTO_SCAN_INTERVAL_MS), 300)
+        session_id = uuid.uuid4().hex
+        self.stop(clear_state=True)
+        state = UsbCameraSessionState(
+            session_id=session_id,
+            bag_id=bag_id,
+            device=device,
+            width=width,
+            height=height,
+            interval_ms=interval_ms,
+            active=True,
+            running=True,
+            started_at=now_ms(),
+        )
+        stop_event = threading.Event()
+        worker = threading.Thread(
+            target=self._capture_loop,
+            args=(session_id, stop_event),
+            daemon=True,
+            name=f"gobag-usb-session-{session_id[:8]}",
+        )
+        with self._lock:
+            self._state = state
+            self._stop_event = stop_event
+            self._thread = worker
+        logger.info("USB camera session starting: %s on %s for bag %s", session_id, device, bag_id or "(default)")
+        worker.start()
+        return self.snapshot()
+
+    def stop(self, clear_state: bool = True) -> None:
+        with self._lock:
+            stop_event = self._stop_event
+            worker = self._thread
+            session_id = self._state.session_id
+            if clear_state:
+                self._state = UsbCameraSessionState()
+            else:
+                self._state.active = False
+                self._state.running = False
+            self._thread = None
+            self._stop_event = threading.Event()
+        if session_id:
+            logger.info("USB camera session stopping: %s", session_id)
+        stop_event.set()
+        if worker and worker.is_alive():
+            worker.join(timeout=2)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            state = UsbCameraSessionState(
+                session_id=self._state.session_id,
+                bag_id=self._state.bag_id,
+                device=self._state.device,
+                width=self._state.width,
+                height=self._state.height,
+                interval_ms=self._state.interval_ms,
+                active=self._state.active,
+                running=self._state.running,
+                started_at=self._state.started_at,
+                last_frame_at=self._state.last_frame_at,
+                frame_id=self._state.frame_id,
+                image_bytes=self._state.image_bytes,
+                decoded_content=self._state.decoded_content,
+                decoded_at=self._state.decoded_at,
+                error_payload=dict(self._state.error_payload) if self._state.error_payload else None,
+                technical=self._state.technical,
+            )
+        if state.error_payload:
+            payload = dict(state.error_payload)
+            payload.update(
+                {
+                    "session_id": state.session_id,
+                    "device": state.device,
+                    "frame_id": state.frame_id,
+                    "frame_url": "/camera/usb/session/frame.jpg",
+                    "active": state.active,
+                    "running": state.running,
+                    "started_at": state.started_at,
+                    "last_frame_at": state.last_frame_at,
+                    "decoded_content": state.decoded_content,
+                    "decoded_at": state.decoded_at,
+                    "interval_ms": state.interval_ms,
+                    "resolution": {"width": state.width, "height": state.height},
+                }
+            )
+            return payload
+        return {
+            "ok": True,
+            "session_id": state.session_id,
+            "device": state.device,
+            "frame_url": "/camera/usb/session/frame.jpg",
+            "frame_id": state.frame_id,
+            "active": state.active,
+            "running": state.running,
+            "started_at": state.started_at,
+            "last_frame_at": state.last_frame_at,
+            "decoded_content": state.decoded_content,
+            "decoded_at": state.decoded_at,
+            "interval_ms": state.interval_ms,
+            "resolution": {"width": state.width, "height": state.height},
+            "technical": state.technical,
+        }
+
+    def frame_response(self) -> Response:
+        with self._lock:
+            state = self._state
+            if not state.session_id or not state.image_bytes:
+                raise structured_http_exception(
+                    503,
+                    "CAMERA_PREVIEW_FAILED",
+                    "USB camera preview has not captured a frame yet.",
+                    technical=state.technical or "session has no frame",
+                )
+            image_bytes = state.image_bytes
+        return Response(content=image_bytes, media_type="image/jpeg", headers={"Cache-Control": "no-store, max-age=0"})
+
+    def _capture_loop(self, session_id: str, stop_event: threading.Event) -> None:
+        logger.info("USB camera session loop started: %s", session_id)
+        while not stop_event.is_set():
+            with self._lock:
+                if self._state.session_id != session_id or not self._state.active:
+                    return
+                device = self._state.device
+                width = self._state.width
+                height = self._state.height
+                interval_ms = self._state.interval_ms
+            try:
+                capture = capture_usb_camera_frame_with_device(device, "session", width, height, error_code="CAMERA_PREVIEW_FAILED")
+                frame_time = now_ms()
+                with self._lock:
+                    if self._state.session_id != session_id:
+                        return
+                    self._state.image_bytes = capture.image_bytes
+                    self._state.frame_id += 1
+                    self._state.last_frame_at = frame_time
+                    self._state.width = capture.width
+                    self._state.height = capture.height
+                    self._state.technical = f"latest frame {capture.width}x{capture.height}"
+                    self._state.error_payload = None
+                try:
+                    decoded_content = decode_qr_from_image_bytes(capture.image_bytes)
+                except HTTPException as exc:
+                    payload = error_payload_from_detail(exc.detail, default_code="NO_QR_DETECTED")
+                    if payload.get("code") == "NO_QR_DETECTED":
+                        decoded_content = ""
+                    else:
+                        with self._lock:
+                            if self._state.session_id != session_id:
+                                return
+                            self._state.error_payload = payload
+                            self._state.running = False
+                        logger.warning("USB camera session decode failed: %s", payload.get("technical") or payload.get("message"))
+                        return
+                if decoded_content:
+                    with self._lock:
+                        if self._state.session_id != session_id:
+                            return
+                        self._state.decoded_content = decoded_content
+                        self._state.decoded_at = now_ms()
+                        self._state.running = False
+                        self._state.technical = f"decoded QR ({len(decoded_content)} chars)"
+                    logger.info("USB camera session decoded QR for session %s", session_id)
+                    return
+            except HTTPException as exc:
+                payload = error_payload_from_detail(exc.detail, default_code="CAMERA_PREVIEW_FAILED")
+                with self._lock:
+                    if self._state.session_id != session_id:
+                        return
+                    self._state.error_payload = payload
+                    self._state.running = False
+                logger.warning("USB camera session capture failed: %s", payload.get("technical") or payload.get("message"))
+                return
+            except Exception as exc:
+                payload = structured_error_detail("CAMERA_PREVIEW_FAILED", "USB camera preview failed.", technical=str(exc)[:240])
+                with self._lock:
+                    if self._state.session_id != session_id:
+                        return
+                    self._state.error_payload = payload
+                    self._state.running = False
+                logger.exception("USB camera session failed unexpectedly")
+                return
+            stop_event.wait(interval_ms / 1000)
+        logger.info("USB camera session loop stopped: %s", session_id)
+
+
+usb_camera_session_manager = UsbCameraSessionManager()
 
 
 def now_ms() -> int:
@@ -1876,7 +2097,7 @@ def image_dimensions_for_bytes(image_bytes: bytes) -> tuple[int, int]:
         return 0, 0
 
 
-def candidate_usb_capture_profiles(purpose: Literal["preview", "scan"], width: int, height: int) -> List[tuple[int, int]]:
+def candidate_usb_capture_profiles(purpose: Literal["preview", "scan", "session"], width: int, height: int) -> List[tuple[int, int]]:
     candidates: List[tuple[int, int]] = []
     requested = (max(int(width), 1), max(int(height), 1))
     for candidate in [
@@ -1914,7 +2135,7 @@ def select_supported_size(sizes: List[tuple[int, int]], target_width: int, targe
 
 
 def build_usb_capture_attempts(
-    purpose: Literal["preview", "scan"],
+    purpose: Literal["preview", "scan", "session"],
     device: str,
     width: int,
     height: int,
@@ -1935,12 +2156,13 @@ def build_usb_capture_attempts(
     return attempts
 
 
-def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureResult:
-    error_code = "CAMERA_PREVIEW_FAILED" if purpose == "preview" else "CAMERA_CAPTURE_FAILED"
-    device = resolve_usb_camera_device(error_code)
-    width = USB_PREVIEW_WIDTH if purpose == "preview" else USB_SCAN_WIDTH
-    height = USB_PREVIEW_HEIGHT if purpose == "preview" else USB_SCAN_HEIGHT
-
+def capture_usb_camera_frame_with_device(
+    device: str,
+    purpose: Literal["preview", "scan", "session"],
+    width: int,
+    height: int,
+    error_code: str,
+) -> UsbCaptureResult:
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         out_path = tmp.name
 
@@ -2001,7 +2223,7 @@ def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureR
                 attempt_index,
             )
             return UsbCaptureResult(
-                purpose=purpose,
+                purpose="preview" if purpose == "session" else purpose,
                 device=device,
                 file_path=out_path,
                 width=detected_width,
@@ -2030,6 +2252,14 @@ def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureR
             os.remove(out_path)
         except OSError:
             pass
+
+
+def capture_usb_camera_frame(purpose: Literal["preview", "scan"]) -> UsbCaptureResult:
+    error_code = "CAMERA_PREVIEW_FAILED" if purpose == "preview" else "CAMERA_CAPTURE_FAILED"
+    device = resolve_usb_camera_device(error_code)
+    width = USB_PREVIEW_WIDTH if purpose == "preview" else USB_SCAN_WIDTH
+    height = USB_PREVIEW_HEIGHT if purpose == "preview" else USB_SCAN_HEIGHT
+    return capture_usb_camera_frame_with_device(device, purpose, width, height, error_code)
 
 
 def build_decode_variants(image_bytes: bytes) -> List[tuple[str, Image.Image]]:
@@ -2471,6 +2701,11 @@ def startup() -> None:
     init_db()
 
 
+@app.on_event("shutdown")
+def shutdown() -> None:
+    usb_camera_session_manager.stop(clear_state=True)
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -2509,6 +2744,7 @@ def camera_status() -> dict:
     preview_mode_preference = configured_usb_preview_mode()
     preview_config: Optional[UsbPreviewConfig] = None
     preview_error = ""
+    session_status = usb_camera_session_manager.snapshot()
     if available_devices:
         try:
             preview_config = select_usb_preview_config(available_devices[0])
@@ -2536,9 +2772,14 @@ def camera_status() -> dict:
         "usb_preview_device": preview_config.device if preview_config else (available_devices[0] if available_devices else ""),
         "usb_preview_url": preview_config.preview_url if preview_config else "",
         "usb_preview_probe_timeout_s": USB_STREAM_PROBE_TIMEOUT_S,
+        "usb_session_interval_ms": USB_SESSION_INTERVAL_MS,
         "usb_scan_skip_frames": USB_SCAN_SKIP_FRAMES,
         "usb_camera_devices": available_devices,
         "usb_capture_devices": capture_devices,
+        "usb_session_active": bool(session_status.get("active")),
+        "usb_session_running": bool(session_status.get("running")),
+        "usb_session_device": str(session_status.get("device") or ""),
+        "usb_session_frame_id": int(session_status.get("frame_id") or 0),
         "usb_preview_error": preview_error,
         "usb_scan_resolution": {"width": USB_SCAN_WIDTH, "height": USB_SCAN_HEIGHT},
     }
@@ -2587,6 +2828,42 @@ def usb_camera_preview_status() -> JSONResponse:
         payload = error_payload_from_detail(exc.detail, default_code="CAMERA_PREVIEW_FAILED")
         logger.warning("USB preview start failed: %s", payload.get("technical") or payload.get("message"))
         return JSONResponse(payload, status_code=exc.status_code)
+
+
+@app.post("/camera/usb/session/start")
+async def usb_camera_session_start(request: Request) -> JSONResponse:
+    form = await read_ui_form(request)
+    requested_bag_id = str(form.get("bag_id") or "").strip()
+    with db_conn() as conn:
+        bag_id = canonical_ui_bag_row(conn)["bag_id"]
+    if requested_bag_id and requested_bag_id != bag_id:
+        logger.info("Ignoring requested bag id %s and starting USB session for canonical bag %s", requested_bag_id, bag_id)
+    try:
+        payload = usb_camera_session_manager.start(bag_id=bag_id)
+        payload["message"] = "USB camera session started."
+        return JSONResponse(payload)
+    except HTTPException as exc:
+        payload = error_payload_from_detail(exc.detail, default_code="CAMERA_PREVIEW_FAILED")
+        logger.warning("USB camera session start failed: %s", payload.get("technical") or payload.get("message"))
+        return JSONResponse(payload, status_code=exc.status_code)
+
+
+@app.post("/camera/usb/session/stop")
+def usb_camera_session_stop() -> JSONResponse:
+    usb_camera_session_manager.stop(clear_state=True)
+    return JSONResponse({"ok": True, "message": "USB camera session stopped."})
+
+
+@app.get("/camera/usb/session/status")
+def usb_camera_session_status() -> JSONResponse:
+    payload = usb_camera_session_manager.snapshot()
+    status_code = 200 if payload.get("ok", True) else 503
+    return JSONResponse(payload, status_code=status_code)
+
+
+@app.get("/camera/usb/session/frame.jpg")
+def usb_camera_session_frame() -> Response:
+    return usb_camera_session_manager.frame_response()
 
 
 def generate_usb_camera_stream(command: List[str]) -> Iterator[bytes]:
@@ -4131,6 +4408,10 @@ def home(request: Request) -> HTMLResponse:
       let previewMode = "snapshot";
       let previewUrl = "/camera/usb/preview.jpg";
       let snapshotPreviewUrl = "/camera/usb/preview.jpg";
+      let scanSessionId = "";
+      let scanFrameUrl = "/camera/usb/session/frame.jpg";
+      let scanStatusTimer = 0;
+      let latestSessionFrameId = 0;
       let previewFailureCount = 0;
       let barcodeDetector = undefined;
       let detectorFallbackActive = false;
@@ -4183,6 +4464,13 @@ def home(request: Request) -> HTMLResponse:
         if (previewTimer) {{
           window.clearInterval(previewTimer);
           previewTimer = 0;
+        }}
+      }}
+
+      function stopScanStatusLoop() {{
+        if (scanStatusTimer) {{
+          window.clearInterval(scanStatusTimer);
+          scanStatusTimer = 0;
         }}
       }}
 
@@ -4244,12 +4532,15 @@ def home(request: Request) -> HTMLResponse:
 
       function resetScannerState() {{
         stopPreviewLoop();
+        stopScanStatusLoop();
         stopAutoScanLoop();
         stopLiveDetectLoop();
         previewLoading = false;
         previewFailureCount = 0;
         scanBusy = false;
         scanCooldownUntil = 0;
+        scanSessionId = "";
+        latestSessionFrameId = 0;
         detectorFallbackActive = false;
         lastDetectedRawContent = "";
         lastDetectedAt = 0;
@@ -4304,54 +4595,34 @@ def home(request: Request) -> HTMLResponse:
         closeScanModal();
       }}
 
-      function retrySnapshotPreview() {{
-        if (!scanIsOpen()) {{
-          return;
-        }}
-        window.setTimeout(() => {{
-          if (!scanIsOpen()) {{
-            return;
-          }}
-          void refreshPreviewFrame(true);
-        }}, 350);
+      function startScanStatusLoop(intervalMs) {{
+        stopScanStatusLoop();
+        const effectiveInterval = Math.max(Math.min(intervalMs || scanIntervalMs || autoScanFallbackIntervalMs, 900), 250);
+        scanStatusTimer = window.setInterval(() => {{
+          void pollScanSessionStatus();
+        }}, effectiveInterval);
       }}
 
-      function switchToSnapshotPreview(reason = "") {{
-        if (!scanIsOpen()) {{
+      async function stopScanSession() {{
+        const activeSessionId = scanSessionId;
+        if (!activeSessionId) {{
           return;
         }}
-        stopPreviewLoop();
-        previewMode = "snapshot";
-        previewUrl = snapshotPreviewUrl || "/camera/usb/preview.jpg";
-        previewFailureCount = 0;
-        previewLoading = false;
-        setPreviewVisible(false);
-        if (reason) {{
-          console.warn(reason);
+        scanSessionId = "";
+        stopScanStatusLoop();
+        try {{
+          await fetch("/camera/usb/session/stop", {{
+            method: "POST",
+            headers: {{ "Accept": "application/json" }},
+            cache: "no-store",
+            keepalive: true,
+          }});
+        }} catch (_error) {{
         }}
-        startPreviewLoop(previewFallbackIntervalMs);
-        void refreshPreviewFrame(true);
       }}
 
-      async function refreshPreviewFrame(forceReload = false) {{
-        if (!scanPreviewImage || !scanIsOpen() || previewLoading || scanBusy) {{
-          return;
-        }}
-        if (previewMode === "stream") {{
-          if (forceReload || !scanPreviewImage.getAttribute("src")) {{
-            previewLoading = true;
-            scanPreviewImage.onload = () => {{
-              previewLoading = false;
-              previewFailureCount = 0;
-              setPreviewVisible(true);
-            }};
-            scanPreviewImage.onerror = () => {{
-              previewLoading = false;
-              setPreviewVisible(false);
-              switchToSnapshotPreview("USB camera stream preview failed; falling back to fswebcam snapshots.");
-            }};
-            scanPreviewImage.src = withCacheBust(previewUrl);
-          }}
+      async function loadSessionFrame(frameId) {{
+        if (!scanPreviewImage || !scanIsOpen() || !scanSessionId || previewLoading || !frameId) {{
           return;
         }}
         previewLoading = true;
@@ -4364,72 +4635,20 @@ def home(request: Request) -> HTMLResponse:
           previewLoading = false;
           setPreviewVisible(false);
           previewFailureCount += 1;
-          if (previewFailureCount < 3) {{
-            retrySnapshotPreview();
-            return;
+          if (previewFailureCount >= 3) {{
+            closeScannerWithError("USB camera preview failed. Check the USB camera connection.");
           }}
-          closeScannerWithError("USB camera preview failed. Check the USB camera connection.");
         }};
-        scanPreviewImage.src = withCacheBust(previewUrl);
+        const frameUrl = `${{scanFrameUrl}}?session_id=${{encodeURIComponent(scanSessionId)}}&frame_id=${{frameId}}`;
+        scanPreviewImage.src = withCacheBust(frameUrl);
       }}
 
-      async function startAutomaticScanning() {{
-        stopAutoScanLoop();
-        stopLiveDetectLoop();
-        if (!scanIsOpen()) {{
-          return;
-        }}
-        const detector = await getBarcodeDetector();
-        if (detector) {{
-          liveDetectTimer = window.setInterval(() => {{
-            void detectQrFromPreview();
-          }}, 280);
-          void detectQrFromPreview();
-          return;
-        }}
-        detectorFallbackActive = true;
-        startAutoScanLoop(scanIntervalMs);
-      }}
-
-      async function detectQrFromPreview() {{
-        if (!scanIsOpen() || scanBusy || previewLoading || Date.now() < scanCooldownUntil) {{
-          return;
-        }}
-        const detector = await getBarcodeDetector();
-        if (!detector || !scanPreviewImage || scanPreviewImage.classList.contains("hidden")) {{
-          return;
-        }}
-        if (!scanPreviewImage.complete || !scanPreviewImage.naturalWidth) {{
+      async function pollScanSessionStatus() {{
+        if (!scanIsOpen() || !scanSessionId) {{
           return;
         }}
         try {{
-          const detectedRows = await detector.detect(scanPreviewImage);
-          const qrRow = (detectedRows || []).find((row) => (row.rawValue || "").trim());
-          if (!qrRow) {{
-            return;
-          }}
-          const rawValue = (qrRow.rawValue || "").trim();
-          const now = Date.now();
-          if (!rawValue || (rawValue === lastDetectedRawContent && (now - lastDetectedAt) < 4500)) {{
-            return;
-          }}
-          lastDetectedRawContent = rawValue;
-          lastDetectedAt = now;
-          await submitDecodedUsbScan(rawValue, true);
-        }} catch (_error) {{
-          stopLiveDetectLoop();
-          if (!detectorFallbackActive && scanIsOpen()) {{
-            detectorFallbackActive = true;
-            startAutoScanLoop(scanIntervalMs);
-          }}
-        }}
-      }}
-
-      async function preparePreview() {{
-        setPreviewVisible(false);
-        setPreviewPlaceholderMessage("");
-        try {{
-          const response = await fetch("/camera/usb/preview/status", {{
+          const response = await fetch(`/camera/usb/session/status?session_id=${{encodeURIComponent(scanSessionId)}}`, {{
             headers: {{ "Accept": "application/json" }},
             cache: "no-store",
           }});
@@ -4438,21 +4657,45 @@ def home(request: Request) -> HTMLResponse:
             closeScannerWithError(payload.message || "USB camera preview failed.");
             return;
           }}
-          previewMode = payload.preview_mode || "snapshot";
-          previewUrl = payload.preview_url || "/camera/usb/preview.jpg";
-          snapshotPreviewUrl = payload.snapshot_preview_url || "/camera/usb/preview.jpg";
-          previewFailureCount = 0;
-          scanIntervalMs = payload.scan_interval_ms || autoScanFallbackIntervalMs;
-          await refreshPreviewFrame(true);
-          if (!scanIsOpen()) {{
+          if (payload.session_id && payload.session_id !== scanSessionId) {{
             return;
           }}
-          if (previewMode !== "stream") {{
-            startPreviewLoop(payload.interval_ms || previewFallbackIntervalMs);
+          scanIntervalMs = payload.interval_ms || scanIntervalMs || autoScanFallbackIntervalMs;
+          scanFrameUrl = payload.frame_url || "/camera/usb/session/frame.jpg";
+          if (payload.frame_id && payload.frame_id !== latestSessionFrameId) {{
+            latestSessionFrameId = payload.frame_id;
+            await loadSessionFrame(latestSessionFrameId);
           }}
-          if (payload.auto_scan !== false) {{
-            await startAutomaticScanning();
+          if (payload.decoded_content && !scanBusy) {{
+            await submitDecodedUsbScan(payload.decoded_content, true);
           }}
+        }} catch (_error) {{
+          closeScannerWithError("USB camera preview failed.");
+        }}
+      }}
+
+      async function preparePreview() {{
+        setPreviewVisible(false);
+        setPreviewPlaceholderMessage("");
+        previewFailureCount = 0;
+        try {{
+          const response = await fetch("/camera/usb/session/start", {{
+            method: "POST",
+            headers: {{ "Accept": "application/json" }},
+            body: new URLSearchParams(new FormData(scanCaptureForm)),
+            cache: "no-store",
+          }});
+          const payload = await response.json().catch(() => ({{ ok: false, code: "CAMERA_PREVIEW_FAILED", message: "USB camera preview failed." }}));
+          if (!response.ok || payload.ok === false) {{
+            closeScannerWithError(payload.message || "USB camera preview failed.");
+            return;
+          }}
+          scanSessionId = payload.session_id || "";
+          scanFrameUrl = payload.frame_url || "/camera/usb/session/frame.jpg";
+          scanIntervalMs = payload.interval_ms || autoScanFallbackIntervalMs;
+          latestSessionFrameId = 0;
+          startScanStatusLoop(scanIntervalMs);
+          await pollScanSessionStatus();
         }} catch (_error) {{
           closeScannerWithError("USB camera preview failed.");
         }}
@@ -4469,6 +4712,7 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function closeScanModal() {{
+        void stopScanSession();
         resetScannerState();
         if (scanModal) {{
           scanModal.classList.add("hidden");
@@ -4512,6 +4756,7 @@ def home(request: Request) -> HTMLResponse:
         }}
         scanBusy = true;
         scanCooldownUntil = Date.now() + 1000;
+        stopScanStatusLoop();
         stopPreviewLoop();
         stopAutoScanLoop();
         stopLiveDetectLoop();
@@ -4533,12 +4778,9 @@ def home(request: Request) -> HTMLResponse:
           handleScanFailure({{ code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}, automatic);
         }} finally {{
           scanBusy = false;
-          if (scanIsOpen()) {{
-            if (previewMode !== "stream") {{
-              startPreviewLoop(previewFallbackIntervalMs);
-            }}
-            await startAutomaticScanning();
-            void refreshPreviewFrame(previewMode === "stream");
+          if (scanIsOpen() && scanSessionId) {{
+            startScanStatusLoop(scanIntervalMs);
+            await pollScanSessionStatus();
           }}
         }}
       }}
@@ -4553,6 +4795,7 @@ def home(request: Request) -> HTMLResponse:
         }}
         scanBusy = true;
         scanCooldownUntil = Date.now() + 1400;
+        stopScanStatusLoop();
         stopPreviewLoop();
         stopAutoScanLoop();
         stopLiveDetectLoop();
@@ -4575,12 +4818,9 @@ def home(request: Request) -> HTMLResponse:
           handleScanFailure({{ code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}, automatic);
         }} finally {{
           scanBusy = false;
-          if (scanIsOpen()) {{
-            if (previewMode !== "stream") {{
-              startPreviewLoop(previewFallbackIntervalMs);
-            }}
-            await startAutomaticScanning();
-            void refreshPreviewFrame(previewMode === "stream");
+          if (scanIsOpen() && scanSessionId) {{
+            startScanStatusLoop(scanIntervalMs);
+            await pollScanSessionStatus();
           }}
         }}
       }}
