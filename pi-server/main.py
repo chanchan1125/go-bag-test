@@ -38,6 +38,7 @@ except Exception:
 
 DEFAULT_DATA_DIR = "/var/lib/gobag"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PACKAGED_ICON_PATH = os.path.abspath(os.path.join(BASE_DIR, "assets", "Icon.png"))
 REDESIGN_ICON_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "docs", "redesign", "Icon.png"))
 DEVICE_NAME = os.getenv("GOBAG_DEVICE_NAME", "GO BAG Raspberry Pi")
 HOST = os.getenv("GOBAG_HOST", "0.0.0.0")
@@ -2515,11 +2516,13 @@ def qr_data_uri_for_payload(payload: dict) -> str:
 
 @lru_cache(maxsize=1)
 def redesign_icon_data_uri() -> str:
-    try:
-        with open(REDESIGN_ICON_PATH, "rb") as icon_file:
-            return "data:image/png;base64," + base64.b64encode(icon_file.read()).decode("ascii")
-    except OSError:
-        return ""
+    for icon_path in (PACKAGED_ICON_PATH, REDESIGN_ICON_PATH):
+        try:
+            with open(icon_path, "rb") as icon_file:
+                return "data:image/png;base64," + base64.b64encode(icon_file.read()).decode("ascii")
+        except OSError:
+            continue
+    return ""
 
 
 def build_inventory_groups(item_rows: List[sqlite3.Row]) -> List[InventoryGroupView]:

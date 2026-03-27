@@ -29,6 +29,7 @@ Optional modes:
 ```bash
 ./install.sh --no-autostart
 ./install.sh --kiosk
+./install.sh --no-ui-autostart
 ```
 
 This is the supported installation flow. The older `gobag-pi/install.sh` path is only a compatibility wrapper.
@@ -129,7 +130,7 @@ curl http://127.0.0.1:8080/camera/status
 
 Open `http://<pi-ip>:8080/` in a browser to confirm the dashboard and QR pairing flow.
 
-The installer also creates a desktop icon and, in `--kiosk` mode, a desktop autostart entry that opens the native GO BAG app shell instead of Chromium.
+The installer creates a desktop icon and, by default, a desktop autostart entry that opens the native GO BAG app shell on login. Use `--kiosk` to launch it in kiosk mode, or `--no-ui-autostart` to skip desktop auto-open.
 
 You can launch the local UI shell manually with:
 

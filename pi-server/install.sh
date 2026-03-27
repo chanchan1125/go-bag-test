@@ -16,6 +16,7 @@ POWER_SUDOERS_FILE="/etc/sudoers.d/gobag-poweroff"
 MENU_ENTRY="/usr/share/applications/gobag-inventory.desktop"
 
 AUTOSTART_BACKEND=1
+ENABLE_UI_AUTOSTART=1
 ENABLE_KIOSK=0
 DESKTOP_USER=""
 
@@ -30,11 +31,12 @@ fail() {
 
 usage() {
   cat <<EOF
-Usage: ./install.sh [--autostart] [--no-autostart] [--kiosk] [--user <desktop-user>]
+Usage: ./install.sh [--autostart] [--no-autostart] [--kiosk] [--no-ui-autostart] [--user <desktop-user>]
 
   --autostart      Enable backend service at boot (default)
   --no-autostart   Install service but do not enable it at boot
-  --kiosk          Enable backend autostart and desktop-login GO BAG app autostart
+  --kiosk          Start the desktop app shell in kiosk mode on login
+  --no-ui-autostart  Skip desktop-login GO BAG app autostart
   --user USER      Override the detected desktop user
 EOF
 }
@@ -52,6 +54,10 @@ while [[ $# -gt 0 ]]; do
     --kiosk)
       ENABLE_KIOSK=1
       AUTOSTART_BACKEND=1
+      shift
+      ;;
+    --no-ui-autostart)
+      ENABLE_UI_AUTOSTART=0
       shift
       ;;
     --user)
@@ -124,12 +130,14 @@ render_template() {
   local src="$1"
   local dest="$2"
   local launch_cmd="$3"
+  local auto_open_args="${4:---app}"
   ${SUDO} sed \
     -e "s|__SERVICE_USER__|${DESKTOP_USER}|g" \
     -e "s|__SERVICE_GROUP__|${DESKTOP_USER}|g" \
     -e "s|__APP_DIR__|${APP_DIR}|g" \
     -e "s|__CONFIG_FILE__|${CONFIG_FILE}|g" \
     -e "s|__LAUNCH_CMD__|${launch_cmd}|g" \
+    -e "s|__AUTO_OPEN_ARGS__|${auto_open_args}|g" \
     "${src}" | ${SUDO} tee "${dest}" >/dev/null
 }
 
@@ -229,10 +237,14 @@ fi
 
 AUTOSTART_DIR="${DESKTOP_HOME}/.config/autostart"
 AUTOSTART_FILE="${AUTOSTART_DIR}/gobag-inventory.desktop"
+AUTO_OPEN_ARGS="--app"
 if [[ "${ENABLE_KIOSK}" -eq 1 ]]; then
-  log "Enabling desktop autostart for kiosk mode..."
+  AUTO_OPEN_ARGS="--kiosk"
+fi
+if [[ "${ENABLE_UI_AUTOSTART}" -eq 1 ]]; then
+  log "Enabling desktop autostart for GO BAG..."
   ${SUDO} mkdir -p "${AUTOSTART_DIR}"
-  render_template "${APP_DIR}/desktop/gobag-inventory-autostart.desktop" "${AUTOSTART_FILE}" "${APP_DIR}/launch.sh"
+  render_template "${APP_DIR}/desktop/gobag-inventory-autostart.desktop" "${AUTOSTART_FILE}" "${APP_DIR}/launch.sh" "${AUTO_OPEN_ARGS}"
   ${SUDO} chown "${DESKTOP_USER}:${DESKTOP_USER}" "${AUTOSTART_FILE}"
 else
   ${SUDO} rm -f "${AUTOSTART_FILE}"
@@ -254,8 +266,12 @@ log "Config file: ${CONFIG_FILE}"
 log "Database path: ${DATA_DIR}/gobag.db"
 log "Service: ${SERVICE_NAME}"
 log "Desktop launcher: ${MENU_ENTRY}"
-if [[ "${ENABLE_KIOSK}" -eq 1 ]]; then
-  log "Desktop autostart enabled for ${DESKTOP_USER}."
+if [[ "${ENABLE_UI_AUTOSTART}" -eq 1 ]]; then
+  if [[ "${ENABLE_KIOSK}" -eq 1 ]]; then
+    log "Desktop autostart enabled for ${DESKTOP_USER} in kiosk mode."
+  else
+    log "Desktop autostart enabled for ${DESKTOP_USER}."
+  fi
 fi
 log "Useful commands:"
 log "  systemctl status ${SERVICE_NAME} --no-pager"
