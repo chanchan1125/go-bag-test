@@ -94,34 +94,36 @@ fun HomeScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            "TACTICAL READY",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Image(
+                            modifier = Modifier.size(34.dp),
+                            painter = painterResource(id = R.drawable.gobag_icon),
+                            contentDescription = "GO BAG icon"
                         )
-                        Text(
-                            "GO BAG DASHBOARD",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Black
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                            Text(
+                                "TACTICAL READY",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                "GO BAG DASHBOARD",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
                     }
-                },
-                navigationIcon = {
-                    Image(
-                        modifier = Modifier
-                            .padding(start = 16.dp)
-                            .size(34.dp),
-                        painter = painterResource(id = R.drawable.gobag_icon),
-                        contentDescription = "GO BAG icon"
-                    )
                 },
                 actions = {
                     TacticalTopPill(
                         text = if (paired) "PI LINKED" else "PI OFFLINE",
                         accent = if (paired) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
                     )
+                    Spacer(modifier = Modifier.size(4.dp))
                     IconButton(onClick = on_pairing) {
                         Icon(
                             Icons.Default.SettingsRemote,
