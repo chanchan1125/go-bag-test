@@ -7,6 +7,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
@@ -35,11 +37,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            TacticalTheme {
-                Surface(color = MaterialTheme.colorScheme.background) {
-                    GoBagApp()
-                }
-            }
+            GoBagApp()
         }
     }
 }
@@ -49,6 +47,7 @@ private fun GoBagApp() {
     val context = LocalContext.current
     val container = remember { AppContainer(context) }
     val nav = rememberNavController()
+    val darkThemeEnabled by container.device_state_store.dark_theme_enabled.collectAsState(initial = true)
 
     val startup_state = remember {
         runBlocking {
@@ -76,7 +75,6 @@ private fun GoBagApp() {
         }.collect { (state, bags) ->
             val pairedBagIds = state.paired_bags.map { it.bag_id }.toSet()
             val pairedBags = bags.filter { it.bag_id in pairedBagIds }
-            // Keep one valid paired primary bag shared across every screen.
             val resolvedBagId = when {
                 pairedBags.isEmpty() -> ""
                 state.selected_bag_id.isNotBlank() && pairedBags.any { it.bag_id == state.selected_bag_id } -> state.selected_bag_id
@@ -107,33 +105,44 @@ private fun GoBagApp() {
     }
     val sync_vm = remember { SyncViewModel(container.item_repository, container.sync_repository) }
     val pairing_vm = remember { PairingViewModel(container.pairing_repository, container.sync_repository) }
-    val settings_vm = remember { SettingsViewModel(container.item_repository, container.pairing_repository, container.sync_repository) }
+    val settings_vm = remember {
+        SettingsViewModel(
+            container.item_repository,
+            container.pairing_repository,
+            container.sync_repository,
+            container.device_state_store
+        )
+    }
 
-    NavHost(navController = nav, startDestination = "home") {
-        composable("home") {
-            HomeScreen(
-                view_model = home_vm,
-                on_inventory = { nav.navigate("inventory") },
-                on_check_mode = { nav.navigate("check") },
-                on_sync = { nav.navigate("sync") },
-                on_pairing = { nav.navigate("pair") },
-                on_settings = { nav.navigate("settings") }
-            )
-        }
-        composable("inventory") {
-            InventoryScreen(view_model = inventory_vm, on_back = { nav.popBackStack() })
-        }
-        composable("check") {
-            CheckModeScreen(view_model = check_vm, on_back = { nav.popBackStack() })
-        }
-        composable("sync") {
-            SyncScreen(view_model = sync_vm, on_back = { nav.popBackStack() })
-        }
-        composable("pair") {
-            PairingScreen(view_model = pairing_vm, on_back = { nav.popBackStack() })
-        }
-        composable("settings") {
-            SettingsScreen(view_model = settings_vm, on_back = { nav.popBackStack() })
+    TacticalTheme(darkTheme = darkThemeEnabled) {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            NavHost(navController = nav, startDestination = "home") {
+                composable("home") {
+                    HomeScreen(
+                        view_model = home_vm,
+                        on_inventory = { nav.navigate("inventory") },
+                        on_check_mode = { nav.navigate("check") },
+                        on_sync = { nav.navigate("sync") },
+                        on_pairing = { nav.navigate("pair") },
+                        on_settings = { nav.navigate("settings") }
+                    )
+                }
+                composable("inventory") {
+                    InventoryScreen(view_model = inventory_vm, on_back = { nav.popBackStack() })
+                }
+                composable("check") {
+                    CheckModeScreen(view_model = check_vm, on_back = { nav.popBackStack() })
+                }
+                composable("sync") {
+                    SyncScreen(view_model = sync_vm, on_back = { nav.popBackStack() })
+                }
+                composable("pair") {
+                    PairingScreen(view_model = pairing_vm, on_back = { nav.popBackStack() })
+                }
+                composable("settings") {
+                    SettingsScreen(view_model = settings_vm, on_back = { nav.popBackStack() })
+                }
+            }
         }
     }
 }

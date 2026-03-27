@@ -19,6 +19,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import lru_cache
 from html import escape
 from typing import Dict, Iterator, List, Literal, Optional, Union
 from urllib.parse import parse_qs, quote
@@ -36,6 +37,8 @@ except Exception:
     pyzbar_decode = None
 
 DEFAULT_DATA_DIR = "/var/lib/gobag"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REDESIGN_ICON_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "docs", "redesign", "Icon.png"))
 DEVICE_NAME = os.getenv("GOBAG_DEVICE_NAME", "GO BAG Raspberry Pi")
 HOST = os.getenv("GOBAG_HOST", "0.0.0.0")
 PORT = int(os.getenv("GOBAG_PORT", "8080"))
@@ -2510,6 +2513,15 @@ def qr_data_uri_for_payload(payload: dict) -> str:
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
+@lru_cache(maxsize=1)
+def redesign_icon_data_uri() -> str:
+    try:
+        with open(REDESIGN_ICON_PATH, "rb") as icon_file:
+            return "data:image/png;base64," + base64.b64encode(icon_file.read()).decode("ascii")
+    except OSError:
+        return ""
+
+
 def build_inventory_groups(item_rows: List[sqlite3.Row]) -> List[InventoryGroupView]:
     grouped: Dict[str, List[sqlite3.Row]] = {}
     for row in item_rows:
@@ -4040,6 +4052,12 @@ def home(request: Request) -> HTMLResponse:
         else "Manual add and USB scan both store batches locally, then sync later to the phone."
     )
     inventory_submit_label = "Update inventory batch" if edit_item else "Manual add"
+    brand_icon_uri = redesign_icon_data_uri()
+    brand_mark_inner = (
+        f'<img src="{brand_icon_uri}" alt="GO BAG icon">'
+        if brand_icon_uri
+        else "GB"
+    )
     html = f"""
 <!doctype html>
 <html>
@@ -4099,15 +4117,6 @@ def home(request: Request) -> HTMLResponse:
     }}
     html[data-ui-scale="fit"] {{
       --page-padding: 10px 10px 24px;
-      --topbar-padding: 8px 10px;
-      --topbar-gap: 10px;
-      --brand-gap: 10px;
-      --brand-mark-size: 38px;
-      --brand-mark-radius: 8px;
-      --brand-mark-font-size: 0.84rem;
-      --header-chip-height: 42px;
-      --header-chip-padding: 0 12px;
-      --header-chip-gap: 8px;
       --overview-gap: 10px;
       --hero-padding: 14px;
       --panel-padding: 14px;
@@ -4119,11 +4128,24 @@ def home(request: Request) -> HTMLResponse:
       --action-button-height: 46px;
       --action-button-padding: 8px 10px;
       --action-button-font-size: 0.9rem;
-      --touch-keyboard-padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
-      --touch-keyboard-gap: 4px;
-      --touch-keyboard-button-height: 29px;
-      --touch-keyboard-button-padding: 4px 3px;
-      --touch-keyboard-button-font-size: 0.78rem;
+    }}
+    @media (max-width: 520px), (max-height: 360px) {{
+      html {{
+        --topbar-padding: 8px 10px;
+        --topbar-gap: 10px;
+        --brand-gap: 10px;
+        --brand-mark-size: 38px;
+        --brand-mark-radius: 8px;
+        --brand-mark-font-size: 0.84rem;
+        --header-chip-height: 42px;
+        --header-chip-padding: 0 12px;
+        --header-chip-gap: 8px;
+        --touch-keyboard-padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+        --touch-keyboard-gap: 4px;
+        --touch-keyboard-button-height: 29px;
+        --touch-keyboard-button-padding: 4px 3px;
+        --touch-keyboard-button-font-size: 0.78rem;
+      }}
     }}
     body {{
       margin: 0;
@@ -4170,6 +4192,7 @@ def home(request: Request) -> HTMLResponse:
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      overflow: hidden;
       border-radius: var(--brand-mark-radius);
       font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
       font-size: var(--brand-mark-font-size);
@@ -4178,6 +4201,12 @@ def home(request: Request) -> HTMLResponse:
       color: #ffffff;
       background: linear-gradient(180deg, var(--accent), var(--accent-strong));
       box-shadow: 0 12px 24px rgba(255, 107, 0, 0.18);
+    }}
+    .brand-mark img {{
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
     }}
     .topbar-kicker,
     .hero-kicker,
@@ -5538,20 +5567,22 @@ def home(request: Request) -> HTMLResponse:
       gap: 16px;
       align-content: start;
     }}
-    html[data-ui-scale="fit"] .topbar-kicker {{
-      display: none;
-    }}
-    html[data-ui-scale="fit"] .topbar-title {{
-      font-size: 0.98rem;
-      line-height: 1.1;
-    }}
-    html[data-ui-scale="fit"] .theme-toggle-label,
-    html[data-ui-scale="fit"] .readiness-pill-label,
-    html[data-ui-scale="fit"] .power-button-label {{
-      display: none;
-    }}
-    html[data-ui-scale="fit"] .readiness-pill-value {{
-      font-size: 0.92rem;
+    @media (max-width: 520px), (max-height: 360px) {{
+      .topbar-kicker {{
+        display: none;
+      }}
+      .topbar-title {{
+        font-size: 0.98rem;
+        line-height: 1.1;
+      }}
+      .theme-toggle-label,
+      .readiness-pill-label,
+      .power-button-label {{
+        display: none;
+      }}
+      .readiness-pill-value {{
+        font-size: 0.92rem;
+      }}
     }}
     html[data-ui-scale="fit"] .hero-shell-inner,
     html[data-ui-scale="fit"] .hero-score-row,
@@ -5606,19 +5637,6 @@ def home(request: Request) -> HTMLResponse:
     html[data-ui-scale="fit"] .banner {{
       padding: 10px 12px;
       margin-bottom: 10px;
-    }}
-    html[data-ui-scale="fit"] .shutdown-dialog,
-    html[data-ui-scale="fit"] .shutdown-progress-card {{
-      padding: 14px;
-      gap: 12px;
-    }}
-    html[data-ui-scale="fit"] .shutdown-title,
-    html[data-ui-scale="fit"] .shutdown-progress-title {{
-      font-size: 1rem;
-    }}
-    html[data-ui-scale="fit"] .shutdown-note,
-    html[data-ui-scale="fit"] .shutdown-progress-note {{
-      font-size: 0.84rem;
     }}
     @media (min-width: 720px) {{
       .hero-score-row {{
@@ -5687,18 +5705,20 @@ def home(request: Request) -> HTMLResponse:
       .quick-actions {{
         grid-template-columns: 1fr;
       }}
-      html[data-ui-scale="fit"] .topbar {{
+    }}
+    @media (max-width: 520px), (max-height: 360px) {{
+      .topbar {{
         align-items: center;
       }}
-      html[data-ui-scale="fit"] .topbar-actions {{
+      .topbar-actions {{
         width: auto;
         flex-wrap: nowrap;
         justify-content: flex-end;
       }}
-      html[data-ui-scale="fit"] .readiness-pill,
-      html[data-ui-scale="fit"] .theme-toggle,
-      html[data-ui-scale="fit"] .view-controls,
-      html[data-ui-scale="fit"] .power-button {{
+      .readiness-pill,
+      .theme-toggle,
+      .view-controls,
+      .power-button {{
         flex: 0 0 auto;
       }}
     }}
@@ -5707,7 +5727,7 @@ def home(request: Request) -> HTMLResponse:
 <body data-state-version="{escape(view_model['state_version'])}" data-open-scan="{'1' if open_scan else '0'}">
   <header class="topbar">
     <div class="topbar-brand">
-      <div class="brand-mark">GB</div>
+      <div class="brand-mark">{brand_mark_inner}</div>
       <div>
         <div class="topbar-kicker">Pi Hub Dashboard</div>
         <div class="topbar-title">GO BAG Command Center</div>

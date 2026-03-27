@@ -1,18 +1,32 @@
 package com.gobag.app
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Router
+import androidx.compose.material.icons.filled.SettingsEthernet
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -24,6 +38,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -32,8 +47,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gobag.core.model.BagProfile
 import com.gobag.core.model.SavedPiAddress
@@ -49,6 +70,7 @@ fun SettingsScreen(
 ) {
     val state by view_model.ui_state.collectAsState()
     val snackbarHost = remember { SnackbarHostState() }
+    val selectedBag = state.bags.firstOrNull { it.bag_id == state.selected_bag_id }
 
     LaunchedEffect(state.feedback_message) {
         if (state.feedback_message.isNotBlank()) {
@@ -58,6 +80,7 @@ fun SettingsScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHost) },
         topBar = {
             TopAppBar(
@@ -66,7 +89,27 @@ fun SettingsScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
-                title = { Text("Settings", fontWeight = FontWeight.ExtraBold) },
+                title = {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            "SYSTEM CONFIG",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "SETTINGS",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                },
+                actions = {
+                    StatusPill(
+                        label = formatConnectionState(state.connection_status).uppercase(),
+                        accent = resolveConnectionAccent(state.connection_status, state.last_connection_error)
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface
@@ -77,168 +120,426 @@ fun SettingsScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp),
+                .padding(paddingValues),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            item { Spacer(modifier = Modifier.height(4.dp)) }
             item {
-                StatusCard(
-                    title = "Selected primary bag connection",
-                    lines = listOf(
-                        "Status: ${state.connection_status.replace('_', ' ')}",
-                        "Current endpoint: ${state.endpoint_input.ifBlank { "Not set" }}",
-                        "Authentication: ${if (state.pi_device_id.isBlank()) "Not paired" else "Paired to ${state.pi_device_id}"}",
-                        "Pi local address: ${state.local_ip.ifBlank { "Unknown" }}",
-                        "Pending changes on Pi: ${state.pending_changes_count}",
-                        "Last sync: ${formatSettingsTime(state.last_sync_at)}",
-                        "Pi device id: ${state.pi_device_id.ifBlank { "Not paired" }}"
-                    )
+                SettingsHeroCard(
+                    selectedBagName = selectedBag?.name ?: "No primary bag selected",
+                    endpoint = state.endpoint_input.ifBlank { "No endpoint saved" },
+                    connectionStatus = formatConnectionState(state.connection_status),
+                    piDeviceId = state.pi_device_id.ifBlank { "Not paired" },
+                    localIp = state.local_ip.ifBlank { "Unknown" },
+                    pendingChanges = state.pending_changes_count,
+                    lastSync = formatSettingsTime(state.last_sync_at)
                 )
             }
+
             item {
-                Card(
-                    shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                SettingsSectionCard(
+                    title = "Appearance",
+                    subtitle = "Choose the app theme here. The selected mode stays saved across restarts."
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text("Connection settings", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(
-                            "Save Raspberry Pi addresses here. Saving an address does not pair a bag; QR pairing is still required before a bag becomes usable.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        ThemeModeCard(
+                            modifier = Modifier.weight(1f),
+                            label = "Light Mode",
+                            detail = "Sun / bright UI",
+                            icon = Icons.Default.LightMode,
+                            selected = !state.dark_theme_enabled,
+                            onClick = { view_model.set_dark_theme(false) }
                         )
-                        OutlinedTextField(
-                            value = state.endpoint_input,
-                            onValueChange = view_model::on_endpoint_changed,
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text(if (state.editing_address_id == null) "New Pi address" else "Edit Pi address") },
-                            placeholder = { Text("http://192.168.4.1:8080") },
-                            singleLine = true
+                        ThemeModeCard(
+                            modifier = Modifier.weight(1f),
+                            label = "Dark Mode",
+                            detail = "Moon / tactical UI",
+                            icon = Icons.Default.DarkMode,
+                            selected = state.dark_theme_enabled,
+                            onClick = { view_model.set_dark_theme(true) }
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    }
+                }
+            }
+
+            item {
+                SettingsSectionCard(
+                    title = "Connection Tools",
+                    subtitle = "Save Raspberry Pi addresses here. Saving an address does not pair a bag; QR pairing is still required before a bag becomes usable."
+                ) {
+                    OutlinedTextField(
+                        value = state.endpoint_input,
+                        onValueChange = view_model::on_endpoint_changed,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(if (state.editing_address_id == null) "New Pi address" else "Edit Pi address") },
+                        placeholder = { Text("http://192.168.4.1:8080") },
+                        singleLine = true
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = view_model::save_endpoint,
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 52.dp),
+                            enabled = !state.running,
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
                         ) {
-                            Button(
-                                onClick = view_model::save_endpoint,
-                                modifier = Modifier.weight(1f),
-                                enabled = !state.running,
-                                shape = RoundedCornerShape(18.dp)
-                            ) {
-                                Text(if (state.editing_address_id == null) "Save address" else "Update address")
-                            }
-                            OutlinedButton(
-                                onClick = { view_model.test_endpoint() },
-                                modifier = Modifier.weight(1f),
-                                enabled = !state.running,
-                                shape = RoundedCornerShape(18.dp)
-                            ) {
-                                Text(if (state.running) "Checking..." else "Test entered address")
-                            }
-                        }
-                        if (state.editing_address_id != null) {
-                            OutlinedButton(
-                                onClick = view_model::cancel_address_edit,
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(18.dp)
-                            ) {
-                                Text("Cancel address edit")
-                            }
+                            Text(
+                                if (state.editing_address_id == null) "Save Address" else "Update Address",
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                         OutlinedButton(
-                            onClick = view_model::refresh_status,
-                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { view_model.test_endpoint() },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 52.dp),
                             enabled = !state.running,
-                            shape = RoundedCornerShape(18.dp)
+                            shape = RoundedCornerShape(16.dp)
                         ) {
-                            Text("Refresh current bag status")
+                            Text(if (state.running) "Checking..." else "Test Address")
                         }
                     }
-                }
-            }
-            item {
-                Card(
-                    shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(
+                    if (state.editing_address_id != null) {
+                        OutlinedButton(
+                            onClick = view_model::cancel_address_edit,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 50.dp),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Text("Cancel Address Edit")
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = view_model::refresh_status,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                            .heightIn(min = 50.dp),
+                        enabled = !state.running,
+                        shape = RoundedCornerShape(16.dp)
                     ) {
-                        Text("Saved Raspberry Pi addresses", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        if (state.saved_addresses.isEmpty()) {
-                            Text(
-                                "No Raspberry Pi addresses saved yet.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            state.saved_addresses.forEach { address ->
-                                AddressRow(
-                                    address = address,
-                                    onActivate = { view_model.activate_address(address) },
-                                    onEdit = { view_model.start_edit_address(address) },
-                                    onTest = { view_model.test_endpoint(address) },
-                                    onDelete = { view_model.delete_address(address) }
-                                )
-                            }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Sync, contentDescription = null)
+                            Text("Refresh Current Bag Status")
                         }
                     }
                 }
             }
+
+            item {
+                SettingsSectionCard(
+                    title = "Saved Raspberry Pi Addresses",
+                    subtitle = "Tap any saved address to activate, retest, edit, or remove it."
+                ) {
+                    if (state.saved_addresses.isEmpty()) {
+                        EmptyStateCard(
+                            title = "No Raspberry Pi addresses saved yet",
+                            body = "Save a local address here or start from Connect Pi to test and pair the hub."
+                        )
+                    } else {
+                        state.saved_addresses.forEach { address ->
+                            AddressRow(
+                                address = address,
+                                onActivate = { view_model.activate_address(address) },
+                                onEdit = { view_model.start_edit_address(address) },
+                                onTest = { view_model.test_endpoint(address) },
+                                onDelete = { view_model.delete_address(address) }
+                            )
+                        }
+                    }
+                }
+            }
+
             if (state.last_connection_error.isNotBlank()) {
                 item {
-                    StatusCard(
-                        title = "Last connection error",
-                        lines = listOf(state.last_connection_error)
-                    )
+                    ErrorCard(message = state.last_connection_error)
                 }
             }
+
             item {
-                Card(
-                    shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                SettingsSectionCard(
+                    title = "Paired Bags",
+                    subtitle = "Switch the phone's primary working bag or remove the current paired bag from this phone."
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text("Paired bags", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        if (state.bags.isEmpty()) {
-                            Text(
-                                "No bag is paired on this phone yet. Scan a bag QR from the Raspberry Pi app first.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (state.bags.isEmpty()) {
+                        EmptyStateCard(
+                            title = "No bag paired on this phone yet",
+                            body = "Scan a bag QR from the Raspberry Pi app first so the phone can authenticate and sync."
+                        )
+                    } else {
+                        state.bags.forEach { bag ->
+                            PairedBagRow(
+                                bag = bag,
+                                isPrimary = bag.bag_id == state.selected_bag_id,
+                                onSelect = { view_model.select_bag(bag.bag_id) }
                             )
-                        } else {
-                            state.bags.forEach { bag ->
-                                PairedBagRow(
-                                    bag = bag,
-                                    isPrimary = bag.bag_id == state.selected_bag_id,
-                                    onSelect = { view_model.select_bag(bag.bag_id) }
-                                )
-                            }
-                            OutlinedButton(
-                                onClick = view_model::unpair_selected_bag,
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(18.dp)
-                            ) {
-                                Text("Remove selected bag from phone", color = MaterialTheme.colorScheme.error)
-                            }
+                        }
+                        OutlinedButton(
+                            onClick = view_model::unpair_selected_bag,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 52.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+                        ) {
+                            Text(
+                                "Remove Selected Bag From Phone",
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SettingsHeroCard(
+    selectedBagName: String,
+    endpoint: String,
+    connectionStatus: String,
+    piDeviceId: String,
+    localIp: String,
+    pendingChanges: Int,
+    lastSync: String
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                            MaterialTheme.colorScheme.surface
+                        )
+                    )
+                )
+                .padding(20.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "Primary Phone Node",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        selectedBagName,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        endpoint,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    HeroMetric(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.SettingsEthernet,
+                        label = "Connection",
+                        value = connectionStatus,
+                        accent = MaterialTheme.colorScheme.tertiary
+                    )
+                    HeroMetric(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.Router,
+                        label = "Pi Local IP",
+                        value = localIp,
+                        accent = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    HeroMetric(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.Sync,
+                        label = "Pending Changes",
+                        value = pendingChanges.toString(),
+                        accent = MaterialTheme.colorScheme.primary
+                    )
+                    HeroMetric(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.Palette,
+                        label = "Last Sync",
+                        value = lastSync,
+                        accent = MaterialTheme.colorScheme.secondary
+                    )
+                }
+                Text(
+                    "Pi device id: $piDeviceId",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroMetric(
+    modifier: Modifier = Modifier,
+    icon: ImageVector,
+    label: String,
+    value: String,
+    accent: Color
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = accent)
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                value,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsSectionCard(
+    title: String,
+    subtitle: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            content()
+        }
+    }
+}
+
+@Composable
+private fun ThemeModeCard(
+    modifier: Modifier = Modifier,
+    label: String,
+    detail: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(
+            width = if (selected) 2.dp else 1.dp,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+        ),
+        onClick = onClick
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 118.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        if (selected) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                )
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -252,30 +553,44 @@ private fun AddressRow(
     onDelete: () -> Unit
 ) {
     Card(
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        address.base_url,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        address.last_detail.ifBlank { "No test run yet." },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (address.is_active) {
+                    StatusPill(
+                        label = "ACTIVE",
+                        accent = MaterialTheme.colorScheme.tertiary
+                    )
+                }
+            }
             Text(
-                buildString {
-                    append(address.base_url)
-                    if (address.is_active) append(" [Active]")
-                },
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                "${address.last_status} | ${address.last_detail.ifBlank { "No test run yet." }}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "Last checked: ${formatSettingsTime(address.last_checked_at)}",
+                "${address.last_status} • Last checked ${formatSettingsTime(address.last_checked_at)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -283,10 +598,10 @@ private fun AddressRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(onClick = onActivate, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
-                    Text(if (address.is_active) "Active" else "Make active")
+                OutlinedButton(onClick = onActivate, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
+                    Text(if (address.is_active) "Active" else "Make Active")
                 }
-                OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
+                OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
                     Text("Edit")
                 }
             }
@@ -294,10 +609,10 @@ private fun AddressRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(onClick = onTest, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
+                OutlinedButton(onClick = onTest, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
                     Text("Test")
                 }
-                OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
+                OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
             }
@@ -312,8 +627,60 @@ private fun PairedBagRow(
     onSelect: () -> Unit
 ) {
     Card(
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        bag.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "${bag.size_liters}L bag",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (isPrimary) {
+                    StatusPill(
+                        label = "PRIMARY",
+                        accent = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            OutlinedButton(
+                onClick = onSelect,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Text(if (isPrimary) "Primary Bag Selected" else "Set As Primary Bag")
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyStateCard(
+    title: String,
+    body: String
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(
             modifier = Modifier
@@ -322,49 +689,87 @@ private fun PairedBagRow(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                buildString {
-                    append(bag.name)
-                    if (isPrimary) append(" [Primary]")
-                },
+                title,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                "${bag.size_liters}L",
+                body,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            OutlinedButton(
-                onClick = onSelect,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(if (isPrimary) "Primary bag selected" else "Set as primary bag")
-            }
         }
     }
 }
 
 @Composable
-private fun StatusCard(
-    title: String,
-    lines: List<String>
-) {
+private fun ErrorCard(message: String) {
     Card(
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.12f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.32f))
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            lines.forEach { line ->
-                Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
+    }
+}
+
+@Composable
+private fun StatusPill(
+    label: String,
+    accent: Color
+) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = accent.copy(alpha = 0.14f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(accent)
+            )
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = accent
+            )
+        }
+    }
+}
+
+private fun formatConnectionState(value: String): String {
+    val normalized = value.replace('_', ' ').trim()
+    return if (normalized.isBlank()) "Unknown" else normalized.replaceFirstChar {
+        if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+    }
+}
+
+private fun resolveConnectionAccent(connectionStatus: String, lastConnectionError: String): Color {
+    val normalized = connectionStatus.lowercase(Locale.getDefault())
+    return when {
+        lastConnectionError.isNotBlank() -> Color(0xFFB3261E)
+        normalized.contains("paired") || normalized.contains("reachable") || normalized.contains("connected") -> Color(0xFF2ECC71)
+        normalized.contains("saved") -> Color(0xFFFF6B00)
+        else -> Color(0xFFFFB693)
     }
 }
 

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gobag.core.model.BagProfile
 import com.gobag.core.model.SavedPiAddress
+import com.gobag.data.repository.DeviceStateStore
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.PairingRepository
 import com.gobag.domain.repository.SyncRepository
@@ -18,6 +19,7 @@ import kotlinx.coroutines.launch
 data class SettingsUiState(
     val endpoint_input: String = "",
     val editing_address_id: String? = null,
+    val dark_theme_enabled: Boolean = true,
     val connection_status: String = "unknown",
     val local_ip: String = "",
     val pending_changes_count: Int = 0,
@@ -34,7 +36,8 @@ data class SettingsUiState(
 class SettingsViewModel(
     private val item_repository: ItemRepository,
     private val pairing_repository: PairingRepository,
-    private val sync_repository: SyncRepository
+    private val sync_repository: SyncRepository,
+    private val device_state_store: DeviceStateStore
 ) : ViewModel() {
     private val endpoint_input = MutableStateFlow("")
     private val editing_address_id = MutableStateFlow<String?>(null)
@@ -45,12 +48,14 @@ class SettingsViewModel(
         sync_repository.observe_device_state(),
         item_repository.observe_bags(),
         endpoint_input,
-        editing_address_id
-    ) { deviceState, bags, endpoint, editingAddressId ->
+        editing_address_id,
+        device_state_store.dark_theme_enabled
+    ) { deviceState, bags, endpoint, editingAddressId, darkThemeEnabled ->
         val pairedBagIds = deviceState.paired_bags.map { it.bag_id }.toSet()
         SettingsUiState(
             endpoint_input = endpoint.ifBlank { deviceState.saved_addresses.firstOrNull { it.is_active }?.base_url ?: deviceState.base_url },
             editing_address_id = editingAddressId,
+            dark_theme_enabled = darkThemeEnabled,
             connection_status = deviceState.connection_status,
             local_ip = deviceState.local_ip,
             pending_changes_count = deviceState.pending_changes_count,
@@ -167,6 +172,12 @@ class SettingsViewModel(
             val message = sync_repository.refresh_remote_status()
             feedback_message.value = message ?: "Raspberry Pi status refreshed."
             running.value = false
+        }
+    }
+
+    fun set_dark_theme(enabled: Boolean) {
+        viewModelScope.launch {
+            device_state_store.set_dark_theme_enabled(enabled)
         }
     }
 

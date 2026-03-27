@@ -34,6 +34,7 @@ class DeviceStateStore(context: Context) {
         private val LAST_SYNC_AT = longPreferencesKey("last_sync_at")
         private val TIME_OFFSET_MS = longPreferencesKey("time_offset_ms")
         private val AUTO_SYNC_ENABLED = booleanPreferencesKey("auto_sync_enabled")
+        private val DARK_THEME_ENABLED = booleanPreferencesKey("dark_theme_enabled")
         private val SELECTED_BAG_ID = stringPreferencesKey("selected_bag_id")
         private val HAS_UNRESOLVED_CONFLICTS = booleanPreferencesKey("has_unresolved_conflicts")
         private val CONNECTION_STATUS = stringPreferencesKey("connection_status")
@@ -81,10 +82,15 @@ class DeviceStateStore(context: Context) {
             )
         }
 
+    val dark_theme_enabled: Flow<Boolean> = data_store.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { prefs -> prefs[DARK_THEME_ENABLED] ?: true }
+
     suspend fun initialize_phone_device_id_if_missing() {
         data_store.edit { prefs ->
             if (prefs[PHONE_DEVICE_ID].isNullOrBlank()) prefs[PHONE_DEVICE_ID] = DeviceIdProvider.generate()
             if (!prefs.contains(AUTO_SYNC_ENABLED)) prefs[AUTO_SYNC_ENABLED] = false
+            if (!prefs.contains(DARK_THEME_ENABLED)) prefs[DARK_THEME_ENABLED] = true
             if (!prefs.contains(HAS_UNRESOLVED_CONFLICTS)) prefs[HAS_UNRESOLVED_CONFLICTS] = false
             if (!prefs.contains(CONNECTION_STATUS)) prefs[CONNECTION_STATUS] = "unknown"
             if (!prefs.contains(PENDING_CHANGES_COUNT)) prefs[PENDING_CHANGES_COUNT] = 0L
@@ -232,6 +238,10 @@ class DeviceStateStore(context: Context) {
 
     suspend fun set_auto_sync(enabled: Boolean) {
         data_store.edit { it[AUTO_SYNC_ENABLED] = enabled }
+    }
+
+    suspend fun set_dark_theme_enabled(enabled: Boolean) {
+        data_store.edit { it[DARK_THEME_ENABLED] = enabled }
     }
 
     suspend fun set_selected_bag_id(bag_id: String) {
