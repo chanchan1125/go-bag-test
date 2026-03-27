@@ -12,6 +12,7 @@ VENV_DIR="${APP_ROOT}/.venv"
 CONFIG_FILE="${CONFIG_DIR}/gobag.env"
 SERVICE_NAME="gobag-backend.service"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
+POWER_SUDOERS_FILE="/etc/sudoers.d/gobag-poweroff"
 MENU_ENTRY="/usr/share/applications/gobag-inventory.desktop"
 
 AUTOSTART_BACKEND=1
@@ -194,6 +195,14 @@ ${SUDO} GOBAG_CONFIG_FILE="${CONFIG_FILE}" "${APP_DIR}/scripts/init_db.sh"
 log "Setting ownership for runtime paths..."
 ${SUDO} chown -R "${DESKTOP_USER}:${DESKTOP_USER}" "${APP_ROOT}"
 ${SUDO} usermod -aG video,render "${DESKTOP_USER}" || true
+
+log "Installing safe shutdown permission for the GO BAG dashboard..."
+render_template "${APP_DIR}/systemd/gobag-poweroff.sudoers" "${POWER_SUDOERS_FILE}" "${APP_DIR}/launch.sh"
+${SUDO} chown root:root "${POWER_SUDOERS_FILE}"
+${SUDO} chmod 440 "${POWER_SUDOERS_FILE}"
+if command -v visudo >/dev/null 2>&1; then
+  ${SUDO} visudo -cf "${POWER_SUDOERS_FILE}" >/dev/null
+fi
 
 log "Installing systemd service..."
 render_template "${APP_DIR}/systemd/gobag-backend.service" "${SERVICE_FILE}" "${APP_DIR}/launch.sh"

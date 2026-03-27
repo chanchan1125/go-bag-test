@@ -1,0 +1,1 @@
+__SERVICE_USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff

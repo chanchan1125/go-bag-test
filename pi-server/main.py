@@ -24,7 +24,7 @@ from typing import Dict, Iterator, List, Literal, Optional, Union
 from urllib.parse import parse_qs, quote
 
 import qrcode
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from pydantic import BaseModel, Field
@@ -71,6 +71,8 @@ USB_STREAM_PROBE_TIMEOUT_S = float(os.getenv("GOBAG_USB_STREAM_PROBE_TIMEOUT_S",
 USB_SCAN_SKIP_FRAMES = max(int(os.getenv("GOBAG_USB_SCAN_SKIP_FRAMES", "12")), 0)
 QR_DECODE_CMD = os.getenv("GOBAG_QR_DECODE_CMD", "zbarimg")
 UI_REFRESH_INTERVAL_MS = max(int(os.getenv("GOBAG_UI_REFRESH_INTERVAL_MS", "5000")), 2000)
+SHUTDOWN_SUDOERS_FILE = os.getenv("GOBAG_SHUTDOWN_SUDOERS_FILE", "/etc/sudoers.d/gobag-poweroff")
+SHUTDOWN_DELAY_S = max(float(os.getenv("GOBAG_SHUTDOWN_DELAY_S", "1.2")), 0.2)
 SINGLE_BAG_META_KEY = "single_bag_id"
 CHECKLIST_CATEGORIES = [
     "Water & Food",
@@ -1350,6 +1352,44 @@ def require_admin_access(request: Request) -> None:
     provided = request.headers.get("x-gobag-admin-token") or request.query_params.get("token", "")
     if provided != ADMIN_TOKEN:
         raise HTTPException(status_code=403, detail="Admin token required")
+
+
+def resolve_shutdown_command() -> List[str]:
+    systemctl_path = shutil.which("systemctl") or "/usr/bin/systemctl"
+    if not systemctl_path or not os.path.exists(systemctl_path):
+        raise RuntimeError("systemctl is not available on this Raspberry Pi.")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return [systemctl_path, "poweroff"]
+    sudo_path = shutil.which("sudo") or "/usr/bin/sudo"
+    if not sudo_path or not os.path.exists(sudo_path):
+        raise PermissionError("sudo is not available for backend-triggered shutdown.")
+    if not os.path.exists(SHUTDOWN_SUDOERS_FILE):
+        raise PermissionError(
+            "Shutdown permission is not installed yet. Re-run pi-server/install.sh to enable the Power button."
+        )
+    return [sudo_path, "-n", systemctl_path, "poweroff"]
+
+
+def require_shutdown_ready() -> List[str]:
+    try:
+        return resolve_shutdown_command()
+    except PermissionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def trigger_safe_shutdown(command: List[str]) -> None:
+    try:
+        time.sleep(SHUTDOWN_DELAY_S)
+        logger.warning("Shutdown requested from GO BAG dashboard via %s", shlex.join(command))
+        subprocess.Popen(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        logger.exception("Failed to trigger Raspberry Pi shutdown")
 
 
 def diff_item(server: Item, phone: Item) -> DiffResult:
@@ -3731,6 +3771,19 @@ def ui_revoke_tokens(request: Request) -> RedirectResponse:
     return RedirectResponse(ui_redirect_url(notice="All phone access was revoked."), status_code=303)
 
 
+@app.post("/ui/system/shutdown")
+def ui_shutdown_system(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
+    require_admin_access(request)
+    command = require_shutdown_ready()
+    background_tasks.add_task(trigger_safe_shutdown, command)
+    return JSONResponse(
+        {
+            "ok": True,
+            "message": "Shutdown in progress. Wait until the screen turns off before disconnecting power.",
+        }
+    )
+
+
 @app.post("/camera/usb/scan")
 async def usb_camera_scan(request: Request) -> JSONResponse:
     form = await read_ui_form(request)
@@ -4001,6 +4054,12 @@ def home(request: Request) -> HTMLResponse:
         if (savedTheme === "dark" || savedTheme === "light") {{
           document.documentElement.dataset.theme = savedTheme;
         }}
+        const savedUiScale = localStorage.getItem("gobag-pi-ui-scale");
+        if (savedUiScale === "fit" || savedUiScale === "standard") {{
+          document.documentElement.dataset.uiScale = savedUiScale;
+        }} else if (window.matchMedia("(max-width: 520px), (max-height: 360px)").matches) {{
+          document.documentElement.dataset.uiScale = "fit";
+        }}
       }} catch (_error) {{
       }}
     }})();
@@ -4010,6 +4069,61 @@ def home(request: Request) -> HTMLResponse:
     * {{ box-sizing: border-box; }}
     html {{
       scroll-behavior: smooth;
+      --touch-keyboard-offset: 0px;
+      --page-padding: 18px 16px 40px;
+      --topbar-padding: 14px 16px;
+      --topbar-gap: 16px;
+      --brand-gap: 14px;
+      --brand-mark-size: 52px;
+      --brand-mark-radius: 10px;
+      --brand-mark-font-size: 1rem;
+      --header-chip-height: 64px;
+      --header-chip-padding: 0 18px;
+      --header-chip-gap: 10px;
+      --overview-gap: 16px;
+      --hero-padding: 22px;
+      --panel-padding: 20px;
+      --stat-card-padding: 16px;
+      --stat-card-min-height: 112px;
+      --quick-link-height: 72px;
+      --quick-link-padding: 14px 16px;
+      --field-padding: 12px 14px;
+      --action-button-height: 64px;
+      --action-button-padding: 12px 14px;
+      --action-button-font-size: 1rem;
+      --touch-keyboard-padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px));
+      --touch-keyboard-gap: 6px;
+      --touch-keyboard-button-height: 40px;
+      --touch-keyboard-button-padding: 8px 6px;
+      --touch-keyboard-button-font-size: 0.92rem;
+    }}
+    html[data-ui-scale="fit"] {{
+      --page-padding: 10px 10px 24px;
+      --topbar-padding: 8px 10px;
+      --topbar-gap: 10px;
+      --brand-gap: 10px;
+      --brand-mark-size: 38px;
+      --brand-mark-radius: 8px;
+      --brand-mark-font-size: 0.84rem;
+      --header-chip-height: 42px;
+      --header-chip-padding: 0 12px;
+      --header-chip-gap: 8px;
+      --overview-gap: 10px;
+      --hero-padding: 14px;
+      --panel-padding: 14px;
+      --stat-card-padding: 12px;
+      --stat-card-min-height: 86px;
+      --quick-link-height: 56px;
+      --quick-link-padding: 10px 12px;
+      --field-padding: 9px 10px;
+      --action-button-height: 46px;
+      --action-button-padding: 8px 10px;
+      --action-button-font-size: 0.9rem;
+      --touch-keyboard-padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+      --touch-keyboard-gap: 4px;
+      --touch-keyboard-button-height: 29px;
+      --touch-keyboard-button-padding: 4px 3px;
+      --touch-keyboard-button-font-size: 0.78rem;
     }}
     body {{
       margin: 0;
@@ -4027,7 +4141,7 @@ def home(request: Request) -> HTMLResponse:
     main {{
       max-width: 1320px;
       margin: 0 auto;
-      padding: 18px 16px 40px;
+      padding: var(--page-padding);
     }}
     h1, h2, h3, p {{ margin: 0; }}
     .topbar {{
@@ -4037,8 +4151,8 @@ def home(request: Request) -> HTMLResponse:
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 16px;
-      padding: 14px 16px;
+      gap: var(--topbar-gap);
+      padding: var(--topbar-padding);
       border-bottom: 1px solid var(--line);
       background: var(--topbar);
       backdrop-filter: blur(12px);
@@ -4047,17 +4161,18 @@ def home(request: Request) -> HTMLResponse:
     .topbar-brand {{
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: var(--brand-gap);
       min-width: 0;
     }}
     .brand-mark {{
-      width: 52px;
-      height: 52px;
+      width: var(--brand-mark-size);
+      height: var(--brand-mark-size);
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 10px;
+      border-radius: var(--brand-mark-radius);
       font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: var(--brand-mark-font-size);
       font-weight: 800;
       letter-spacing: 0.08em;
       color: #ffffff;
@@ -4086,11 +4201,12 @@ def home(request: Request) -> HTMLResponse:
       align-items: center;
       justify-content: flex-end;
       flex-wrap: wrap;
-      gap: 10px;
+      gap: 8px;
     }}
     .readiness-pill,
-    .theme-toggle {{
-      min-height: 64px;
+    .theme-toggle,
+    .view-controls {{
+      min-height: var(--header-chip-height);
       border-radius: 12px;
       border: 1px solid var(--line);
       background: var(--panel);
@@ -4099,19 +4215,94 @@ def home(request: Request) -> HTMLResponse:
     .readiness-pill {{
       display: inline-flex;
       align-items: center;
-      padding: 0 18px;
+      gap: 8px;
+      padding: var(--header-chip-padding);
       font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: 1.05rem;
       font-weight: 700;
       color: var(--accent);
+    }}
+    .readiness-pill-value {{
+      font-size: 1.02rem;
+      line-height: 1;
+    }}
+    .readiness-pill-label {{
+      color: var(--muted);
+      font-size: 0.76rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      white-space: nowrap;
     }}
     .theme-toggle {{
       display: inline-flex;
       align-items: center;
-      gap: 10px;
-      padding: 0 18px;
+      gap: var(--header-chip-gap);
+      padding: var(--header-chip-padding);
       width: auto;
       color: var(--ink);
+    }}
+    .power-button {{
+      display: inline-flex;
+      align-items: center;
+      gap: var(--header-chip-gap);
+      min-height: var(--header-chip-height);
+      padding: var(--header-chip-padding);
+      width: auto;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 180, 171, 0.2);
+      background: linear-gradient(180deg, rgba(128, 28, 36, 0.96), rgba(94, 22, 28, 0.96));
+      color: #fff4f2;
+      box-shadow: 0 8px 18px rgba(83, 18, 23, 0.24);
+    }}
+    .power-button:disabled {{
+      opacity: 0.55;
+      cursor: default;
+    }}
+    .power-button-icon {{
+      font-size: 1rem;
+      line-height: 1;
+    }}
+    .power-button-label {{
+      white-space: nowrap;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 0.76rem;
+      font-weight: 800;
+    }}
+    .view-controls {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px;
+      color: var(--ink);
+    }}
+    .zoom-toggle {{
+      width: calc(var(--header-chip-height) - 10px);
+      min-width: calc(var(--header-chip-height) - 10px);
+      min-height: calc(var(--header-chip-height) - 10px);
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      color: var(--ink);
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1rem;
+      font-weight: 800;
+      line-height: 1;
+      padding: 0;
+      cursor: pointer;
+    }}
+    .zoom-toggle:disabled {{
+      opacity: 0.45;
+      cursor: default;
+    }}
+    .zoom-indicator {{
+      min-width: 40px;
+      text-align: center;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      white-space: nowrap;
     }}
     .theme-toggle-icon {{
       font-size: 1.2rem;
@@ -4122,8 +4313,8 @@ def home(request: Request) -> HTMLResponse:
     }}
     .overview-grid {{
       display: grid;
-      gap: 16px;
-      margin-top: 16px;
+      gap: var(--overview-gap);
+      margin-top: var(--overview-gap);
     }}
     .hero-shell,
     .panel,
@@ -4142,7 +4333,7 @@ def home(request: Request) -> HTMLResponse:
     .hero-shell {{
       position: relative;
       overflow: hidden;
-      padding: 22px;
+      padding: var(--hero-padding);
       background: linear-gradient(135deg, var(--hero-start), var(--hero-end));
       border-left: 4px solid var(--accent);
     }}
@@ -4277,8 +4468,8 @@ def home(request: Request) -> HTMLResponse:
     }}
     .stat-card {{
       position: relative;
-      min-height: 112px;
-      padding: 16px;
+      min-height: var(--stat-card-min-height);
+      padding: var(--stat-card-padding);
       overflow: hidden;
     }}
     .stat-card::before {{
@@ -4310,7 +4501,7 @@ def home(request: Request) -> HTMLResponse:
       font-size: 0.93rem;
     }}
     .panel {{
-      padding: 20px;
+      padding: var(--panel-padding);
     }}
     .panel-head {{
       display: flex;
@@ -4345,9 +4536,9 @@ def home(request: Request) -> HTMLResponse:
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      min-height: 72px;
+      min-height: var(--quick-link-height);
       width: 100%;
-      padding: 14px 16px;
+      padding: var(--quick-link-padding);
       text-decoration: none;
       border-radius: 10px;
       border: 1px solid var(--line);
@@ -4465,7 +4656,7 @@ def home(request: Request) -> HTMLResponse:
       width: 100%;
       border-radius: 10px;
       border: 1px solid var(--line);
-      padding: 12px 14px;
+      padding: var(--field-padding);
       font: inherit;
       color: var(--ink);
       background: var(--input-bg);
@@ -4818,23 +5009,23 @@ def home(request: Request) -> HTMLResponse:
       margin-top: 12px;
       margin-bottom: 12px;
     }}
-    button:not(.quick-link):not(.theme-toggle) {{
+    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button) {{
       width: 100%;
-      min-height: 64px;
+      min-height: var(--action-button-height);
       border: 1px solid transparent;
       border-radius: 10px;
       background: var(--accent);
       color: #ffffff;
       font-weight: 700;
-      font-size: 1rem;
+      font-size: var(--action-button-font-size);
       cursor: pointer;
-      padding: 12px 14px;
+      padding: var(--action-button-padding);
       transition: transform 150ms ease, filter 150ms ease, background 150ms ease, border-color 150ms ease;
     }}
-    button:not(.quick-link):not(.theme-toggle):hover {{
+    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button):hover {{
       filter: brightness(0.96);
     }}
-    button:not(.quick-link):not(.theme-toggle):active {{
+    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button):active {{
       transform: translateY(1px);
     }}
     button.secondary {{
@@ -4855,8 +5046,8 @@ def home(request: Request) -> HTMLResponse:
       display: none !important;
     }}
     body.keyboard-open {{
-      padding-bottom: 272px;
-      scroll-padding-bottom: 272px;
+      padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 12px);
+      scroll-padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 24px);
     }}
     .touch-keyboard {{
       position: fixed;
@@ -4864,7 +5055,7 @@ def home(request: Request) -> HTMLResponse:
       right: 0;
       bottom: 0;
       z-index: 55;
-      padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px));
+      padding: var(--touch-keyboard-padding);
       background: var(--topbar);
       border-top: 1px solid var(--line);
       box-shadow: 0 -12px 28px var(--shadow-strong);
@@ -4874,11 +5065,11 @@ def home(request: Request) -> HTMLResponse:
       max-width: 1320px;
       margin: 0 auto;
       display: grid;
-      gap: 6px;
+      gap: var(--touch-keyboard-gap);
     }}
     .touch-keyboard-row {{
       display: grid;
-      gap: 6px;
+      gap: var(--touch-keyboard-gap);
     }}
     .touch-keyboard-row.ten {{
       grid-template-columns: repeat(10, minmax(0, 1fr));
@@ -4887,9 +5078,9 @@ def home(request: Request) -> HTMLResponse:
       grid-template-columns: repeat(6, minmax(0, 1fr));
     }}
     .touch-keyboard button {{
-      min-height: 40px;
-      padding: 8px 6px;
-      font-size: 0.92rem;
+      min-height: var(--touch-keyboard-button-height);
+      padding: var(--touch-keyboard-button-padding);
+      font-size: var(--touch-keyboard-button-font-size);
       border-radius: 10px;
       background: var(--panel);
       color: var(--ink);
@@ -5239,6 +5430,104 @@ def home(request: Request) -> HTMLResponse:
         justify-content: center;
       }}
     }}
+    .shutdown-modal,
+    .shutdown-progress {{
+      position: fixed;
+      inset: 0;
+      z-index: 52;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(5, 8, 6, 0.76);
+      backdrop-filter: blur(12px);
+    }}
+    .shutdown-progress {{
+      z-index: 54;
+      background: rgba(5, 8, 6, 0.88);
+    }}
+    .shutdown-dialog,
+    .shutdown-progress-card {{
+      width: min(100%, 380px);
+      display: grid;
+      gap: 14px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 18px 32px var(--shadow-strong);
+      color: var(--ink);
+      padding: 18px;
+    }}
+    .shutdown-progress-card {{
+      background: linear-gradient(180deg, var(--panel), var(--panel-strong));
+      color: #f8f4ea;
+      text-align: center;
+    }}
+    .shutdown-dialog-head {{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }}
+    .shutdown-icon,
+    .shutdown-progress-icon {{
+      width: 48px;
+      height: 48px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 14px;
+      font-size: 1.25rem;
+      line-height: 1;
+    }}
+    .shutdown-icon {{
+      background: var(--danger-soft);
+      color: var(--danger);
+    }}
+    .shutdown-progress-icon {{
+      margin: 0 auto;
+      background: rgba(255, 107, 0, 0.16);
+      color: #ffb693;
+      animation: shutdown-pulse 1.3s ease-in-out infinite;
+    }}
+    @keyframes shutdown-pulse {{
+      0%, 100% {{
+        transform: scale(1);
+        opacity: 0.72;
+      }}
+      50% {{
+        transform: scale(1.06);
+        opacity: 1;
+      }}
+    }}
+    .shutdown-title,
+    .shutdown-progress-title {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.1rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }}
+    .shutdown-note,
+    .shutdown-progress-note {{
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 0.92rem;
+    }}
+    .shutdown-progress-note {{
+      color: rgba(248, 244, 234, 0.76);
+    }}
+    .shutdown-error {{
+      min-height: 1.2em;
+      color: var(--danger);
+      font-size: 0.88rem;
+      line-height: 1.4;
+    }}
+    .shutdown-actions {{
+      display: flex;
+      gap: 10px;
+    }}
+    .shutdown-actions button {{
+      flex: 1 1 0;
+    }}
     .content-grid {{
       display: grid;
       gap: 16px;
@@ -5248,6 +5537,88 @@ def home(request: Request) -> HTMLResponse:
       display: grid;
       gap: 16px;
       align-content: start;
+    }}
+    html[data-ui-scale="fit"] .topbar-kicker {{
+      display: none;
+    }}
+    html[data-ui-scale="fit"] .topbar-title {{
+      font-size: 0.98rem;
+      line-height: 1.1;
+    }}
+    html[data-ui-scale="fit"] .theme-toggle-label,
+    html[data-ui-scale="fit"] .readiness-pill-label,
+    html[data-ui-scale="fit"] .power-button-label {{
+      display: none;
+    }}
+    html[data-ui-scale="fit"] .readiness-pill-value {{
+      font-size: 0.92rem;
+    }}
+    html[data-ui-scale="fit"] .hero-shell-inner,
+    html[data-ui-scale="fit"] .hero-score-row,
+    html[data-ui-scale="fit"] .hero-progress,
+    html[data-ui-scale="fit"] .summary-grid,
+    html[data-ui-scale="fit"] .alert-columns,
+    html[data-ui-scale="fit"] .content-grid,
+    html[data-ui-scale="fit"] .content-column,
+    html[data-ui-scale="fit"] .inventory-panel,
+    html[data-ui-scale="fit"] .inventory-manager-shell {{
+      gap: 10px;
+    }}
+    html[data-ui-scale="fit"] .readiness-ring {{
+      width: min(100%, 128px);
+      box-shadow: inset 0 0 0 7px var(--accent-soft);
+    }}
+    html[data-ui-scale="fit"] .readiness-score {{
+      font-size: clamp(2rem, 7vw, 2.8rem);
+    }}
+    html[data-ui-scale="fit"] .hero-text h1 {{
+      font-size: clamp(1.2rem, 4vw, 1.65rem);
+    }}
+    html[data-ui-scale="fit"] .hero-note,
+    html[data-ui-scale="fit"] .stat-note,
+    html[data-ui-scale="fit"] .row-subtitle,
+    html[data-ui-scale="fit"] .batch-card-subtitle,
+    html[data-ui-scale="fit"] .inventory-form-description,
+    html[data-ui-scale="fit"] .inventory-groups-caption {{
+      font-size: 0.86rem;
+      line-height: 1.38;
+    }}
+    html[data-ui-scale="fit"] .progress-meta,
+    html[data-ui-scale="fit"] .panel-note {{
+      font-size: 0.84rem;
+    }}
+    html[data-ui-scale="fit"] .quick-link strong {{
+      font-size: 0.88rem;
+    }}
+    html[data-ui-scale="fit"] .quick-link small {{
+      display: none;
+    }}
+    html[data-ui-scale="fit"] .tag,
+    html[data-ui-scale="fit"] .pill,
+    html[data-ui-scale="fit"] .micro-chip {{
+      min-height: 30px;
+      padding: 5px 10px;
+      font-size: 0.72rem;
+    }}
+    html[data-ui-scale="fit"] textarea {{
+      min-height: 72px;
+    }}
+    html[data-ui-scale="fit"] .banner {{
+      padding: 10px 12px;
+      margin-bottom: 10px;
+    }}
+    html[data-ui-scale="fit"] .shutdown-dialog,
+    html[data-ui-scale="fit"] .shutdown-progress-card {{
+      padding: 14px;
+      gap: 12px;
+    }}
+    html[data-ui-scale="fit"] .shutdown-title,
+    html[data-ui-scale="fit"] .shutdown-progress-title {{
+      font-size: 1rem;
+    }}
+    html[data-ui-scale="fit"] .shutdown-note,
+    html[data-ui-scale="fit"] .shutdown-progress-note {{
+      font-size: 0.84rem;
     }}
     @media (min-width: 720px) {{
       .hero-score-row {{
@@ -5307,12 +5678,28 @@ def home(request: Request) -> HTMLResponse:
         justify-content: stretch;
       }}
       .readiness-pill,
-      .theme-toggle {{
+      .theme-toggle,
+      .view-controls,
+      .power-button {{
         flex: 1 1 0;
         justify-content: center;
       }}
       .quick-actions {{
         grid-template-columns: 1fr;
+      }}
+      html[data-ui-scale="fit"] .topbar {{
+        align-items: center;
+      }}
+      html[data-ui-scale="fit"] .topbar-actions {{
+        width: auto;
+        flex-wrap: nowrap;
+        justify-content: flex-end;
+      }}
+      html[data-ui-scale="fit"] .readiness-pill,
+      html[data-ui-scale="fit"] .theme-toggle,
+      html[data-ui-scale="fit"] .view-controls,
+      html[data-ui-scale="fit"] .power-button {{
+        flex: 0 0 auto;
       }}
     }}
 </style>
@@ -5327,7 +5714,19 @@ def home(request: Request) -> HTMLResponse:
       </div>
     </div>
     <div class="topbar-actions">
-      <div class="readiness-pill">{readiness_percent}% ready</div>
+      <div class="readiness-pill">
+        <span class="readiness-pill-value">{readiness_percent}%</span>
+        <span class="readiness-pill-label">Ready</span>
+      </div>
+      <div class="view-controls" role="group" aria-label="Adjust display size">
+        <button type="button" class="zoom-toggle" id="zoom-out" aria-label="Zoom out" title="Zoom out">-</button>
+        <span class="zoom-indicator" id="zoom-indicator">100%</span>
+        <button type="button" class="zoom-toggle" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+      </div>
+      <button type="button" class="power-button" id="power-button" aria-label="Shut down Raspberry Pi" title="Shut down Raspberry Pi">
+        <span class="power-button-icon" aria-hidden="true">&#x23FB;</span>
+        <span class="power-button-label">Power</span>
+      </button>
       <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to dark mode" title="Switch to dark mode">
         <span class="theme-toggle-icon" id="theme-toggle-icon" aria-hidden="true">&#9791;</span>
         <span class="theme-toggle-label" id="theme-toggle-label">Dark mode</span>
@@ -5618,6 +6017,29 @@ def home(request: Request) -> HTMLResponse:
         </form>
       </section>
     </div>
+    <div class="shutdown-modal hidden" id="shutdown-modal" aria-hidden="true">
+      <section class="shutdown-dialog" aria-label="Confirm Raspberry Pi shutdown">
+        <div class="shutdown-dialog-head">
+          <div class="shutdown-icon" aria-hidden="true">&#x23FB;</div>
+          <div>
+            <div class="shutdown-title">Shut down Raspberry Pi?</div>
+            <div class="shutdown-note">This safely stops GO BAG services and powers off the Pi. Wait until the screen turns off before disconnecting power.</div>
+          </div>
+        </div>
+        <div class="shutdown-error hidden" id="shutdown-error"></div>
+        <div class="shutdown-actions">
+          <button type="button" class="secondary" id="shutdown-cancel-button">Cancel</button>
+          <button type="button" id="shutdown-confirm-button">Shut down now</button>
+        </div>
+      </section>
+    </div>
+    <div class="shutdown-progress hidden" id="shutdown-progress" aria-hidden="true">
+      <section class="shutdown-progress-card" aria-label="Raspberry Pi shutdown in progress">
+        <div class="shutdown-progress-icon" aria-hidden="true">&#x23FB;</div>
+        <div class="shutdown-progress-title">Shutdown in progress</div>
+        <div class="shutdown-progress-note" id="shutdown-progress-note">Wait until the screen turns off before disconnecting power.</div>
+      </section>
+    </div>
     {render_touch_keyboard_html()}
   </main>
   <script>
@@ -5651,9 +6073,21 @@ def home(request: Request) -> HTMLResponse:
       const pageError = document.getElementById("page-error");
       const documentRoot = document.documentElement;
       const themeStorageKey = "gobag-pi-theme";
+      const uiScaleStorageKey = "gobag-pi-ui-scale";
+      const shutdownRequestUrl = "/ui/system/shutdown{admin_query}";
       const themeToggle = document.getElementById("theme-toggle");
       const themeToggleIcon = document.getElementById("theme-toggle-icon");
       const themeToggleLabel = document.getElementById("theme-toggle-label");
+      const zoomOutButton = document.getElementById("zoom-out");
+      const zoomInButton = document.getElementById("zoom-in");
+      const zoomIndicator = document.getElementById("zoom-indicator");
+      const powerButton = document.getElementById("power-button");
+      const shutdownModal = document.getElementById("shutdown-modal");
+      const shutdownCancelButton = document.getElementById("shutdown-cancel-button");
+      const shutdownConfirmButton = document.getElementById("shutdown-confirm-button");
+      const shutdownError = document.getElementById("shutdown-error");
+      const shutdownProgress = document.getElementById("shutdown-progress");
+      const shutdownProgressNote = document.getElementById("shutdown-progress-note");
       const scanModal = document.getElementById("scan-modal");
       const scanOpenButtons = Array.from(document.querySelectorAll('[data-open-scan="1"]'));
       const scanCaptureForm = document.getElementById("scan-capture-form");
@@ -5669,6 +6103,7 @@ def home(request: Request) -> HTMLResponse:
       const keyboardEligibleSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="date"]):not([type="file"]):not([type="radio"]):not([type="range"]):not([disabled]), textarea:not([disabled])';
       let keyboardTarget = null;
       let keyboardShift = false;
+      let shutdownPending = false;
 
       function currentTheme() {{
         return documentRoot.dataset.theme === "dark" ? "dark" : "light";
@@ -5744,6 +6179,161 @@ def home(request: Request) -> HTMLResponse:
         applyTheme(storedTheme === "dark" || storedTheme === "light" ? storedTheme : currentTheme(), false);
       }}
 
+      function defaultUiScale() {{
+        return window.matchMedia("(max-width: 520px), (max-height: 360px)").matches ? "fit" : "standard";
+      }}
+
+      function currentUiScale() {{
+        return documentRoot.dataset.uiScale === "fit" ? "fit" : "standard";
+      }}
+
+      function updateZoomControls() {{
+        const fitMode = currentUiScale() === "fit";
+        if (zoomOutButton) {{
+          zoomOutButton.disabled = fitMode;
+        }}
+        if (zoomInButton) {{
+          zoomInButton.disabled = !fitMode;
+        }}
+        if (zoomIndicator) {{
+          zoomIndicator.textContent = fitMode ? "Fit" : "100%";
+        }}
+      }}
+
+      function syncTouchKeyboardOffset() {{
+        const keyboardHeight =
+          touchKeyboard && !touchKeyboard.classList.contains("hidden")
+            ? Math.ceil(touchKeyboard.getBoundingClientRect().height)
+            : 0;
+        documentRoot.style.setProperty("--touch-keyboard-offset", `${{Math.max(keyboardHeight, 0)}}px`);
+      }}
+
+      function applyUiScale(scale, persist = true) {{
+        const nextScale = scale === "fit" ? "fit" : "standard";
+        documentRoot.dataset.uiScale = nextScale;
+        if (persist) {{
+          try {{
+            localStorage.setItem(uiScaleStorageKey, nextScale);
+          }} catch (_error) {{
+          }}
+        }}
+        updateZoomControls();
+        window.requestAnimationFrame(syncTouchKeyboardOffset);
+      }}
+
+      function initializeUiScale() {{
+        let storedScale = "";
+        try {{
+          storedScale = localStorage.getItem(uiScaleStorageKey) || "";
+        }} catch (_error) {{
+        }}
+        applyUiScale(storedScale === "fit" || storedScale === "standard" ? storedScale : defaultUiScale(), false);
+      }}
+
+      function setShutdownError(message = "") {{
+        if (!shutdownError) {{
+          return;
+        }}
+        if (message) {{
+          shutdownError.textContent = message;
+          shutdownError.classList.remove("hidden");
+        }} else {{
+          shutdownError.textContent = "";
+          shutdownError.classList.add("hidden");
+        }}
+      }}
+
+      function powerDialogIsOpen() {{
+        return !!(shutdownModal && !shutdownModal.classList.contains("hidden"));
+      }}
+
+      function shutdownProgressIsOpen() {{
+        return !!(shutdownProgress && !shutdownProgress.classList.contains("hidden"));
+      }}
+
+      function syncModalShellState() {{
+        const anyModalOpen = scanIsOpen() || powerDialogIsOpen() || shutdownProgressIsOpen();
+        documentRoot.classList.toggle("modal-open", anyModalOpen);
+        document.body.classList.toggle("modal-open", anyModalOpen);
+      }}
+
+      function setPowerUiBusy(isBusy) {{
+        if (powerButton) {{
+          powerButton.disabled = isBusy;
+        }}
+        if (shutdownCancelButton) {{
+          shutdownCancelButton.disabled = isBusy;
+        }}
+        if (shutdownConfirmButton) {{
+          shutdownConfirmButton.disabled = isBusy;
+          shutdownConfirmButton.textContent = isBusy ? "Shutting down..." : "Shut down now";
+        }}
+      }}
+
+      function openShutdownModal() {{
+        if (!shutdownModal || shutdownPending || scanIsOpen()) {{
+          return;
+        }}
+        dismissTouchKeyboard();
+        setShutdownError("");
+        setPowerUiBusy(false);
+        shutdownModal.classList.remove("hidden");
+        shutdownModal.setAttribute("aria-hidden", "false");
+        syncModalShellState();
+      }}
+
+      function closeShutdownModal() {{
+        if (!shutdownModal || shutdownPending) {{
+          return;
+        }}
+        shutdownModal.classList.add("hidden");
+        shutdownModal.setAttribute("aria-hidden", "true");
+        setShutdownError("");
+        syncModalShellState();
+      }}
+
+      function showShutdownProgress(message) {{
+        if (shutdownProgressNote) {{
+          shutdownProgressNote.textContent = message || "Wait until the screen turns off before disconnecting power.";
+        }}
+        if (shutdownProgress) {{
+          shutdownProgress.classList.remove("hidden");
+          shutdownProgress.setAttribute("aria-hidden", "false");
+        }}
+        syncModalShellState();
+      }}
+
+      async function requestShutdown() {{
+        if (shutdownPending) {{
+          return;
+        }}
+        shutdownPending = true;
+        setShutdownError("");
+        setPowerUiBusy(true);
+        try {{
+          const response = await fetch(shutdownRequestUrl, {{
+            method: "POST",
+            headers: {{ "Accept": "application/json" }},
+            cache: "no-store",
+          }});
+          const payload = await response.json().catch(() => ({{ ok: false, detail: "Shutdown request failed." }}));
+          if (!response.ok || payload.ok === false) {{
+            throw new Error(String(payload.detail || payload.message || "Shutdown request failed."));
+          }}
+          if (shutdownModal) {{
+            shutdownModal.classList.add("hidden");
+            shutdownModal.setAttribute("aria-hidden", "true");
+          }}
+          showShutdownProgress(payload.message || "Shutdown in progress. Wait until the screen turns off before disconnecting power.");
+          setBanner("notice", payload.message || "Shutdown in progress.");
+        }} catch (error) {{
+          shutdownPending = false;
+          setPowerUiBusy(false);
+          setShutdownError(error instanceof Error ? error.message : "Shutdown request failed.");
+          syncModalShellState();
+        }}
+      }}
+
       function keyboardTargetSupportsSelection(target) {{
         return target && typeof target.selectionStart === "number" && typeof target.selectionEnd === "number";
       }}
@@ -5787,6 +6377,7 @@ def home(request: Request) -> HTMLResponse:
         touchKeyboard.setAttribute("aria-hidden", "true");
         document.body.classList.remove("keyboard-open");
         updateTouchKeyboard();
+        syncTouchKeyboardOffset();
       }}
 
       function showTouchKeyboard(target) {{
@@ -5796,6 +6387,8 @@ def home(request: Request) -> HTMLResponse:
         touchKeyboard.setAttribute("aria-hidden", "false");
         document.body.classList.add("keyboard-open");
         updateTouchKeyboard();
+        window.requestAnimationFrame(syncTouchKeyboardOffset);
+        window.setTimeout(syncTouchKeyboardOffset, 40);
         window.setTimeout(() => {{
           if (keyboardTarget === target) {{
             target.scrollIntoView({{ block: "center", behavior: "smooth" }});
@@ -6235,8 +6828,7 @@ def home(request: Request) -> HTMLResponse:
         resetScannerState();
         scanModal.classList.remove("hidden");
         scanModal.setAttribute("aria-hidden", "false");
-        documentRoot.classList.add("modal-open");
-        document.body.classList.add("modal-open");
+        syncModalShellState();
         void preparePreview();
       }}
 
@@ -6247,8 +6839,7 @@ def home(request: Request) -> HTMLResponse:
           scanModal.classList.add("hidden");
           scanModal.setAttribute("aria-hidden", "true");
         }}
-        documentRoot.classList.remove("modal-open");
-        document.body.classList.remove("modal-open");
+        syncModalShellState();
         if (scanPreviewImage) {{
           scanPreviewImage.removeAttribute("src");
         }}
@@ -6374,6 +6965,34 @@ def home(request: Request) -> HTMLResponse:
           applyTheme(currentTheme() === "dark" ? "light" : "dark");
         }});
       }}
+      if (zoomOutButton) {{
+        zoomOutButton.addEventListener("click", () => {{
+          applyUiScale("fit");
+        }});
+      }}
+      if (zoomInButton) {{
+        zoomInButton.addEventListener("click", () => {{
+          applyUiScale("standard");
+        }});
+      }}
+      if (powerButton) {{
+        powerButton.addEventListener("click", openShutdownModal);
+      }}
+      if (shutdownCancelButton) {{
+        shutdownCancelButton.addEventListener("click", closeShutdownModal);
+      }}
+      if (shutdownConfirmButton) {{
+        shutdownConfirmButton.addEventListener("click", () => {{
+          void requestShutdown();
+        }});
+      }}
+      if (shutdownModal) {{
+        shutdownModal.addEventListener("click", (event) => {{
+          if (event.target === shutdownModal) {{
+            closeShutdownModal();
+          }}
+        }});
+      }}
       if (scanCloseButton) {{
         scanCloseButton.addEventListener("click", closeScanModal);
       }}
@@ -6428,10 +7047,19 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       initializeTheme();
+      initializeUiScale();
       restoreScrollState();
+      window.addEventListener("resize", syncTouchKeyboardOffset);
 
       window.addEventListener("keydown", (event) => {{
-        if (event.key === "Escape" && scanIsOpen()) {{
+        if (event.key !== "Escape") {{
+          return;
+        }}
+        if (powerDialogIsOpen() && !shutdownPending) {{
+          closeShutdownModal();
+          return;
+        }}
+        if (scanIsOpen()) {{
           closeScanModal();
         }}
       }});
