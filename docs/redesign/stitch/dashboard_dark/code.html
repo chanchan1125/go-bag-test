@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Tactical Ready - Go Bag Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-surface": "#e5e2e3",
+                        "surface-container-lowest": "#0e0e0f",
+                        "on-secondary-container": "#002d44",
+                        "on-background": "#e5e2e3",
+                        "secondary-container": "#2899d8",
+                        "on-tertiary-fixed": "#002204",
+                        "surface-variant": "#353436",
+                        "surface-container-high": "#2a2a2b",
+                        "surface-container": "#1f1f20",
+                        "primary": "#ffb693",
+                        "on-secondary": "#00344e",
+                        "on-tertiary": "#00390a",
+                        "surface-container-highest": "#353436",
+                        "primary-container": "#ff6b00",
+                        "surface-dim": "#131314",
+                        "error": "#ffb4ab",
+                        "on-tertiary-fixed-variant": "#005313",
+                        "background": "#131314",
+                        "tertiary-fixed-dim": "#78dc77",
+                        "secondary-fixed": "#cae6ff",
+                        "primary-fixed-dim": "#ffb693",
+                        "tertiary-container": "#4aad4e",
+                        "on-primary-fixed-variant": "#7a3000",
+                        "on-error-container": "#ffdad6",
+                        "on-surface-variant": "#e2bfb0",
+                        "on-error": "#690005",
+                        "on-secondary-fixed": "#001e2f",
+                        "secondary": "#8ccdff",
+                        "surface-container-low": "#1b1b1c",
+                        "tertiary-fixed": "#94f990",
+                        "on-primary": "#561f00",
+                        "on-secondary-fixed-variant": "#004b6f",
+                        "surface": "#131314",
+                        "inverse-surface": "#e5e2e3",
+                        "error-container": "#93000a",
+                        "on-primary-fixed": "#351000",
+                        "outline": "#a98a7d",
+                        "on-tertiary-container": "#003a0b",
+                        "inverse-primary": "#a04100",
+                        "secondary-fixed-dim": "#8ccdff",
+                        "tertiary": "#78dc77",
+                        "outline-variant": "#5a4136",
+                        "inverse-on-surface": "#303031",
+                        "surface-tint": "#ffb693",
+                        "on-primary-container": "#572000",
+                        "surface-bright": "#39393a",
+                        "primary-fixed": "#ffdbcc"
+                    },
+                    fontFamily: {
+                        "headline": ["Space Grotesk"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .readiness-ring {
+            background: conic-gradient(from 0deg, #ff6b00 0% 85%, #2a2a2b 85% 100%);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background font-body selection:bg-primary-container selection:text-on-primary-container">
+<!-- TopAppBar -->
+<header class="bg-[#131314] dark:bg-[#131314] shadow-[0_4px_20px_rgba(255,107,0,0.12)] sticky top-0 z-50">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-none">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#FF6B00] dark:text-[#FFB693]" style="font-variation-settings: 'FILL' 1;">signal_cellular_alt</span>
+<h1 class="text-xl font-bold tracking-tighter text-[#FF6B00] dark:text-[#FFB693] font-['Space_Grotesk']">TACTICAL READY</h1>
+</div>
+<div class="flex flex-col items-end">
+<span class="font-['Inter'] uppercase tracking-widest text-[10px] text-[#FFB693] font-bold">85% READY</span>
+</div>
+</div>
+</header>
+<main class="px-6 pt-6 pb-32 space-y-8 max-w-md mx-auto">
+<!-- Hero: Readiness & Connection -->
+<section class="relative">
+<div class="flex justify-between items-start mb-4">
+<div class="space-y-1">
+<span class="font-label uppercase tracking-widest text-[10px] text-outline">SYSTEM STATUS</span>
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-secondary animate-pulse"></div>
+<span class="text-secondary font-label text-xs font-semibold tracking-wide uppercase">Synced with Pi Hub (Local)</span>
+</div>
+</div>
+</div>
+<!-- Hero Bento Visual -->
+<div class="grid grid-cols-12 gap-4">
+<div class="col-span-12 surface-container-low rounded-xl p-8 flex flex-col items-center justify-center relative overflow-hidden shadow-2xl">
+<!-- Glass Background Texture -->
+<div class="absolute inset-0 opacity-10 pointer-events-none" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBuFnnZO71MKIO9ok-7HIhkNRNk4XtDIBBOXCUIO48hFM2AQ_6zVNFxBmxmYZj2ODxJcwcxOvAoDSuybYqOliZ_gQYOrV8nmAPMTdzsN4dHeDc34rATljSlhxpxp_Mgd97TllsQalsdfRSr82HFvpSvwAS9JCMw-oE1AzIfBAxXbCLky9D6VZNAqppedEF-kxHDBU3LNJnU0ru_rzxaNpq0nLeGEs9QKo_pC0AMmDkrwveapy1NhMMad96oJIpBhKU1_5fTKBcjT8o');"></div>
+<!-- Circular Readiness Indicator -->
+<div class="relative w-48 h-48 rounded-full flex items-center justify-center readiness-ring shadow-[0_0_40px_rgba(255,107,0,0.15)]">
+<div class="w-[92%] h-[92%] bg-surface rounded-full flex flex-col items-center justify-center">
+<span class="font-headline text-6xl font-bold tracking-tighter text-on-surface">85<span class="text-2xl text-primary">%</span></span>
+<span class="font-label text-[10px] tracking-[0.2em] text-outline uppercase mt-1">READINESS</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Alerts Section -->
+<section class="space-y-3">
+<h2 class="font-label uppercase tracking-widest text-[10px] text-outline px-1">CRITICAL NOTIFICATIONS</h2>
+<div class="grid grid-cols-1 gap-3">
+<div class="bg-error-container text-on-error-container p-4 rounded-xl flex items-center justify-between border-l-4 border-error">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">warning</span>
+<span class="font-body font-semibold text-sm uppercase tracking-wide">2 Items Expired</span>
+</div>
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+</div>
+<div class="bg-primary-container text-on-primary-container p-4 rounded-xl flex items-center justify-between border-l-4 border-primary">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">inventory</span>
+<span class="font-body font-semibold text-sm uppercase tracking-wide">1 Missing Item</span>
+</div>
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+</div>
+</div>
+</section>
+<!-- Stats Grid -->
+<section class="grid grid-cols-2 gap-4">
+<div class="surface-container-high p-5 rounded-xl space-y-2 border-b border-outline-variant/20">
+<span class="material-symbols-outlined text-primary text-xl">backpack</span>
+<div>
+<div class="font-headline text-2xl font-bold text-on-surface">3</div>
+<div class="font-label text-[10px] text-outline uppercase tracking-wider font-semibold">Bags Managed</div>
+</div>
+</div>
+<div class="surface-container-high p-5 rounded-xl space-y-2 border-b border-outline-variant/20">
+<span class="material-symbols-outlined text-tertiary text-xl">task_alt</span>
+<div>
+<div class="font-headline text-2xl font-bold text-on-surface">12/15</div>
+<div class="font-label text-[10px] text-outline uppercase tracking-wider font-semibold">Checklist Coverage</div>
+</div>
+</div>
+</section>
+<!-- Primary Actions -->
+<section class="space-y-4">
+<button class="w-full h-14 bg-gradient-to-r from-primary to-primary-container text-on-primary-container rounded-xl font-headline font-bold text-sm uppercase tracking-widest flex items-center justify-center gap-3 shadow-[0_12px_24px_rgba(255,107,0,0.2)] active:scale-95 transition-transform">
+<span class="material-symbols-outlined">settings_accessibility</span>
+                Manage Main Bag
+            </button>
+<div class="grid grid-cols-2 gap-4">
+<button class="h-14 bg-surface-container-highest text-on-surface rounded-xl font-label font-bold text-[11px] uppercase tracking-widest flex items-center justify-center gap-2 active:opacity-80 transition-opacity">
+<span class="material-symbols-outlined text-lg">qr_code_scanner</span>
+                    Quick Scan
+                </button>
+<button class="h-14 bg-surface-container-highest text-on-surface rounded-xl font-label font-bold text-[11px] uppercase tracking-widest flex items-center justify-center gap-2 active:opacity-80 transition-opacity">
+<span class="material-symbols-outlined text-lg">fact_check</span>
+                    Check Mode
+                </button>
+</div>
+</section>
+<!-- Recent Activity / Bag Preview -->
+<section class="space-y-4">
+<div class="flex justify-between items-end px-1">
+<h2 class="font-label uppercase tracking-widest text-[10px] text-outline">PRIMARY ASSET</h2>
+<span class="text-[10px] font-bold text-primary">72H SUSTAINMENT</span>
+</div>
+<div class="relative rounded-xl overflow-hidden aspect-video group">
+<img alt="Tactical Backpack" class="w-full h-full object-cover grayscale opacity-60 group-hover:grayscale-0 transition-all duration-500" data-alt="top-down studio shot of a black tactical modular backpack organized with emergency gear on a dark textured surface" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCFW40irXpKnV-KzXpxgKRrry4t7ixfISpOAATZBVoZfYi8Ufa3MR0YYhYwsj10sQNkz7WFhrHLQRZHs-UZA-rjX6NCadrV-cNPQgBCAreCo2pItlTHvYEM_d9k-2o09fOSp0DC-JeE8LHm6W8MuIfcbPnh7s76NHO9rdzEFk-E9SUaQgTLXic5IayjmhdZYTGPIsq_h6MRRsfQ0cA8Ed-NAMorttxlW7dKgomMAo6qwS3mVk1BcYP_ARyO_31qxj7pbVRAbKMCZWY"/>
+<div class="absolute inset-0 bg-gradient-to-t from-surface to-transparent"></div>
+<div class="absolute bottom-4 left-4 right-4 flex justify-between items-end">
+<div>
+<h3 class="font-headline font-bold text-lg text-on-surface">Tier 1 Bug Out</h3>
+<p class="text-[10px] text-outline font-label uppercase">Last Inspection: 14h ago</p>
+</div>
+<div class="flex -space-x-2">
+<div class="w-6 h-6 rounded-full bg-error border-2 border-surface flex items-center justify-center">
+<span class="material-symbols-outlined text-[10px] text-on-error font-bold">priority_high</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="bg-[#131314]/90 backdrop-blur-xl dark:bg-[#131314]/90 fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-3 border-t border-[#2A2A2B] shadow-[0_-4px_24px_rgba(0,0,0,0.4)]">
+<a class="flex flex-col items-center justify-center bg-[#FF6B00] text-[#131314] rounded-lg px-4 py-1.5 transition-all" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">grid_view</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Dashboard</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#39393A] px-4 py-1.5 hover:text-[#FFB693] transition-all" href="#">
+<span class="material-symbols-outlined">inventory_2</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Inventory</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#39393A] px-4 py-1.5 hover:text-[#FFB693] transition-all" href="#">
+<span class="material-symbols-outlined">fact_check</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Check</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#39393A] px-4 py-1.5 hover:text-[#FFB693] transition-all" href="#">
+<span class="material-symbols-outlined">sync</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Sync</span>
+</a>
+</nav>
+</body></html>

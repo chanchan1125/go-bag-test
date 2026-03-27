@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Tactical Ready - GO BAG Inventory</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-surface": "#e5e2e3",
+              "surface-container-lowest": "#0e0e0f",
+              "on-secondary-container": "#002d44",
+              "on-background": "#e5e2e3",
+              "secondary-container": "#2899d8",
+              "on-tertiary-fixed": "#002204",
+              "surface-variant": "#353436",
+              "surface-container-high": "#2a2a2b",
+              "surface-container": "#1f1f20",
+              "primary": "#ffb693",
+              "on-secondary": "#00344e",
+              "on-tertiary": "#00390a",
+              "surface-container-highest": "#353436",
+              "primary-container": "#ff6b00",
+              "surface-dim": "#131314",
+              "error": "#ffb4ab",
+              "on-tertiary-fixed-variant": "#005313",
+              "background": "#131314",
+              "tertiary-fixed-dim": "#78dc77",
+              "secondary-fixed": "#cae6ff",
+              "primary-fixed-dim": "#ffb693",
+              "tertiary-container": "#4aad4e",
+              "on-primary-fixed-variant": "#7a3000",
+              "on-error-container": "#ffdad6",
+              "on-surface-variant": "#e2bfb0",
+              "on-error": "#690005",
+              "on-secondary-fixed": "#001e2f",
+              "secondary": "#8ccdff",
+              "surface-container-low": "#1b1b1c",
+              "tertiary-fixed": "#94f990",
+              "on-primary": "#561f00",
+              "on-secondary-fixed-variant": "#004b6f",
+              "surface": "#131314",
+              "inverse-surface": "#e5e2e3",
+              "error-container": "#93000a",
+              "on-primary-fixed": "#351000",
+              "outline": "#a98a7d",
+              "on-tertiary-container": "#003a0b",
+              "inverse-primary": "#a04100",
+              "secondary-fixed-dim": "#8ccdff",
+              "tertiary": "#78dc77",
+              "outline-variant": "#5a4136",
+              "inverse-on-surface": "#303031",
+              "surface-tint": "#ffb693",
+              "on-primary-container": "#572000",
+              "surface-bright": "#39393a",
+              "primary-fixed": "#ffdbcc"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      .glass-card {
+        background: rgba(42, 42, 43, 0.6);
+        backdrop-filter: blur(16px);
+      }
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background font-body select-none">
+<!-- TopAppBar Shell -->
+<header class="bg-[#131314] dark:bg-[#131314] sticky top-0 z-50 shadow-[0_4px_20px_rgba(255,107,0,0.12)]">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-none">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#FF6B00] dark:text-[#FFB693]" data-icon="signal_cellular_alt">signal_cellular_alt</span>
+<h1 class="text-xl font-bold tracking-tighter text-[#FF6B00] dark:text-[#FFB693] font-['Space_Grotesk']">TACTICAL READY</h1>
+</div>
+<div class="flex flex-col items-end">
+<span class="font-['Inter'] uppercase tracking-widest text-[10px] text-primary-fixed">SYSTEM STATUS</span>
+<span class="font-['Space_Grotesk'] font-bold tracking-tight text-[#FF6B00] dark:text-[#FFB693]">85% READY</span>
+</div>
+</div>
+</header>
+<main class="pb-32 px-4 pt-6 max-w-2xl mx-auto space-y-8">
+<!-- Bag Metadata Section -->
+<section class="flex justify-between items-end gap-4 bg-surface-container-low p-6 rounded-xl">
+<div class="space-y-1">
+<p class="font-label text-[10px] uppercase tracking-[0.2em] text-outline">PRIMARY LOADOUT</p>
+<div class="flex items-center gap-2">
+<h2 class="font-headline text-2xl font-bold">Main Survival Bag</h2>
+<span class="material-symbols-outlined text-sm text-outline" data-icon="edit">edit</span>
+</div>
+<p class="font-label text-xs font-semibold text-secondary">VOLUME: 45L CAPACITY</p>
+</div>
+<div class="text-right">
+<div class="text-4xl font-headline font-bold text-tertiary">38<span class="text-lg">/45</span></div>
+<p class="font-label text-[10px] uppercase tracking-widest text-outline">ITEMS PACKED</p>
+</div>
+</section>
+<!-- Search and Filters -->
+<div class="space-y-4">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline" data-icon="search">search</span>
+<input class="w-full bg-surface-container-lowest border-none rounded-lg py-4 pl-12 pr-4 text-sm font-label tracking-wider focus:ring-2 focus:ring-primary/40 placeholder:text-outline/50" placeholder="SEARCH INVENTORY..." type="text"/>
+</div>
+<div class="flex gap-2 overflow-x-auto no-scrollbar pb-2">
+<button class="flex-shrink-0 px-4 py-2 bg-primary text-on-primary text-[10px] font-bold uppercase tracking-widest rounded-lg">All</button>
+<button class="flex-shrink-0 px-4 py-2 bg-surface-container-high text-on-surface-variant text-[10px] font-bold uppercase tracking-widest rounded-lg hover:bg-surface-bright transition-colors">Water</button>
+<button class="flex-shrink-0 px-4 py-2 bg-surface-container-high text-on-surface-variant text-[10px] font-bold uppercase tracking-widest rounded-lg hover:bg-surface-bright transition-colors">Food</button>
+<button class="flex-shrink-0 px-4 py-2 bg-surface-container-high text-on-surface-variant text-[10px] font-bold uppercase tracking-widest rounded-lg hover:bg-surface-bright transition-colors">Medical</button>
+<button class="flex-shrink-0 px-4 py-2 bg-surface-container-high text-on-surface-variant text-[10px] font-bold uppercase tracking-widest rounded-lg hover:bg-surface-bright transition-colors">Tools</button>
+</div>
+</div>
+<!-- Grouped Inventory List -->
+<div class="space-y-10">
+<!-- Category: Water -->
+<section class="space-y-4">
+<div class="flex items-center justify-between border-b border-outline-variant/20 pb-2">
+<h3 class="font-headline font-bold uppercase tracking-widest text-secondary flex items-center gap-2">
+<span class="material-symbols-outlined text-lg" data-icon="water_drop">water_drop</span>
+                        Hydration
+                    </h3>
+<span class="font-label text-[10px] text-outline">3 ITEMS</span>
+</div>
+<div class="space-y-3">
+<!-- Item Card -->
+<div class="glass-card p-4 rounded-xl flex items-center justify-between group transition-all active:scale-[0.98]">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-primary" data-icon="liquor">liquor</span>
+</div>
+<div class="space-y-0.5">
+<h4 class="font-bold text-sm tracking-tight">Purified Water Reservoir</h4>
+<div class="flex items-center gap-3">
+<span class="text-[10px] font-bold uppercase text-outline tracking-wider">2L VOLUME</span>
+<span class="text-[10px] font-bold uppercase text-tertiary tracking-wider">NO EXPIRY</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="h-6 w-10 bg-tertiary-container rounded-full flex items-center px-1 relative cursor-pointer">
+<div class="h-4 w-4 bg-on-tertiary-container rounded-full translate-x-4"></div>
+</div>
+</div>
+</div>
+<div class="glass-card p-4 rounded-xl flex items-center justify-between group transition-all active:scale-[0.98]">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-primary" data-icon="filter_alt">filter_alt</span>
+</div>
+<div class="space-y-0.5">
+<h4 class="font-bold text-sm tracking-tight">Personal Water Filter</h4>
+<div class="flex items-center gap-3">
+<span class="text-[10px] font-bold uppercase text-outline tracking-wider">1 UNIT</span>
+<span class="text-[10px] font-bold uppercase text-primary-container tracking-wider">EXP: DEC 2026</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="h-6 w-10 bg-surface-container-highest rounded-full flex items-center px-1 relative cursor-pointer">
+<div class="h-4 w-4 bg-outline rounded-full"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Category: Food -->
+<section class="space-y-4">
+<div class="flex items-center justify-between border-b border-outline-variant/20 pb-2">
+<h3 class="font-headline font-bold uppercase tracking-widest text-primary-container flex items-center gap-2">
+<span class="material-symbols-outlined text-lg" data-icon="restaurant">restaurant</span>
+                        Nutrition
+                    </h3>
+<span class="font-label text-[10px] text-outline">2 ITEMS</span>
+</div>
+<div class="space-y-3">
+<div class="glass-card p-4 rounded-xl flex items-center justify-between group transition-all active:scale-[0.98]">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-primary" data-icon="flatware">flatware</span>
+</div>
+<div class="space-y-0.5">
+<h4 class="font-bold text-sm tracking-tight">MRE Ration Pack (Day 1-3)</h4>
+<div class="flex items-center gap-3">
+<span class="text-[10px] font-bold uppercase text-outline tracking-wider">3 PACKS</span>
+<span class="text-[10px] font-bold uppercase text-error tracking-wider">EXP: MAY 2024</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="h-6 w-10 bg-tertiary-container rounded-full flex items-center px-1 relative cursor-pointer">
+<div class="h-4 w-4 bg-on-tertiary-container rounded-full translate-x-4"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Category: Medical -->
+<section class="space-y-4">
+<div class="flex items-center justify-between border-b border-outline-variant/20 pb-2">
+<h3 class="font-headline font-bold uppercase tracking-widest text-error flex items-center gap-2">
+<span class="material-symbols-outlined text-lg" data-icon="medical_services">medical_services</span>
+                        Medical
+                    </h3>
+<span class="font-label text-[10px] text-outline">1 ITEM</span>
+</div>
+<div class="space-y-3">
+<div class="glass-card p-4 rounded-xl flex items-center justify-between group transition-all active:scale-[0.98]">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-primary" data-icon="emergency">emergency</span>
+</div>
+<div class="space-y-0.5">
+<h4 class="font-bold text-sm tracking-tight">Tactical Trauma Kit</h4>
+<div class="flex items-center gap-3">
+<span class="text-[10px] font-bold uppercase text-outline tracking-wider">1 KIT</span>
+<span class="text-[10px] font-bold uppercase text-tertiary tracking-wider">NO EXPIRY</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="h-6 w-10 bg-tertiary-container rounded-full flex items-center px-1 relative cursor-pointer">
+<div class="h-4 w-4 bg-on-tertiary-container rounded-full translate-x-4"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Floating Action Button -->
+<button class="fixed right-6 bottom-28 w-14 h-14 bg-gradient-to-br from-primary to-primary-container text-on-primary-container rounded-xl shadow-[0_4px_24px_rgba(255,107,0,0.4)] flex items-center justify-center active:scale-95 transition-transform z-40">
+<span class="material-symbols-outlined text-3xl" data-icon="add">add</span>
+</button>
+<!-- BottomNavBar Shell -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-3 bg-[#131314]/90 backdrop-blur-xl dark:bg-[#131314]/90 border-t border-[#2A2A2B] shadow-[0_-4px_24px_rgba(0,0,0,0.4)] rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-[#39393A] px-4 py-1.5 hover:text-[#FFB693] transition-all tap-highlight-transparent active:opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="grid_view">grid_view</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Dashboard</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-[#FF6B00] text-[#131314] rounded-lg px-4 py-1.5 tap-highlight-transparent active:opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="inventory_2" style="font-variation-settings: 'FILL' 1;">inventory_2</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Inventory</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#39393A] px-4 py-1.5 hover:text-[#FFB693] transition-all tap-highlight-transparent active:opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="fact_check">fact_check</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Check</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#39393A] px-4 py-1.5 hover:text-[#FFB693] transition-all tap-highlight-transparent active:opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="sync">sync</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Sync</span>
+</a>
+</nav>
+</body></html>

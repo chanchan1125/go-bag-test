@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Tactical Ready - Kiosk Pairing</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-surface": "#e5e2e3",
+              "surface-container-lowest": "#0e0e0f",
+              "on-secondary-container": "#002d44",
+              "on-background": "#e5e2e3",
+              "secondary-container": "#2899d8",
+              "on-tertiary-fixed": "#002204",
+              "surface-variant": "#353436",
+              "surface-container-high": "#2a2a2b",
+              "surface-container": "#1f1f20",
+              "primary": "#ffb693",
+              "on-secondary": "#00344e",
+              "on-tertiary": "#00390a",
+              "surface-container-highest": "#353436",
+              "primary-container": "#ff6b00",
+              "surface-dim": "#131314",
+              "error": "#ffb4ab",
+              "on-tertiary-fixed-variant": "#005313",
+              "background": "#131314",
+              "tertiary-fixed-dim": "#78dc77",
+              "secondary-fixed": "#cae6ff",
+              "primary-fixed-dim": "#ffb693",
+              "tertiary-container": "#4aad4e",
+              "on-primary-fixed-variant": "#7a3000",
+              "on-error-container": "#ffdad6",
+              "on-surface-variant": "#e2bfb0",
+              "on-error": "#690005",
+              "on-secondary-fixed": "#001e2f",
+              "secondary": "#8ccdff",
+              "surface-container-low": "#1b1b1c",
+              "tertiary-fixed": "#94f990",
+              "on-primary": "#561f00",
+              "on-secondary-fixed-variant": "#004b6f",
+              "surface": "#131314",
+              "inverse-surface": "#e5e2e3",
+              "error-container": "#93000a",
+              "on-primary-fixed": "#351000",
+              "outline": "#a98a7d",
+              "on-tertiary-container": "#003a0b",
+              "inverse-primary": "#a04100",
+              "secondary-fixed-dim": "#8ccdff",
+              "tertiary": "#78dc77",
+              "outline-variant": "#5a4136",
+              "inverse-on-surface": "#303031",
+              "surface-tint": "#ffb693",
+              "on-primary-container": "#572000",
+              "surface-bright": "#39393a",
+              "primary-fixed": "#ffdbcc"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      .qr-pattern {
+        background-image: radial-gradient(circle at 2px 2px, #2a2a2b 1px, transparent 0);
+        background-size: 24px 24px;
+      }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body overflow-hidden h-screen w-screen flex flex-col">
+<!-- TopAppBar -->
+<header class="bg-[#131314] flex justify-between items-center w-full px-6 py-4 max-w-none shadow-[0_4px_20px_rgba(255,107,0,0.12)] z-10">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#FF6B00]" data-icon="signal_cellular_alt">signal_cellular_alt</span>
+<h1 class="text-xl font-bold tracking-tighter text-[#FF6B00] font-['Space_Grotesk']">TACTICAL READY</h1>
+</div>
+<div class="flex items-center gap-4">
+<span class="font-['Inter'] uppercase tracking-widest text-[10px] text-[#39393A]">SYSTEM STATUS</span>
+<span class="font-['Inter'] font-bold text-[#FFB693]">85% READY</span>
+</div>
+</header>
+<!-- Main Content: Landscape Kiosk Pairing -->
+<main class="flex-1 relative flex items-center justify-center p-8 qr-pattern overflow-hidden">
+<!-- Background Decorative Elements -->
+<div class="absolute top-0 left-0 w-full h-full pointer-events-none opacity-10">
+<div class="absolute top-10 left-10 text-[120px] font-headline font-bold text-outline-variant select-none">PAIR</div>
+<div class="absolute bottom-10 right-10 text-[120px] font-headline font-bold text-outline-variant select-none">NODE_01</div>
+</div>
+<div class="grid grid-cols-12 gap-8 w-full max-w-6xl relative z-20">
+<!-- Left Side: QR Focus -->
+<div class="col-span-12 lg:col-span-7 flex flex-col items-center justify-center">
+<div class="relative p-6 bg-surface-container-high rounded-xl shadow-[0_0_80px_rgba(255,107,0,0.08)]">
+<!-- Corner Brackets -->
+<div class="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-primary rounded-tl-xl"></div>
+<div class="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-primary rounded-tr-xl"></div>
+<div class="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-primary rounded-bl-xl"></div>
+<div class="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-primary rounded-br-xl"></div>
+<div class="bg-white p-4 rounded-lg">
+<img alt="Pairing QR Code" class="w-80 h-80" data-alt="A high-contrast black and white QR code centered on a clean white background, sharp edges, technical aesthetic" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCuboWOomP2zOZz5UqePsbwCC3M565FjZ4eHtgGIuZ9TI6-d9aaI1pCASK8nFY8ko9_HNTmg1PmDbgtLFBUS6t3PEWWEcJ8QI0Ksx_d9nMtzezo3c632_FQ8pf12wKnXGFBqBgGcZuBCatEpsMSnWK6ou_uwfLxwAuDsH8bI7EltJVrM7K_6x7PHJYNdBLokUjrEAG9h_gn1NglaadLWaclhcGxq4RC-qojJkffK1UMOZ4ImztfFVqt70PfrZ8o_ZVmFGnXTat2wrY"/>
+</div>
+</div>
+<div class="mt-8 text-center">
+<p class="font-label uppercase tracking-widest text-[12px] text-primary mb-2">Instructions</p>
+<h2 class="font-headline text-3xl font-bold tracking-tight text-on-surface">Scan with GO BAG phone app to pair</h2>
+</div>
+</div>
+<!-- Right Side: Details & Actions -->
+<div class="col-span-12 lg:col-span-5 flex flex-col justify-center space-y-6">
+<!-- Pair Code Card -->
+<section class="bg-surface-container-low p-6 rounded-xl border-l-4 border-primary">
+<p class="font-label uppercase tracking-widest text-[10px] text-outline mb-1">Backup Pairing Code</p>
+<div class="flex items-center justify-between">
+<span class="font-headline text-4xl font-bold tracking-tighter text-on-surface">ABC-123-XYZ</span>
+<button class="p-3 bg-surface-container-highest rounded-full text-primary hover:bg-surface-bright transition-colors active:scale-95 duration-100">
+<span class="material-symbols-outlined" data-icon="content_copy">content_copy</span>
+</button>
+</div>
+</section>
+<!-- Status Card -->
+<section class="bg-surface-container-high p-6 rounded-xl border border-outline-variant/20">
+<div class="flex items-center justify-between mb-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-tertiary-container animate-pulse"></span>
+<p class="font-label uppercase tracking-widest text-[10px] text-outline">Network Status</p>
+</div>
+<span class="text-[10px] font-label text-tertiary uppercase font-bold tracking-widest bg-tertiary-container/10 px-2 py-0.5 rounded">Secure Node</span>
+</div>
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 bg-secondary-container/20 rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined text-secondary" data-icon="smartphone" style="font-variation-settings: 'FILL' 1;">smartphone</span>
+</div>
+<div>
+<p class="text-on-surface font-bold text-lg">1 Phone Paired</p>
+<p class="text-outline text-sm">(Stitch Phone)</p>
+</div>
+</div>
+</section>
+<!-- CTAs -->
+<div class="grid grid-cols-1 gap-4 pt-4">
+<button class="w-full h-14 bg-gradient-to-r from-primary to-primary-container text-on-primary-container font-headline font-bold uppercase tracking-widest text-sm rounded-lg flex items-center justify-center gap-2 hover:opacity-90 transition-all active:scale-95 duration-100">
+<span class="material-symbols-outlined" data-icon="refresh">refresh</span>
+                        Rotate Pair Code
+                    </button>
+<button class="w-full h-14 bg-surface-container-highest text-on-surface font-headline font-bold uppercase tracking-widest text-sm rounded-lg flex items-center justify-center gap-2 hover:bg-surface-bright transition-colors active:scale-95 duration-100">
+<span class="material-symbols-outlined text-error" data-icon="link_off">link_off</span>
+                        Revoke All Tokens
+                    </button>
+</div>
+<!-- Technical Metadata -->
+<div class="flex justify-between items-center px-2">
+<div class="flex flex-col">
+<span class="font-label text-[10px] text-outline uppercase tracking-tighter">Last Rotation</span>
+<span class="font-label text-[11px] text-on-surface-variant font-medium">14:02:31 UTC</span>
+</div>
+<div class="flex flex-col items-end">
+<span class="font-label text-[10px] text-outline uppercase tracking-tighter">Node ID</span>
+<span class="font-label text-[11px] text-on-surface-variant font-medium">RPI-ALPHA-9</span>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="bg-[#131314]/90 backdrop-blur-xl fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-3 border-t border-[#2A2A2B] rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-[#39393A] px-4 py-1.5 hover:text-[#FFB693] transition-all tap-highlight-transparent active:opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="grid_view">grid_view</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Dashboard</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#39393A] px-4 py-1.5 hover:text-[#FFB693] transition-all tap-highlight-transparent active:opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Inventory</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#39393A] px-4 py-1.5 hover:text-[#FFB693] transition-all tap-highlight-transparent active:opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="fact_check">fact_check</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Check</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-[#FF6B00] text-[#131314] rounded-lg px-4 py-1.5 transition-all tap-highlight-transparent active:opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="sync">sync</span>
+<span class="font-['Inter'] font-semibold text-[11px] uppercase tracking-wider mt-1">Sync</span>
+</a>
+</nav>
+<!-- Kiosk Corner Status Overlays -->
+<div class="fixed top-20 right-8 pointer-events-none hidden lg:block">
+<div class="flex flex-col items-end gap-1 opacity-40">
+<div class="w-1 h-16 bg-outline-variant"></div>
+<span class="font-label text-[10px] text-outline uppercase [writing-mode:vertical-lr]">ENCRYPTED_LINK_ESTABLISHED</span>
+</div>
+</div>
+</body></html>

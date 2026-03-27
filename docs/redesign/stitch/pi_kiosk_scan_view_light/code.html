@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>GO BAG - PI KIOSK SCAN</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "outline-variant": "#e2bfb0",
+              "inverse-primary": "#ffb693",
+              "on-tertiary-container": "#003357",
+              "on-error-container": "#93000a",
+              "on-surface": "#191c1d",
+              "surface": "#f8f9fa",
+              "on-surface-variant": "#5a4136",
+              "surface-bright": "#f8f9fa",
+              "secondary-fixed-dim": "#ffb693",
+              "surface-dim": "#d9dadb",
+              "inverse-on-surface": "#f0f1f2",
+              "background": "#f8f9fa",
+              "on-primary-fixed": "#351000",
+              "secondary": "#96481e",
+              "on-tertiary-fixed": "#001d35",
+              "on-secondary-fixed-variant": "#783207",
+              "error": "#ba1a1a",
+              "on-secondary-container": "#763006",
+              "inverse-surface": "#2e3132",
+              "on-primary": "#ffffff",
+              "surface-variant": "#e1e3e4",
+              "tertiary-fixed": "#d0e4ff",
+              "tertiary-fixed-dim": "#9ccaff",
+              "secondary-fixed": "#ffdbcc",
+              "on-secondary-fixed": "#351000",
+              "on-primary-fixed-variant": "#7a3000",
+              "on-primary-container": "#572000",
+              "primary-fixed": "#ffdbcc",
+              "primary-container": "#ff6b00",
+              "surface-container-high": "#e7e8e9",
+              "surface-container-lowest": "#ffffff",
+              "primary-fixed-dim": "#ffb693",
+              "on-secondary": "#ffffff",
+              "primary": "#a04100",
+              "outline": "#8e7164",
+              "on-error": "#ffffff",
+              "surface-container-low": "#f3f4f5",
+              "tertiary-container": "#059eff",
+              "on-background": "#191c1d",
+              "surface-container": "#edeeef",
+              "surface-container-highest": "#e1e3e4",
+              "tertiary": "#0062a1",
+              "on-tertiary": "#ffffff",
+              "surface-tint": "#a04100",
+              "error-container": "#ffdad6",
+              "on-tertiary-fixed-variant": "#00497b",
+              "secondary-container": "#fe9a69"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .scan-corner {
+            width: 40px;
+            height: 40px;
+            border-color: #FF6B00;
+        }
+        .camera-vignette {
+            background: radial-gradient(circle, rgba(0,0,0,0) 0%, rgba(0,0,0,0.4) 100%);
+        }
+    </style>
+</head>
+<body class="bg-background font-body text-on-surface antialiased overflow-hidden">
+<!-- Top Navigation Anchor -->
+<header class="fixed top-0 w-full z-50 bg-[#F8F9FA]/80 backdrop-blur-md dark:bg-[#191C1D]/80 border-b border-[#E1E3E4]/15 flex justify-between items-center px-6 h-16 w-full shadow-sm dark:shadow-none">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[#FF6B00]" data-icon="emergency">emergency</span>
+<span class="text-2xl font-bold tracking-tighter text-[#FF6B00] font-headline">GO BAG</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest text-on-surface-variant">SCANNING MODE</span>
+<div class="px-3 py-1 bg-primary-container/10 rounded-full border border-primary-container/20">
+<span class="text-primary font-headline font-bold text-sm tracking-tight">85% READY</span>
+</div>
+</div>
+</header>
+<!-- Camera Viewfinder Section -->
+<main class="relative h-screen w-full flex items-center justify-center pt-16 pb-24 bg-zinc-900">
+<!-- Mock Camera Feed Background -->
+<div class="absolute inset-0 z-0">
+<img class="w-full h-full object-cover opacity-60 grayscale-[0.2]" data-alt="Close-up of grocery store shelf with bottled water and various supplies in sharp focus under clinical warehouse lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDOjXDjZyFlPLzkYk_Zx3_LJz7ge1Fve3bS7B1QMm5fbegprkjWWlHFkoNagNFrMdizZ_i3XBDcG41n_cSmDmdkC57QKnfGnuOJcj1-JPikv-cIvnegglnji2eR9wxgH_xO6MuwgqwqYZ11sUXodLOfretSzIwgCut--XuJhsDK5aZzKxf6xjrwdivuliUBUUlE4Oi7FGas_gSfhKs8z8UUvgXLbB_wbKmBHtNIoer-Edy4uL9p4e9yhtX7VS9-Lc6TKKpGCYjViAA"/>
+<div class="absolute inset-0 camera-vignette"></div>
+</div>
+<!-- Scanning Reticle -->
+<div class="relative z-10 w-72 h-72 md:w-96 md:h-96 flex items-center justify-center">
+<!-- Corner Markers -->
+<div class="absolute top-0 left-0 scan-corner border-t-4 border-l-4"></div>
+<div class="absolute top-0 right-0 scan-corner border-t-4 border-r-4"></div>
+<div class="absolute bottom-0 left-0 scan-corner border-b-4 border-l-4"></div>
+<div class="absolute bottom-0 right-0 scan-corner border-b-4 border-r-4"></div>
+<!-- Scanning Line (Implicit Motion) -->
+<div class="w-full h-[2px] bg-primary-container/40 absolute top-1/2 -translate-y-1/2 shadow-[0_0_15px_#FF6B00]"></div>
+<!-- Focus Pointer -->
+<div class="w-4 h-4 border border-primary-container rounded-full flex items-center justify-center">
+<div class="w-1 h-1 bg-primary-container rounded-full"></div>
+</div>
+</div>
+<!-- Match Detected Overlay (High-Readability Light Card) -->
+<div class="absolute bottom-32 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-20">
+<div class="bg-surface-container-lowest rounded-xl shadow-2xl p-6 flex flex-col gap-4 border border-outline-variant/10">
+<div class="flex items-start justify-between">
+<div class="flex flex-col">
+<span class="font-label text-[10px] uppercase tracking-[0.2em] text-primary font-bold">SCAN SUCCESS</span>
+<h2 class="font-headline text-2xl font-bold text-on-surface tracking-tight leading-none mt-1">Match Detected</h2>
+</div>
+<div class="bg-tertiary-container/10 p-2 rounded-lg">
+<span class="material-symbols-outlined text-tertiary" data-icon="water_drop" style="font-variation-settings: 'FILL' 1;">water_drop</span>
+</div>
+</div>
+<div class="bg-surface-container-low p-4 rounded-lg flex items-center gap-4">
+<div class="w-12 h-12 bg-white rounded border border-outline-variant/20 flex-shrink-0 flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant text-3xl" data-icon="inventory_2">inventory_2</span>
+</div>
+<div class="flex-1">
+<p class="font-headline font-semibold text-lg text-on-surface">Purified Water (2L)</p>
+<div class="flex items-center gap-1.5 mt-0.5">
+<span class="material-symbols-outlined text-[#008932] text-sm" data-icon="check_circle" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+<span class="font-label text-xs font-bold text-[#008932] uppercase tracking-wider">FOUND IN LIST</span>
+</div>
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<button class="w-full py-4 bg-primary-container hover:bg-primary text-white rounded-lg flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
+<span class="material-symbols-outlined" data-icon="add_box" style="font-variation-settings: 'FILL' 1;">add_box</span>
+<span class="font-headline font-bold uppercase tracking-widest text-sm">Pack Item</span>
+</button>
+<button class="w-full py-3 bg-transparent text-on-surface-variant hover:bg-surface-container-low rounded-lg transition-colors">
+<span class="font-label font-semibold text-xs uppercase tracking-widest">Dismiss</span>
+</button>
+</div>
+</div>
+</div>
+<!-- HUD: Live Status -->
+<div class="absolute top-20 left-6 z-20">
+<div class="bg-[#F8F9FA]/85 backdrop-blur-md rounded-lg px-4 py-2 border border-white/20 shadow-lg">
+<div class="flex items-center gap-3">
+<div class="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+<span class="font-label text-[10px] font-bold tracking-tighter text-on-surface">LENS: ACTIVE</span>
+<div class="w-px h-3 bg-outline-variant/30"></div>
+<span class="font-label text-[10px] font-bold tracking-tighter text-on-surface">GPS: LOCKED</span>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Navigation Shell (Relevance Check: Visible for Kiosk Context) -->
+<nav class="fixed bottom-0 left-0 w-full flex justify-around items-center px-4 pb-6 pt-3 bg-[#F8F9FA]/85 backdrop-blur-lg dark:bg-[#191C1D]/85 rounded-t-lg shadow-[0_-4px_20px_rgba(25,28,29,0.06)] z-50">
+<div class="flex flex-col items-center justify-center text-[#191C1D] opacity-70 px-4 py-1.5 hover:opacity-100 hover:bg-[#F3F4F5] transition-all cursor-pointer">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Dashboard</span>
+</div>
+<div class="flex flex-col items-center justify-center text-[#191C1D] opacity-70 px-4 py-1.5 hover:opacity-100 hover:bg-[#F3F4F5] transition-all cursor-pointer">
+<span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Inventory</span>
+</div>
+<div class="flex flex-col items-center justify-center bg-[#FF6B00] text-[#FFFFFF] rounded-md px-6 py-2 shadow-lg scale-110">
+<span class="material-symbols-outlined" data-icon="fact_check" style="font-variation-settings: 'FILL' 1;">fact_check</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Check</span>
+</div>
+<div class="flex flex-col items-center justify-center text-[#191C1D] opacity-70 px-4 py-1.5 hover:opacity-100 hover:bg-[#F3F4F5] transition-all cursor-pointer">
+<span class="material-symbols-outlined" data-icon="sync">sync</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Sync</span>
+</div>
+</nav>
+</body></html>

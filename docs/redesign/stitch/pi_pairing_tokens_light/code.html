@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "outline-variant": "#e2bfb0",
+            "inverse-primary": "#ffb693",
+            "on-tertiary-container": "#003357",
+            "on-error-container": "#93000a",
+            "on-surface": "#191c1d",
+            "surface": "#f8f9fa",
+            "on-surface-variant": "#5a4136",
+            "surface-bright": "#f8f9fa",
+            "secondary-fixed-dim": "#ffb693",
+            "surface-dim": "#d9dadb",
+            "inverse-on-surface": "#f0f1f2",
+            "background": "#f8f9fa",
+            "on-primary-fixed": "#351000",
+            "secondary": "#96481e",
+            "on-tertiary-fixed": "#001d35",
+            "on-secondary-fixed-variant": "#783207",
+            "error": "#ba1a1a",
+            "on-secondary-container": "#763006",
+            "inverse-surface": "#2e3132",
+            "on-primary": "#ffffff",
+            "surface-variant": "#e1e3e4",
+            "tertiary-fixed": "#d0e4ff",
+            "tertiary-fixed-dim": "#9ccaff",
+            "secondary-fixed": "#ffdbcc",
+            "on-secondary-fixed": "#351000",
+            "on-primary-fixed-variant": "#7a3000",
+            "on-primary-container": "#572000",
+            "primary-fixed": "#ffdbcc",
+            "primary-container": "#ff6b00",
+            "surface-container-high": "#e7e8e9",
+            "surface-container-lowest": "#ffffff",
+            "primary-fixed-dim": "#ffb693",
+            "on-secondary": "#ffffff",
+            "primary": "#a04100",
+            "outline": "#8e7164",
+            "on-error": "#ffffff",
+            "surface-container-low": "#f3f4f5",
+            "tertiary-container": "#059eff",
+            "on-background": "#191c1d",
+            "surface-container": "#edeeef",
+            "surface-container-highest": "#e1e3e4",
+            "tertiary": "#0062a1",
+            "on-tertiary": "#ffffff",
+            "surface-tint": "#a04100",
+            "error-container": "#ffdad6",
+            "on-tertiary-fixed-variant": "#00497b",
+            "secondary-container": "#fe9a69"
+          },
+          fontFamily: {
+            "headline": ["Space Grotesk"],
+            "body": ["Inter"],
+            "label": ["Inter"],
+            "mono": ["JetBrains Mono"]
+          },
+          borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+        },
+      },
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    }
+    .qr-pattern {
+      background-image: radial-gradient(#191c1d 0.5px, transparent 0.5px);
+      background-size: 4px 4px;
+    }
+  </style>
+</head>
+<body class="bg-surface font-body text-on-surface">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 bg-[#F8F9FA]/80 backdrop-blur-md border-b border-[#E1E3E4]/15 shadow-sm">
+<div class="flex justify-between items-center px-6 h-16 w-full">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#FF6B00]">emergency</span>
+<h1 class="font-['Space_Grotesk'] font-bold tracking-tight text-[#191C1D] text-2xl tracking-tighter text-[#FF6B00]">GO BAG</h1>
+</div>
+<div class="flex items-center gap-4">
+<span class="text-[#A04100] font-bold font-label text-xs tracking-widest uppercase">85% READY</span>
+</div>
+</div>
+</header>
+<main class="pt-24 pb-32 px-6 max-w-2xl mx-auto min-h-screen">
+<!-- Pairing Section Header -->
+<div class="mb-10 text-center">
+<h2 class="font-headline text-3xl font-bold tracking-tight mb-2">Pi Pairing</h2>
+<p class="text-on-surface-variant font-medium">Link your satellite uplink device to ensure connectivity during network blackout.</p>
+</div>
+<!-- QR Code Section: Bento Layout -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-6">
+<!-- Primary Pairing Card -->
+<div class="md:col-span-12 bg-surface-container-lowest rounded-xl shadow-[0_12px_40px_rgba(25,28,29,0.06)] p-8 flex flex-col items-center">
+<div class="relative group">
+<div class="w-64 h-64 bg-white border-8 border-surface-container flex items-center justify-center rounded-lg overflow-hidden relative">
+<!-- Simulated QR Code -->
+<div class="w-full h-full p-4">
+<img alt="QR Code for device pairing" class="w-full h-full object-contain" data-alt="large high contrast black and white qr code on a white background with clean geometric borders" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBHOti97mLPW5kB9UYteOE51C8Y5QKRY5xPP_tVhwbu94M3ZjgBjCSS0YWBuWr_hdIKJOWqfSCvAT72THUHYsYy2QDrtEog2PlZ2CoXl77cGvcJGrEI0VG_9UUsTvQPir4q8Nhl0h411DMzNjlgyB_UU5uKlF__ygUJqPmxKKQbtADBgBW5r7FYJRssrgIJmm3fzP_D0JURlSUINkDVWOUbrxQ80YKxo2uiV1rLnpU4hOye_UE1sMaLCb1y1Gr-dMZsykM7Zk6xibQ"/>
+</div>
+<div class="absolute inset-0 border-2 border-primary-container opacity-20 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
+</div>
+<div class="absolute -top-3 -right-3 bg-primary-container text-white text-[10px] font-bold px-2 py-1 rounded shadow-md tracking-tighter">SCAN NOW</div>
+</div>
+<div class="mt-8 w-full text-center">
+<span class="text-[10px] font-label font-bold tracking-[0.2em] text-on-surface-variant uppercase block mb-3">Backup Pairing Code</span>
+<div class="bg-surface-container-low rounded-lg p-4 inline-flex items-center justify-center gap-4 border-b-2 border-primary-container">
+<span class="font-mono text-2xl font-bold tracking-widest text-on-surface">ABC-123-XYZ</span>
+<button class="material-symbols-outlined text-primary hover:scale-110 transition-transform active:scale-90">content_copy</button>
+</div>
+</div>
+</div>
+<!-- Tactical Actions Bento Row -->
+<div class="md:col-span-7 bg-surface-container-lowest rounded-xl p-6 flex flex-col justify-between shadow-sm">
+<div>
+<h3 class="font-headline font-bold text-lg mb-2">Token Management</h3>
+<p class="text-sm text-on-surface-variant mb-6 leading-relaxed">Active pairing tokens grant full tactical access. Rotate codes if device integrity is compromised.</p>
+</div>
+<button class="w-full bg-primary-container text-on-primary-container font-bold py-4 rounded-lg flex items-center justify-center gap-2 active:scale-95 duration-150 transition-all shadow-md">
+<span class="material-symbols-outlined">refresh</span>
+          Rotate Pair Code
+        </button>
+</div>
+<div class="md:col-span-5 bg-surface-container-highest rounded-xl p-6 flex flex-col justify-between shadow-sm">
+<div>
+<h3 class="font-headline font-bold text-lg mb-2">Security</h3>
+<p class="text-sm text-on-surface-variant mb-4">Wipe all linked session keys immediately.</p>
+</div>
+<button class="w-full bg-on-surface text-surface font-bold py-4 rounded-lg flex items-center justify-center gap-2 active:scale-95 duration-150 transition-all">
+<span class="material-symbols-outlined">lock_reset</span>
+          Revoke All Tokens
+        </button>
+</div>
+<!-- Active Sessions Component -->
+<div class="md:col-span-12 bg-surface-container-low rounded-xl p-6">
+<div class="flex items-center justify-between mb-4">
+<h3 class="font-label font-bold text-xs tracking-widest uppercase text-on-surface-variant">Active Sessions (1)</h3>
+<div class="flex items-center gap-1.5">
+<span class="w-2 h-2 bg-[#FF6B00] rounded-full animate-pulse"></span>
+<span class="text-[10px] font-bold text-[#A04100]">UPLINK ACTIVE</span>
+</div>
+</div>
+<div class="bg-surface-container-lowest rounded-lg p-4 flex items-center justify-between">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 bg-secondary-container/20 rounded flex items-center justify-center">
+<span class="material-symbols-outlined text-secondary">router</span>
+</div>
+<div>
+<p class="text-sm font-bold font-headline">Tactical-Pi-X1</p>
+<p class="text-[10px] text-on-surface-variant font-mono">Last Sync: 12:45 UTC</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-on-surface-variant text-sm cursor-pointer hover:text-error">cancel</span>
+</div>
+</div>
+</div>
+<!-- Troubleshooting Hint -->
+<div class="mt-8 flex items-start gap-3 p-4 bg-tertiary-fixed rounded-lg border-l-4 border-tertiary">
+<span class="material-symbols-outlined text-tertiary">info</span>
+<p class="text-xs text-on-tertiary-fixed-variant leading-relaxed">
+<strong>Pairing Error?</strong> Ensure your Pi is within Bluetooth Low Energy range and that the satellite transceiver status led is solid green before scanning.
+      </p>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 bg-[#F8F9FA]/85 backdrop-blur-lg rounded-t-lg shadow-[0_-4px_20px_rgba(25,28,29,0.06)]">
+<div class="flex justify-around items-center px-4 pb-6 pt-3">
+<a class="flex flex-col items-center justify-center text-[#191C1D] opacity-70 px-4 py-1.5 hover:opacity-100 hover:bg-[#F3F4F5] transition-all active:scale-90 duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Dashboard</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#191C1D] opacity-70 px-4 py-1.5 hover:opacity-100 hover:bg-[#F3F4F5] transition-all active:scale-90 duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined">inventory_2</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Inventory</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#191C1D] opacity-70 px-4 py-1.5 hover:opacity-100 hover:bg-[#F3F4F5] transition-all active:scale-90 duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined">fact_check</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Check</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-[#FF6B00] text-[#FFFFFF] rounded-md px-4 py-1.5 transition-all active:scale-90 duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">sync</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Sync</span>
+</a>
+</div>
+</nav>
+</body></html>

@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Go Bag - Inventory Management</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "outline-variant": "#e2bfb0",
+                        "inverse-primary": "#ffb693",
+                        "on-tertiary-container": "#003357",
+                        "on-error-container": "#93000a",
+                        "on-surface": "#191c1d",
+                        "surface": "#f8f9fa",
+                        "on-surface-variant": "#5a4136",
+                        "surface-bright": "#f8f9fa",
+                        "secondary-fixed-dim": "#ffb693",
+                        "surface-dim": "#d9dadb",
+                        "inverse-on-surface": "#f0f1f2",
+                        "background": "#f8f9fa",
+                        "on-primary-fixed": "#351000",
+                        "secondary": "#96481e",
+                        "on-tertiary-fixed": "#001d35",
+                        "on-secondary-fixed-variant": "#783207",
+                        "error": "#ba1a1a",
+                        "on-secondary-container": "#763006",
+                        "inverse-surface": "#2e3132",
+                        "on-primary": "#ffffff",
+                        "surface-variant": "#e1e3e4",
+                        "tertiary-fixed": "#d0e4ff",
+                        "tertiary-fixed-dim": "#9ccaff",
+                        "secondary-fixed": "#ffdbcc",
+                        "on-secondary-fixed": "#351000",
+                        "on-primary-fixed-variant": "#7a3000",
+                        "on-primary-container": "#572000",
+                        "primary-fixed": "#ffdbcc",
+                        "primary-container": "#ff6b00",
+                        "surface-container-high": "#e7e8e9",
+                        "surface-container-lowest": "#ffffff",
+                        "primary-fixed-dim": "#ffb693",
+                        "on-secondary": "#ffffff",
+                        "primary": "#a04100",
+                        "outline": "#8e7164",
+                        "on-error": "#ffffff",
+                        "surface-container-low": "#f3f4f5",
+                        "tertiary-container": "#059eff",
+                        "on-background": "#191c1d",
+                        "surface-container": "#edeeef",
+                        "surface-container-highest": "#e1e3e4",
+                        "tertiary": "#0062a1",
+                        "on-tertiary": "#ffffff",
+                        "surface-tint": "#a04100",
+                        "error-container": "#ffdad6",
+                        "on-tertiary-fixed-variant": "#00497b",
+                        "secondary-container": "#fe9a69"
+                    },
+                    fontFamily: {
+                        "headline": ["Space Grotesk"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: { "DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem" },
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3, .font-headline { font-family: 'Space Grotesk', sans-serif; }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-surface min-h-screen pb-32">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 bg-[#F8F9FA]/80 backdrop-blur-md border-b border-[#E1E3E4]/15 shadow-sm h-16 flex justify-between items-center px-6">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#FF6B00]" data-icon="emergency">emergency</span>
+<span class="text-2xl font-bold tracking-tighter text-[#FF6B00] font-headline">GO BAG</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="font-['Space_Grotesk'] font-bold tracking-tight text-[#191C1D] text-sm px-3 py-1 bg-surface-container-high rounded-lg">85% READY</span>
+</div>
+</header>
+<main class="pt-24 px-6 max-w-4xl mx-auto">
+<!-- Hero Header -->
+<section class="mb-8">
+<h1 class="text-display-lg font-headline font-bold text-on-surface leading-tight tracking-tight">Main Survival Bag</h1>
+<div class="flex items-center justify-between mt-2">
+<p class="font-label text-label-md uppercase tracking-widest text-primary font-bold">38/45 ITEMS PACKED</p>
+<div class="h-1.5 flex-1 mx-4 bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-primary-container" style="width: 84%;"></div>
+</div>
+<span class="font-label text-label-md text-on-surface-variant">84%</span>
+</div>
+</section>
+<!-- Search & Filter Cluster -->
+<section class="space-y-6 mb-8">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant" data-icon="search">search</span>
+<input class="w-full bg-surface-container-low border-none h-14 pl-12 pr-4 font-label text-sm tracking-wider focus:ring-0 focus:bg-surface-container-lowest transition-all border-b-2 border-transparent focus:border-primary" placeholder="SEARCH INVENTORY..." type="text"/>
+</div>
+<div class="flex flex-wrap gap-2">
+<button class="px-5 py-2 bg-primary-container text-on-primary-container rounded-lg font-label text-xs font-bold uppercase tracking-widest transition-transform active:scale-95">All</button>
+<button class="px-5 py-2 bg-surface-container-high text-on-surface rounded-lg font-label text-xs font-medium uppercase tracking-widest hover:bg-surface-container-highest transition-colors">Water</button>
+<button class="px-5 py-2 bg-surface-container-high text-on-surface rounded-lg font-label text-xs font-medium uppercase tracking-widest hover:bg-surface-container-highest transition-colors">Food</button>
+<button class="px-5 py-2 bg-surface-container-high text-on-surface rounded-lg font-label text-xs font-medium uppercase tracking-widest hover:bg-surface-container-highest transition-colors">Medical</button>
+<button class="px-5 py-2 bg-surface-container-high text-on-surface rounded-lg font-label text-xs font-medium uppercase tracking-widest hover:bg-surface-container-highest transition-colors">Tools</button>
+</div>
+</section>
+<!-- Inventory Grid -->
+<div class="space-y-4">
+<!-- Item Card: Water -->
+<div class="group bg-surface-container-lowest p-5 rounded-xl flex items-center gap-5 transition-all border-l-4 border-transparent hover:border-primary shadow-sm hover:shadow-md">
+<div class="w-16 h-16 bg-surface-container-low rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+<img class="w-full h-full object-cover" data-alt="high quality heavy duty silver water reservoir for hydration in a tactical backpack setting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC0uVel24OtlpnOYevFmIwmZ66l7uHtxcAfF49UDF1L6ds4GboJYpXAOjheSopW5U8AVIh4Jl-q_Rz83RfggABuur_QnVgPYGEmdz0DYRg3Uvky3CXVihDpPfFZofdyZ-OwMSELykNVKS9Ch-abhXMkEdbarXgmOuFfO7XIL1lByO4kWap0m4kGGAkH9F_xBovnUaaOOYzgO1f040CpYFK07MG3UG2D8zDlNs8OaBTtoOXnAIv95FXXjYfRx-DhtZTc2wWgdqks-zo"/>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start">
+<h3 class="font-headline font-bold text-lg text-on-surface">Purified Water Reservoir</h3>
+<span class="bg-surface-container-high text-on-surface-variant font-label text-[10px] px-2 py-0.5 rounded uppercase font-bold">2.5L</span>
+</div>
+<div class="flex items-center gap-3 mt-1">
+<span class="flex items-center gap-1 font-label text-xs text-primary font-bold">
+<span class="material-symbols-outlined text-sm" data-icon="event_available">event_available</span>
+                            EXP: 10/2026
+                        </span>
+<span class="text-surface-dim">•</span>
+<span class="font-label text-xs text-on-surface-variant">WATER CATEGORY</span>
+</div>
+</div>
+<div class="flex flex-col items-end gap-2">
+<button class="w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-white transition-all active:scale-90">
+<span class="material-symbols-outlined" data-icon="check_circle" data-weight="fill" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</button>
+</div>
+</div>
+<!-- Item Card: Filter -->
+<div class="group bg-surface-container-lowest p-5 rounded-xl flex items-center gap-5 transition-all border-l-4 border-transparent hover:border-primary shadow-sm hover:shadow-md">
+<div class="w-16 h-16 bg-surface-container-low rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+<img class="w-full h-full object-cover" data-alt="compact blue personal water filter straw on a clean white technical background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDoHahNg-69kSdG3vXM1ovVofMszeDMjf44HlhAD64P79e4XAuR7FZevf35zl4j8vxG1O5Rv-zOxBXdPe1WIOTAJoZBHUP3zGkm3fsbWSHJIaETB5EIB9U2ENx5SKfywtqZhM7w2B2atmwDuii3UNi45AnR_rU57LFDN3hlRNVV_6FQD7niwhxTM7LsRt5yddAUTjNVYbbc1YQNYtFC4PX4o-D0wvbu1Wq2KJ3X0RCqr-0TDWnhYkPO89eTclj5WrN00_v3JMMliE8"/>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start">
+<h3 class="font-headline font-bold text-lg text-on-surface">Personal Water Filter</h3>
+<span class="bg-surface-container-high text-on-surface-variant font-label text-[10px] px-2 py-0.5 rounded uppercase font-bold">1 UNIT</span>
+</div>
+<div class="flex items-center gap-3 mt-1">
+<span class="flex items-center gap-1 font-label text-xs text-primary font-bold">
+<span class="material-symbols-outlined text-sm" data-icon="event_available">event_available</span>
+                            LIFETIME USE
+                        </span>
+<span class="text-surface-dim">•</span>
+<span class="font-label text-xs text-on-surface-variant">WATER CATEGORY</span>
+</div>
+</div>
+<div class="flex flex-col items-end gap-2">
+<button class="w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-white transition-all active:scale-90">
+<span class="material-symbols-outlined" data-icon="check_circle" data-weight="fill" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</button>
+</div>
+</div>
+<!-- Item Card: MRE -->
+<div class="group bg-surface-container-lowest p-5 rounded-xl flex items-center gap-5 transition-all border-l-4 border-transparent hover:border-primary shadow-sm hover:shadow-md">
+<div class="w-16 h-16 bg-surface-container-low rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+<img class="w-full h-full object-cover" data-alt="vacuum sealed tan colored military MRE meal ration pack on a textured grey background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDueZq93AG45UzVWVgqzSH0tQ9ANWhVkj3KtZliQZxmDwjTU_39FaSNwdxFmM70SsTc313y4wVHuCH_fgXMgs2k1RSuUfdkZqz7eJKiPO1wiX_weGypujpyFrQagyZhYRiG7xbluIjSdtjv7Ae8_lSfYHxlcE4t5glwHWjmZIgMGivRovRNJy0BZETTJpP1nwhU7uv0vymn0xaiE8gbRxw4HdB6XbiZQWX2RdicGQzxMs8xZHF1iQ0xGKzUMOmgk52x1g7ih27JJKM"/>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start">
+<h3 class="font-headline font-bold text-lg text-on-surface">MRE Ration Pack</h3>
+<span class="bg-surface-container-high text-on-surface-variant font-label text-[10px] px-2 py-0.5 rounded uppercase font-bold">3 PACKS</span>
+</div>
+<div class="flex items-center gap-3 mt-1">
+<span class="flex items-center gap-1 font-label text-xs text-error font-bold">
+<span class="material-symbols-outlined text-sm" data-icon="warning">warning</span>
+                            EXP: 12/2024
+                        </span>
+<span class="text-surface-dim">•</span>
+<span class="font-label text-xs text-on-surface-variant">FOOD CATEGORY</span>
+</div>
+</div>
+<div class="flex flex-col items-end gap-2">
+<button class="w-10 h-10 flex items-center justify-center rounded-lg bg-surface-container-high text-on-surface-variant transition-all active:scale-90">
+<span class="material-symbols-outlined" data-icon="radio_button_unchecked">radio_button_unchecked</span>
+</button>
+</div>
+</div>
+<!-- Item Card: Trauma Kit -->
+<div class="group bg-surface-container-lowest p-5 rounded-xl flex items-center gap-5 transition-all border-l-4 border-transparent hover:border-primary shadow-sm hover:shadow-md">
+<div class="w-16 h-16 bg-surface-container-low rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+<img class="w-full h-full object-cover" data-alt="professional red tactical medical trauma kit with visible tourniquet and gauze" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAuGmqjd1B5onyWsjNeDwvCTtWOs5I3Nw-jtAxJGEO8sM1Immj4QQZNjMCOOKzu2BXeoEQfvUcgTaVGtlELklMth2CuZTyqQWOPgilEPkZiQ1pZOPzaOh6hGzdqGrGOVCW-CI1mu9R4JTR3MCFlQpBNj3NqfSMu0uk8mV_rahqXMpBpa5ICOCqTplYQaLlokKuSsi1G7wbyKzKi_3XLj3kZ496d-DVLQV3xc_e96MZAi9sMdb0550LWtl2-8YKy6X6aeXSxK6rZY9w"/>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start">
+<h3 class="font-headline font-bold text-lg text-on-surface">Tactical Trauma Kit</h3>
+<span class="bg-surface-container-high text-on-surface-variant font-label text-[10px] px-2 py-0.5 rounded uppercase font-bold">ADVANCED</span>
+</div>
+<div class="flex items-center gap-3 mt-1">
+<span class="flex items-center gap-1 font-label text-xs text-tertiary font-bold">
+<span class="material-symbols-outlined text-sm" data-icon="verified">verified</span>
+                            STERILE PACKS
+                        </span>
+<span class="text-surface-dim">•</span>
+<span class="font-label text-xs text-on-surface-variant">MEDICAL CATEGORY</span>
+</div>
+</div>
+<div class="flex flex-col items-end gap-2">
+<button class="w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-white transition-all active:scale-90">
+<span class="material-symbols-outlined" data-icon="check_circle" data-weight="fill" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Add Item CTA (Contextual FAB Suppression would apply, but for Task compliance we add a standard action) -->
+<button class="mt-10 w-full h-16 bg-surface-container-highest border-2 border-dashed border-outline-variant rounded-xl flex items-center justify-center gap-3 hover:bg-surface-container-high transition-colors group">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary" data-icon="add_box">add_box</span>
+<span class="font-label text-sm font-bold uppercase tracking-widest text-on-surface-variant">Add New Equipment</span>
+</button>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full bg-[#F8F9FA]/85 backdrop-blur-lg rounded-t-lg shadow-[0_-4px_20px_rgba(25,28,29,0.06)] flex justify-around items-center px-4 pb-6 pt-3 z-50">
+<div class="flex flex-col items-center justify-center text-[#191C1D] opacity-70 px-4 py-1.5 hover:opacity-100 hover:bg-[#F3F4F5] transition-all active:scale-90 duration-200 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Dashboard</span>
+</div>
+<div class="flex flex-col items-center justify-center bg-[#FF6B00] text-[#FFFFFF] rounded-md px-4 py-1.5 transition-all active:scale-90 duration-200 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined" data-icon="inventory_2" data-weight="fill" style="font-variation-settings: 'FILL' 1;">inventory_2</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Inventory</span>
+</div>
+<div class="flex flex-col items-center justify-center text-[#191C1D] opacity-70 px-4 py-1.5 hover:opacity-100 hover:bg-[#F3F4F5] transition-all active:scale-90 duration-200 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined" data-icon="fact_check">fact_check</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Check</span>
+</div>
+<div class="flex flex-col items-center justify-center text-[#191C1D] opacity-70 px-4 py-1.5 hover:opacity-100 hover:bg-[#F3F4F5] transition-all active:scale-90 duration-200 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined" data-icon="sync">sync</span>
+<span class="font-['Inter'] font-medium text-[10px] uppercase tracking-widest mt-1">Sync</span>
+</div>
+</nav>
+</body></html>
