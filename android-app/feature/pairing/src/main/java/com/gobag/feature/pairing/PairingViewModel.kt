@@ -17,6 +17,7 @@ data class PairingUiState(
     val status: String = "Not paired",
     val endpoint: String = "",
     val manual_endpoint: String = "",
+    val manual_pair_code: String = "",
     val endpoint_status: String = "Unknown",
     val endpoint_detail: String = "Scan the Raspberry Pi QR code or test a local address.",
     val auth_status: String = "Not authenticated",
@@ -33,6 +34,7 @@ private data class PairingViewInputs(
     val error: String,
     val feedback: String,
     val endpoint_input: String,
+    val pair_code_input: String,
     val endpoint_status: String,
     val endpoint_detail: String
 )
@@ -45,6 +47,7 @@ private data class PairingFeedbackState(
 
 private data class PairingEndpointState(
     val endpoint_input: String,
+    val pair_code_input: String,
     val endpoint_status: String,
     val endpoint_detail: String
 )
@@ -57,6 +60,7 @@ class PairingViewModel(
     private val error = MutableStateFlow("")
     private val feedback_message = MutableStateFlow("")
     private val manualEndpoint = MutableStateFlow("")
+    private val manualPairCode = MutableStateFlow("")
     private val endpointStatus = MutableStateFlow("Unknown")
     private val endpointDetail = MutableStateFlow("Scan the Raspberry Pi QR code or test a local address.")
 
@@ -74,11 +78,13 @@ class PairingViewModel(
 
     private val endpoint_state = combine(
         manualEndpoint,
+        manualPairCode,
         endpointStatus,
         endpointDetail
-    ) { endpointInput, statusText, detailText ->
+    ) { endpointInput, pairCodeInput, statusText, detailText ->
         PairingEndpointState(
             endpoint_input = endpointInput,
+            pair_code_input = pairCodeInput,
             endpoint_status = statusText,
             endpoint_detail = detailText
         )
@@ -93,6 +99,7 @@ class PairingViewModel(
             error = feedbackState.error,
             feedback = feedbackState.feedback,
             endpoint_input = endpointState.endpoint_input,
+            pair_code_input = endpointState.pair_code_input,
             endpoint_status = endpointState.endpoint_status,
             endpoint_detail = endpointState.endpoint_detail
         )
@@ -114,6 +121,7 @@ class PairingViewModel(
             manual_endpoint = inputs.endpoint_input.ifBlank {
                 state.saved_addresses.firstOrNull { it.is_active }?.base_url ?: state.base_url
             },
+            manual_pair_code = inputs.pair_code_input,
             endpoint_status = inputs.endpoint_status,
             endpoint_detail = inputs.endpoint_detail,
             auth_status = if (state.auth_token.isNotBlank()) "Authenticated for selected bag" else "Not authenticated",
@@ -121,7 +129,7 @@ class PairingViewModel(
                 paired && state.selected_bag_id.isNotBlank() ->
                     "This phone has ${state.paired_bags.size} paired bag(s). The selected bag is currently ready for sync."
                 paired -> "This phone has ${state.paired_bags.size} paired bag(s). Choose one as primary before syncing."
-                savedEndpointOnly -> "This phone knows the Raspberry Pi address, but it still needs QR pairing to authenticate."
+                savedEndpointOnly -> "This phone knows the Raspberry Pi address, but it still needs a QR scan or Pair Code to authenticate."
                 else -> "No Raspberry Pi has been paired with this phone yet."
             },
             paired_bag_count = state.paired_bags.size,
@@ -136,23 +144,22 @@ class PairingViewModel(
         manualEndpoint.value = value
     }
 
+    fun on_pair_code_changed(value: String) {
+        manualPairCode.value = value.filter { it.isDigit() }.take(6)
+    }
+
     fun on_qr_payload(payload_json: String) {
-        viewModelScope.launch {
-            running.value = true
-            error.value = ""
-            try {
-                val result = pairing_repository.pair_from_qr_payload(payload_json)
-                endpointStatus.value = if (result.initial_sync_completed) "Paired" else "Paired with warning"
-                endpointDetail.value = result.detail
-                feedback_message.value = result.detail
-            } catch (e: Exception) {
-                error.value = e.message ?: "Pair failed"
-                endpointStatus.value = "Failed"
-                endpointDetail.value = e.message ?: "Pair failed"
-                feedback_message.value = "Pairing failed."
-            } finally {
-                running.value = false
-            }
+        execute_pairing {
+            pairing_repository.pair_from_qr_payload(payload_json)
+        }
+    }
+
+    fun pair_with_code() {
+        execute_pairing {
+            pairing_repository.pair_with_code(
+                base_url = manualEndpoint.value,
+                pair_code = manualPairCode.value
+            )
         }
     }
 
@@ -163,7 +170,7 @@ class PairingViewModel(
             try {
                 val result = pairing_repository.test_connection(value)
                 updateConnectionState(result)
-                feedback_message.value = "Address test succeeded. Pair with QR to authenticate this phone."
+                feedback_message.value = "Address test succeeded. Use QR scan or the Pair Code to authenticate this phone."
             } catch (e: Exception) {
                 val message = e.message ?: "Connection test failed."
                 error.value = message
@@ -193,6 +200,29 @@ class PairingViewModel(
 
     fun consume_feedback() {
         feedback_message.value = ""
+    }
+
+    private fun execute_pairing(action: suspend () -> com.gobag.domain.repository.PairingSetupResult) {
+        viewModelScope.launch {
+            running.value = true
+            error.value = ""
+            try {
+                val result = action()
+                endpointStatus.value = if (result.initial_sync_completed) "Paired" else "Paired with warning"
+                endpointDetail.value = result.detail
+                manualEndpoint.value = result.endpoint
+                manualPairCode.value = ""
+                feedback_message.value = result.detail
+            } catch (e: Exception) {
+                val message = e.message ?: "Pair failed"
+                error.value = message
+                endpointStatus.value = "Failed"
+                endpointDetail.value = message
+                feedback_message.value = message
+            } finally {
+                running.value = false
+            }
+        }
     }
 
     private fun updateConnectionState(result: PairingConnectionResult) {

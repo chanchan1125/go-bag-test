@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -51,6 +52,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -83,12 +85,7 @@ fun PairingScreen(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            launcher.launch(
-                ScanOptions().apply {
-                    setPrompt("Scan Go-Bag QR")
-                    setBeepEnabled(false)
-                }
-            )
+            launcher.launch(buildPairQrScanOptions())
         }
     }
 
@@ -168,14 +165,14 @@ fun PairingScreen(
                         modifier = Modifier.weight(1f),
                         title = "Endpoint",
                         value = state.endpoint_status,
-                        detail = if (hasSavedEndpoint) "Local Pi address stored on this phone." else "Save or scan a Pi endpoint first.",
+                        detail = if (hasSavedEndpoint) "Local Pi address is stored on this phone." else "Save or scan a Pi endpoint first.",
                         accent = statusAccent
                     )
                     MiniStatusCard(
                         modifier = Modifier.weight(1f),
                         title = "Auth",
                         value = state.auth_status,
-                        detail = if (isPaired) "Bag QR token is active for the selected bag." else "QR scan still required to authenticate.",
+                        detail = if (isPaired) "A bag is authenticated and ready for sync." else "Use a QR scan or manual Pair Code to authenticate.",
                         accent = if (isPaired) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
                     )
                 }
@@ -184,7 +181,7 @@ fun PairingScreen(
             item {
                 ControlCard(
                     title = "Saved Raspberry Pi Address",
-                    subtitle = "Address testing does not pair a bag. QR pairing is still required before a bag becomes selectable or syncable."
+                    subtitle = "Save and test the Raspberry Pi address first. Then pair with either the bag QR code or the 6-digit Pair Code shown on the Pi."
                 ) {
                     OutlinedTextField(
                         value = state.manual_endpoint,
@@ -199,7 +196,7 @@ fun PairingScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        "Pairing status: ${state.status} • Auth: ${state.auth_status}",
+                        "Pairing status: ${state.status} | Auth: ${state.auth_status}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -214,24 +211,45 @@ fun PairingScreen(
             }
 
             item {
-                Button(
-                    onClick = { view_model.test_connection(state.manual_endpoint) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 58.dp),
-                    enabled = !state.running,
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Button(
+                        onClick = { view_model.test_connection(state.manual_endpoint) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 58.dp),
+                        enabled = !state.running,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
                     ) {
                         Text(
-                            if (state.running) "Testing Raspberry Pi..." else "Test Entered Address",
+                            if (state.running) "Testing..." else "Test Address",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                launcher.launch(buildPairQrScanOptions())
+                            } else {
+                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 58.dp),
+                        enabled = !state.running,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                    ) {
+                        Text(
+                            if (state.running) "Waiting..." else "Scan QR",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -240,36 +258,57 @@ fun PairingScreen(
             }
 
             item {
-                OutlinedButton(
-                    onClick = {
-                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                            launcher.launch(
-                                ScanOptions().apply {
-                                    setPrompt("Scan Go-Bag QR")
-                                    setBeepEnabled(false)
-                                }
-                            )
-                        } else {
-                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 58.dp),
-                    enabled = !state.running,
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ControlCard(
+                    title = "Manual Pair Code",
+                    subtitle = "If the Raspberry Pi already shows a 6-digit Pair Code, enter it here to pair without scanning."
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    OutlinedTextField(
+                        value = state.manual_pair_code,
+                        onValueChange = view_model::on_pair_code_changed,
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Enter 6-digit Pair Code") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+                    )
+                    Text(
+                        "Use the same saved Raspberry Pi address above. The phone will validate the Pair Code with the Pi and then download the bag inventory.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        onClick = view_model::pair_with_code,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 56.dp),
+                        enabled = !state.running,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
                     ) {
                         Text(
-                            if (state.running) "Pairing..." else "Scan Bag QR And Download Inventory",
+                            if (state.running) "Pairing With Code..." else "Pair With Code",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                     }
+                }
+            }
+
+            item {
+                ControlCard(
+                    title = "Pairing Methods",
+                    subtitle = "Both pairing methods reach the same secure Pi backend route and end in the same saved bag state on the phone."
+                ) {
+                    GuidanceLine(
+                        title = "Scan Bag QR",
+                        body = "Best when the Pi dashboard is nearby. The QR already contains the Pi address and Pair Code."
+                    )
+                    GuidanceLine(
+                        title = "Enter Pair Code",
+                        body = "Best when the camera is unreliable. First save the Pi address above, then enter the 6-digit code manually."
+                    )
                 }
             }
 
@@ -296,15 +335,15 @@ fun PairingScreen(
             item {
                 ControlCard(
                     title = "Pairing Flow",
-                    subtitle = "Keep the Pi powered and nearby. This screen keeps the existing secure flow, just with a cleaner dashboard layout."
+                    subtitle = "Keep the Pi powered and nearby. The phone can now complete the same pairing flow from either a QR scan or the visible Pair Code."
                 ) {
                     GuidanceLine(
                         title = "1. Save the address",
                         body = "Test a local Pi endpoint so the phone knows where the hub lives."
                     )
                     GuidanceLine(
-                        title = "2. Scan the bag QR",
-                        body = "The QR code supplies the bag token and triggers the initial inventory download."
+                        title = "2. Use QR or Pair Code",
+                        body = "Scan the Pi QR code or type the 6-digit Pair Code shown on the Raspberry Pi."
                     )
                     GuidanceLine(
                         title = "3. Start editing offline",
@@ -315,6 +354,13 @@ fun PairingScreen(
         }
     }
 }
+
+private fun buildPairQrScanOptions(): ScanOptions =
+    ScanOptions().apply {
+        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+        setPrompt("Scan Go-Bag QR")
+        setBeepEnabled(false)
+    }
 
 @Composable
 private fun PairingHeroCard(

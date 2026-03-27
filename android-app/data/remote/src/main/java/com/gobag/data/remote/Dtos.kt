@@ -47,6 +47,13 @@ data class PairResponseDto(
     @SerializedName("server_time_ms") val server_time_ms: Long
 )
 
+data class DeviceBagDto(
+    @SerializedName("id") val id: String,
+    @SerializedName("name") val name: String,
+    @SerializedName("bag_type") val bag_type: String,
+    @SerializedName("updated_at") val updated_at: Long
+)
+
 data class HealthResponseDto(
     @SerializedName("status") val status: String,
     @SerializedName("camera_enabled") val camera_enabled: Boolean,

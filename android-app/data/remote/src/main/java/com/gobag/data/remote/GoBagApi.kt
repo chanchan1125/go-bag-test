@@ -20,6 +20,9 @@ interface GoBagApi {
     @GET("/templates")
     suspend fun templates(): TemplatesResponseDto
 
+    @GET("/device/bag")
+    suspend fun device_bag(): DeviceBagDto
+
     @POST("/pair")
     suspend fun pair(@Body request: PairRequestDto): PairResponseDto
 

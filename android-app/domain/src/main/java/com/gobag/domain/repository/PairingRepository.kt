@@ -16,6 +16,7 @@ data class PairingSetupResult(
 
 interface PairingRepository {
     suspend fun pair_from_qr_payload(payload_json: String): PairingSetupResult
+    suspend fun pair_with_code(base_url: String, pair_code: String): PairingSetupResult
     suspend fun test_connection(base_url: String): PairingConnectionResult
     suspend fun save_endpoint(base_url: String, address_id: String? = null): SavedPiAddress
     suspend fun delete_endpoint(address_id: String)

@@ -1,33 +1,64 @@
-﻿package com.gobag.data.repository
+package com.gobag.data.repository
 
-import com.google.gson.Gson
-
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 
 data class PairQrPayload(
     val base_url: String,
     val pair_code: String,
-    val pi_device_id: String,
-    val bag_id: String,
-    val bag_name: String,
-    val size_liters: Int,
-    val template_id: String
-)
+    val pi_device_id: String = "",
+    val bag_id: String = "",
+    val bag_name: String = "",
+    val size_liters: Int? = null,
+    val template_id: String = ""
+) {
+    fun has_complete_bag_identity(): Boolean {
+        return bag_id.isNotBlank() &&
+            bag_name.isNotBlank() &&
+            size_liters in setOf(25, 44, 66)
+    }
+}
 
 object PairQrParser {
-    private val gson = Gson()
-
     fun parse(payload_json: String): PairQrPayload {
-        val payload = gson.fromJson(payload_json, PairQrPayload::class.java)
-            ?: throw IllegalArgumentException("QR payload is empty.")
-        if (payload.base_url.isBlank() || payload.pair_code.isBlank()) {
-            throw IllegalArgumentException("QR payload is missing the Raspberry Pi address or pair code.")
+        val trimmed = payload_json.trim()
+        if (trimmed.isBlank()) {
+            throw IllegalArgumentException("QR payload is empty.")
         }
-        if (payload.bag_id.isBlank() || payload.bag_name.isBlank()) {
-            throw IllegalArgumentException("This QR code does not include a bag identity. Generate a bag QR from the Raspberry Pi app.")
+        val root = runCatching { JsonParser.parseString(trimmed) }.getOrElse {
+            throw IllegalArgumentException("QR code did not contain valid GO BAG pairing data.")
         }
-        if (payload.size_liters !in setOf(25, 44, 66)) {
-            throw IllegalArgumentException("This QR code uses an unsupported bag size. Supported sizes are 25L, 44L, and 66L.")
+        if (!root.isJsonObject) {
+            throw IllegalArgumentException("QR code did not contain a valid GO BAG pairing object.")
         }
-        return payload
+
+        val payload = root.asJsonObject
+        val baseUrl = payload.read_string("base_url")
+        val pairCode = payload.read_string("pair_code")
+        if (baseUrl.isBlank() || pairCode.isBlank()) {
+            throw IllegalArgumentException("QR payload is missing the Raspberry Pi address or Pair Code.")
+        }
+
+        return PairQrPayload(
+            base_url = baseUrl,
+            pair_code = pairCode,
+            pi_device_id = payload.read_string("pi_device_id"),
+            bag_id = payload.read_string("bag_id"),
+            bag_name = payload.read_string("bag_name"),
+            size_liters = payload.read_int("size_liters"),
+            template_id = payload.read_string("template_id")
+        )
     }
+}
+
+private fun JsonObject.read_string(key: String): String {
+    val value = get(key) ?: return ""
+    if (!value.isJsonPrimitive) return ""
+    return runCatching { value.asString.trim() }.getOrDefault("")
+}
+
+private fun JsonObject.read_int(key: String): Int? {
+    val value = get(key) ?: return null
+    if (!value.isJsonPrimitive) return null
+    return runCatching { value.asInt }.getOrNull()
 }
