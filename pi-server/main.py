@@ -3315,10 +3315,15 @@ def pair_qr_payload(base_url: str, pair_code: str, pi_device_id: str, bag: Bag) 
 
 
 def render_summary_html(summary_cards: List[tuple[str, str, str]]) -> str:
+    tone_map = {
+        "status": "accent",
+        "readiness": "warn",
+        "last sync": "success",
+    }
     return "".join(
         [
             f"""
-            <div class="stat-card">
+            <div class="stat-card stat-card-{tone_map.get(label.strip().lower(), "neutral")}">
               <div class="stat-label">{escape(label)}</div>
               <div class="stat-value">{escape(value)}</div>
               <div class="stat-note">{escape(note)}</div>
@@ -3333,7 +3338,7 @@ def render_phone_rows_html(paired_rows: List[sqlite3.Row]) -> str:
     return "".join(
         [
             f"""
-            <div class="list-row">
+            <div class="list-row phone-row">
               <div>
                 <div class="row-title">{escape(row['phone_device_id'])}</div>
                 <div class="row-subtitle">Paired {escape(format_time_ms(int(row['issued_at'])))}</div>
@@ -3346,32 +3351,72 @@ def render_phone_rows_html(paired_rows: List[sqlite3.Row]) -> str:
     ) or '<div class="empty-state">No paired phones yet.</div>'
 
 
+def inventory_category_code(category: str) -> str:
+    return {
+        "Water & Food": "WF",
+        "Medical & Health": "MH",
+        "Light & Communication": "LC",
+        "Tools & Protection": "TP",
+        "Hygiene": "HY",
+        "Other": "OT",
+    }.get(normalize_category(category), "OT")
+
+
+def inventory_category_tone(category: str) -> str:
+    return {
+        "Water & Food": "accent",
+        "Medical & Health": "danger",
+        "Light & Communication": "success",
+        "Tools & Protection": "warn",
+        "Hygiene": "success",
+        "Other": "neutral",
+    }.get(normalize_category(category), "neutral")
+
+
 def render_inventory_groups_html(inventory_groups: List[InventoryGroupView]) -> str:
     return "".join(
         [
             f"""
-            <div class="inventory-group">
-              <div class="panel-head" style="margin-bottom: 8px;">
-                <div>
-                  <div class="panel-title">{escape(group.name)}</div>
-                  <div class="panel-note">{escape(group.category)} | Total {group.total_quantity:g} {escape(group.unit)}</div>
-                </div>
-              </div>
+            <div class="inventory-group inventory-tone-{inventory_category_tone(group.category)}">
+              <div class="inventory-group-head">
+                <div class="inventory-group-mark">{escape(inventory_category_code(group.category))}</div>
+                <div class="inventory-group-body">
+                  <div class="inventory-group-topline">
+                    <div class="inventory-group-meta">
+                      <div class="inventory-group-name">{escape(group.name)}</div>
+                      <div class="inventory-group-tags">
+                        <span class="micro-chip">{escape(group.category)}</span>
+                        <span class="micro-chip">{len(group.batches)} batch{'es' if len(group.batches) != 1 else ''}</span>
+                        <span class="micro-chip ok">{sum(1 for batch in group.batches if batch.item.packed_status)} packed</span>
+                        {f'<span class="micro-chip warn">{sum(1 for batch in group.batches if not batch.item.packed_status)} unpacked</span>' if any(not batch.item.packed_status for batch in group.batches) else ''}
+                      </div>
+                    </div>
+                    <div class="inventory-group-total">
+                      <div class="inventory-group-total-value">{group.total_quantity:g}</div>
+                      <div class="inventory-group-total-label">{escape(group.unit)} total</div>
+                    </div>
+                  </div>
+                  <div class="inventory-batch-grid">
               {''.join(
                   [
                       f'''
-                      <div class="batch-card">
-                        <div class="row-title">Batch: {batch.item.quantity:g} {escape(batch.item.unit)}</div>
-                        <div class="row-subtitle">{escape(batch.expiry_label)} | {"Packed" if batch.item.packed_status else "Needs pack"}</div>
-                        {f'<div class="row-subtitle">{escape(batch.item.notes)}</div>' if batch.item.notes else ''}
-                        <div class="button-row compact">
+                      <div class="batch-card {'packed' if batch.item.packed_status else 'needs-pack'}">
+                        <div class="batch-card-head">
+                          <div>
+                            <div class="batch-card-quantity">{batch.item.quantity:g} {escape(batch.item.unit)}</div>
+                            <div class="batch-card-subtitle">{escape("No expiration" if batch.expiry_label == "No expiration" else f"Expiry {batch.expiry_label}")}</div>
+                          </div>
+                          <div class="pill {'ok' if batch.item.packed_status else 'warn'}">{'Packed' if batch.item.packed_status else 'Needs pack'}</div>
+                        </div>
+                        {f'<div class="batch-card-notes">{escape(batch.item.notes)}</div>' if batch.item.notes else ''}
+                        <div class="inventory-actions">
                           <form method="get" action="/">
                             <input type="hidden" name="edit_item_id" value="{escape(batch.item.id)}">
-                            <button type="submit" class="secondary">Edit batch</button>
+                            <button type="submit" class="secondary inventory-action">Edit batch</button>
                           </form>
                           <form method="post" action="/ui/items/{escape(batch.item.id)}/delete">
                             <input type="hidden" name="bag_id" value="{escape(group.bag_id)}">
-                            <button type="submit" class="secondary danger">Delete batch</button>
+                            <button type="submit" class="secondary danger inventory-action">Delete batch</button>
                           </form>
                         </div>
                       </div>
@@ -3379,6 +3424,9 @@ def render_inventory_groups_html(inventory_groups: List[InventoryGroupView]) -> 
                       for batch in group.batches
                   ]
               )}
+                  </div>
+                </div>
+              </div>
             </div>
             """
             for group in inventory_groups
@@ -3824,6 +3872,77 @@ async def ui_delete_item(item_id: str, request: Request) -> RedirectResponse:
         )
 
 
+PI_DASHBOARD_THEME_TOKENS: Dict[str, Dict[str, str]] = {
+    "light": {
+        "bg": "#f8f9fa",
+        "panel": "#ffffff",
+        "panel-muted": "#f3f4f5",
+        "panel-strong": "#e7e8e9",
+        "ink": "#191c1d",
+        "muted": "#5a646d",
+        "line": "#d8dde2",
+        "accent": "#ff6b00",
+        "accent-strong": "#c94f00",
+        "accent-soft": "#ffe2d1",
+        "warn": "#ff6b00",
+        "warn-soft": "#fff0e6",
+        "danger": "#b3261e",
+        "danger-soft": "#ffdad6",
+        "success": "#2ecc71",
+        "success-soft": "#dff7ea",
+        "input-bg": "#ffffff",
+        "disabled-bg": "#eceeef",
+        "placeholder": "#6f767c",
+        "focus-ring": "rgba(255, 107, 0, 0.28)",
+        "topbar": "rgba(248, 249, 250, 0.92)",
+        "hero-start": "#ffffff",
+        "hero-end": "#edf1f4",
+        "shadow": "rgba(25, 28, 29, 0.08)",
+        "shadow-strong": "rgba(25, 28, 29, 0.16)",
+    },
+    "dark": {
+        "bg": "#131314",
+        "panel": "#1b1b1c",
+        "panel-muted": "#1f1f20",
+        "panel-strong": "#2a2a2b",
+        "ink": "#e5e2e3",
+        "muted": "#a9a1a4",
+        "line": "#353436",
+        "accent": "#ff6b00",
+        "accent-strong": "#ffb693",
+        "accent-soft": "rgba(255, 107, 0, 0.14)",
+        "warn": "#ffb693",
+        "warn-soft": "rgba(255, 107, 0, 0.14)",
+        "danger": "#ffb4ab",
+        "danger-soft": "rgba(147, 0, 10, 0.55)",
+        "success": "#78dc77",
+        "success-soft": "rgba(76, 173, 78, 0.2)",
+        "input-bg": "#1b1b1c",
+        "disabled-bg": "#252526",
+        "placeholder": "#90898c",
+        "focus-ring": "rgba(255, 107, 0, 0.34)",
+        "topbar": "rgba(19, 19, 20, 0.92)",
+        "hero-start": "#1b1b1c",
+        "hero-end": "#0e0e0f",
+        "shadow": "rgba(0, 0, 0, 0.34)",
+        "shadow-strong": "rgba(0, 0, 0, 0.5)",
+    },
+}
+
+
+def render_pi_dashboard_css_tokens() -> str:
+    lines: List[str] = []
+    for selector, color_scheme, token_group in [
+        (":root", "light", PI_DASHBOARD_THEME_TOKENS["light"]),
+        ('html[data-theme="dark"]', "dark", PI_DASHBOARD_THEME_TOKENS["dark"]),
+    ]:
+        lines.append(f"    {selector} {{")
+        lines.append(f"      color-scheme: {color_scheme};")
+        lines.extend([f"      --{name}: {value};" for name, value in token_group.items()])
+        lines.append("    }")
+    return "\n".join(lines)
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
     edit_item_id = request.query_params.get("edit_item_id", "").strip()
@@ -3848,6 +3967,26 @@ def home(request: Request) -> HTMLResponse:
             for c in readiness["checklist"]
         ]
     )
+    readiness_percent = (
+        round((view_model["checked_count"] / readiness["checklist_total"]) * 100)
+        if readiness["checklist_total"]
+        else 0
+    )
+    readiness_color = (
+        "var(--success)"
+        if readiness_percent >= 90
+        else "var(--warn)"
+        if readiness_percent >= 51
+        else "var(--danger)"
+    )
+    inventory_form_kicker = "Edit supply batch" if edit_item else "New supply item"
+    inventory_form_title = "Update this inventory batch" if edit_item else "Add a supply batch"
+    inventory_form_description = (
+        "Adjust quantity, expiry, notes, or packed state for the selected batch."
+        if edit_item
+        else "Manual add and USB scan both store batches locally, then sync later to the phone."
+    )
+    inventory_submit_label = "Update inventory batch" if edit_item else "Manual add"
     html = f"""
 <!doctype html>
 <html>
@@ -3855,68 +3994,248 @@ def home(request: Request) -> HTMLResponse:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Go-Bag Pi Command Center</title>
+  <script>
+    (() => {{
+      try {{
+        const savedTheme = localStorage.getItem("gobag-pi-theme");
+        if (savedTheme === "dark" || savedTheme === "light") {{
+          document.documentElement.dataset.theme = savedTheme;
+        }}
+      }} catch (_error) {{
+      }}
+    }})();
+  </script>
   <style>
-    :root {{
-      --bg: #f4efe4;
-      --panel: #fffaf0;
-      --ink: #1f2a23;
-      --muted: #5f675d;
-      --line: #d8ccb4;
-      --accent: #365f4c;
-      --accent-soft: #dfeadf;
-      --warn: #8b5e1a;
-      --warn-soft: #f4e5bd;
-      --danger: #8c2f39;
-      --danger-soft: #f6d8d9;
-      --input-bg: #fffdf7;
-      --disabled-bg: #e7ddd0;
-      --placeholder: #677166;
-      --focus-ring: rgba(54, 95, 76, 0.28);
-    }}
+{render_pi_dashboard_css_tokens()}
     * {{ box-sizing: border-box; }}
+    html {{
+      scroll-behavior: smooth;
+    }}
     body {{
       margin: 0;
-      font-family: "Segoe UI", Tahoma, sans-serif;
+      min-height: 100vh;
+      font-family: "Inter", "Segoe UI", Tahoma, sans-serif;
       background:
-        radial-gradient(circle at top right, rgba(54, 95, 76, 0.18), transparent 28%),
-        linear-gradient(180deg, #efe4cb 0%, var(--bg) 45%, #ece4d2 100%);
+        radial-gradient(circle at top right, rgba(255, 107, 0, 0.16), transparent 24%),
+        radial-gradient(circle at top left, rgba(255, 107, 0, 0.09), transparent 30%),
+        var(--bg);
       color: var(--ink);
     }}
+    a {{
+      color: inherit;
+    }}
     main {{
-      max-width: 760px;
+      max-width: 1320px;
       margin: 0 auto;
-      padding: 20px 16px 40px;
+      padding: 18px 16px 40px;
     }}
     h1, h2, h3, p {{ margin: 0; }}
-    .hero {{
-      background: linear-gradient(135deg, rgba(54, 95, 76, 0.96), rgba(28, 44, 37, 0.96));
-      color: #f8f4ea;
-      border-radius: 24px;
-      padding: 24px 20px;
-      box-shadow: 0 16px 40px rgba(25, 42, 33, 0.16);
-      margin-bottom: 18px;
+    .topbar {{
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--topbar);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 10px 22px var(--shadow);
     }}
-    .hero-grid {{
+    .topbar-brand {{
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }}
+    .brand-mark {{
+      width: 52px;
+      height: 52px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      color: #ffffff;
+      background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+      box-shadow: 0 12px 24px rgba(255, 107, 0, 0.18);
+    }}
+    .topbar-kicker,
+    .hero-kicker,
+    .panel-subtitle,
+    .stat-label,
+    .pair-code-label {{
+      font-size: 0.72rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--muted);
+    }}
+    .topbar-title {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: clamp(1.1rem, 2vw, 1.45rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }}
+    .topbar-actions {{
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 10px;
+    }}
+    .readiness-pill,
+    .theme-toggle {{
+      min-height: 64px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 8px 18px var(--shadow);
+    }}
+    .readiness-pill {{
+      display: inline-flex;
+      align-items: center;
+      padding: 0 18px;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--accent);
+    }}
+    .theme-toggle {{
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 18px;
+      width: auto;
+      color: var(--ink);
+    }}
+    .theme-toggle-icon {{
+      font-size: 1.2rem;
+      line-height: 1;
+    }}
+    .theme-toggle-label {{
+      white-space: nowrap;
+    }}
+    .overview-grid {{
       display: grid;
-      grid-template-columns: 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }}
+    .hero-shell,
+    .panel,
+    .stat-card,
+    .subpanel,
+    .inventory-group,
+    .batch-card,
+    .pair-card,
+    .pair-code-card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 10px 22px var(--shadow);
+      color: var(--ink);
+    }}
+    .hero-shell {{
+      position: relative;
+      overflow: hidden;
+      padding: 22px;
+      background: linear-gradient(135deg, var(--hero-start), var(--hero-end));
+      border-left: 4px solid var(--accent);
+    }}
+    .hero-shell::after {{
+      content: "";
+      position: absolute;
+      top: -54px;
+      right: -54px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, var(--accent-soft) 0%, transparent 72%);
+      pointer-events: none;
+    }}
+    .hero-shell-inner {{
+      position: relative;
+      display: grid;
+      gap: 18px;
+    }}
+    .hero-score-row {{
+      display: grid;
       gap: 18px;
       align-items: center;
     }}
-    .hero-kicker {{
-      font-size: 0.84rem;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      opacity: 0.82;
-      margin-bottom: 10px;
+    .readiness-ring {{
+      width: min(100%, 172px);
+      aspect-ratio: 1 / 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background:
+        radial-gradient(circle at center, var(--panel) 0 55%, transparent 56% 100%),
+        conic-gradient(
+          var(--score-color) 0deg var(--readiness-angle, 300deg),
+          var(--panel-strong) var(--readiness-angle, 300deg) 360deg
+        );
+      box-shadow: inset 0 0 0 10px var(--accent-soft);
     }}
-    .hero h1 {{
-      font-size: clamp(2rem, 4vw, 2.5rem);
-      margin-bottom: 12px;
+    .readiness-score {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: clamp(2.8rem, 8vw, 4.8rem);
+      font-weight: 800;
+      letter-spacing: -0.08em;
+      line-height: 0.94;
     }}
-    .hero p {{
-      color: rgba(248, 244, 234, 0.82);
-      line-height: 1.5;
-      margin-bottom: 16px;
+    .readiness-score span {{
+      font-size: 0.38em;
+      color: var(--score-color);
+      margin-left: 0.08em;
+    }}
+    .hero-text {{
+      display: grid;
+      gap: 12px;
+      min-width: 0;
+    }}
+    .hero-text h1 {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: clamp(1.85rem, 4vw, 3rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }}
+    .hero-note {{
+      max-width: 56ch;
+      color: var(--muted);
+      line-height: 1.55;
+    }}
+    .hero-progress {{
+      display: grid;
+      gap: 10px;
+    }}
+    .progress-meta {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }}
+    .progress-meta strong {{
+      color: var(--ink);
+    }}
+    .progress-bar {{
+      height: 12px;
+      overflow: hidden;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+    }}
+    .progress-bar span {{
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, var(--score-color), var(--accent));
     }}
     .hero-tags, .tag-row {{
       display: flex;
@@ -3926,87 +4245,84 @@ def home(request: Request) -> HTMLResponse:
     .tag, .pill {{
       display: inline-flex;
       align-items: center;
+      justify-content: center;
+      min-height: 38px;
       border-radius: 999px;
-      padding: 7px 12px;
+      padding: 8px 14px;
       font-size: 0.84rem;
       font-weight: 600;
-      background: #f2ede3;
+      background: var(--panel-muted);
       border: 1px solid var(--line);
       color: var(--ink);
       text-decoration: none;
     }}
     .tag.ok, .pill.ok {{
-      background: var(--accent-soft);
-      color: var(--accent);
+      background: var(--success-soft);
+      color: var(--success);
+      border-color: transparent;
     }}
     .tag.warn, .pill.warn {{
       background: var(--warn-soft);
       color: var(--warn);
+      border-color: transparent;
     }}
     .tag.danger {{
       background: var(--danger-soft);
       color: var(--danger);
-    }}
-    .panel, .stat-card {{
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 22px;
-      box-shadow: 0 8px 24px rgba(65, 52, 33, 0.08);
-      color: var(--ink);
-    }}
-    .hero .panel {{
-      background: rgba(255, 250, 240, 0.97);
-      color: var(--ink);
-    }}
-    .hero .panel-title {{
-      color: var(--ink);
-    }}
-    .hero .panel-note {{
-      color: var(--muted);
-    }}
-    .hero .tag, .hero .pill {{
-      background: rgba(255, 248, 234, 0.98);
-      color: var(--ink);
+      border-color: transparent;
     }}
     .summary-grid {{
       display: grid;
-      gap: 18px;
-      grid-template-columns: 1fr;
-      margin-bottom: 20px;
+      gap: 12px;
     }}
     .stat-card {{
-      padding: 18px;
+      position: relative;
       min-height: 112px;
+      padding: 16px;
+      overflow: hidden;
     }}
-    .stat-label {{
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      font-size: 0.76rem;
-      color: var(--muted);
-      margin-bottom: 8px;
+    .stat-card::before {{
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 4px;
+      background: var(--panel-strong);
+    }}
+    .stat-card-accent::before {{
+      background: var(--accent);
+    }}
+    .stat-card-warn::before {{
+      background: var(--warn);
+    }}
+    .stat-card-success::before {{
+      background: var(--success);
     }}
     .stat-value {{
-      font-size: 1.35rem;
+      margin-top: 8px;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.4rem;
       font-weight: 800;
       margin-bottom: 6px;
     }}
     .stat-note {{
       color: var(--muted);
       line-height: 1.45;
+      font-size: 0.93rem;
     }}
     .panel {{
-      padding: 20px 18px;
-      margin-bottom: 18px;
+      padding: 20px;
     }}
     .panel-head {{
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
+      flex-wrap: wrap;
       gap: 12px;
       margin-bottom: 12px;
     }}
     .panel-title {{
-      font-size: 1.15rem;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.2rem;
       font-weight: 800;
     }}
     .panel-note {{
@@ -4014,17 +4330,77 @@ def home(request: Request) -> HTMLResponse:
       margin-top: 4px;
       line-height: 1.45;
     }}
+    .section-divider {{
+      height: 1px;
+      margin: 16px 0;
+      background: var(--line);
+    }}
+    .quick-actions {{
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }}
+    .quick-link {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 72px;
+      width: 100%;
+      padding: 14px 16px;
+      text-decoration: none;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-muted);
+      color: var(--ink);
+      cursor: pointer;
+      box-shadow: 0 6px 14px var(--shadow);
+      transition: transform 150ms ease, filter 150ms ease, background 150ms ease, border-color 150ms ease;
+    }}
+    .quick-link.primary {{
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      border-color: transparent;
+      color: #ffffff;
+    }}
+    .quick-link strong {{
+      display: block;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: -0.02em;
+    }}
+    .quick-link small {{
+      display: block;
+      margin-top: 4px;
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      opacity: 0.78;
+    }}
+    .quick-link-icon {{
+      font-size: 1.35rem;
+      font-weight: 700;
+      line-height: 1;
+    }}
+    .alert-columns {{
+      display: grid;
+      gap: 12px;
+    }}
+    .subpanel {{
+      padding: 14px;
+      background: var(--panel-muted);
+    }}
     .list-row, .check-row {{
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: center;
       gap: 12px;
-      padding: 14px 0;
-      border-top: 1px solid rgba(216, 204, 180, 0.8);
-    }}
-    .list-row:first-child, .check-row:first-child {{
-      border-top: none;
-      padding-top: 0;
+      padding: 14px 16px;
+      margin-top: 10px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-muted);
     }}
     .row-title {{
       font-weight: 700;
@@ -4038,12 +4414,16 @@ def home(request: Request) -> HTMLResponse:
     .check-row strong.ok {{ color: var(--accent); }}
     .check-row strong.warn {{ color: var(--warn); }}
     .alert-row {{
-      padding: 10px 12px;
-      border-radius: 14px;
-      background: #f2ede3;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: var(--panel-muted);
       border: 1px solid var(--line);
       color: var(--ink);
       margin-top: 10px;
+    }}
+    .alert-row strong {{
+      display: block;
+      margin-bottom: 4px;
     }}
     .qr-wrap {{
       display: grid;
@@ -4059,16 +4439,12 @@ def home(request: Request) -> HTMLResponse:
     }}
     .pair-code-card {{
       border: 1px solid var(--line);
-      border-radius: 18px;
-      background: #f2ede3;
+      border-radius: 12px;
+      background: var(--panel-muted);
       padding: 16px;
       color: var(--ink);
     }}
     .pair-code-label {{
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      font-size: 0.76rem;
-      color: var(--muted);
       margin-bottom: 8px;
     }}
     .pair-code-value {{
@@ -4083,11 +4459,11 @@ def home(request: Request) -> HTMLResponse:
     }}
     form.inline, .button-row form {{
       margin-top: 0;
-      flex: 1;
+      flex: 1 1 180px;
     }}
     input, select, textarea {{
       width: 100%;
-      border-radius: 14px;
+      border-radius: 10px;
       border: 1px solid var(--line);
       padding: 12px 14px;
       font: inherit;
@@ -4135,39 +4511,301 @@ def home(request: Request) -> HTMLResponse:
     .button-row.compact {{
       margin-top: 10px;
     }}
+    .inventory-panel {{
+      display: grid;
+      gap: 18px;
+    }}
+    .inventory-manager-shell {{
+      display: grid;
+      gap: 16px;
+    }}
+    .inventory-entry-panel,
+    .inventory-command-panel,
+    .inventory-groups-shell {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-muted);
+      padding: 16px;
+    }}
+    .inventory-form-kicker,
+    .inventory-groups-kicker {{
+      font-size: 0.72rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--muted);
+    }}
+    .inventory-form-title,
+    .inventory-groups-title {{
+      margin-top: 6px;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.45rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }}
+    .inventory-form-description,
+    .inventory-groups-caption {{
+      margin-top: 6px;
+      color: var(--muted);
+      line-height: 1.5;
+    }}
+    .inventory-form-grid {{
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }}
+    .inventory-checkbox-row {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 56px;
+      padding: 0 4px;
+      color: var(--ink);
+      font-weight: 600;
+    }}
+    .inventory-checkbox-row input {{
+      width: auto;
+      margin: 0;
+    }}
+    .inventory-command-panel {{
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }}
+    .inventory-note-card {{
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      padding: 14px;
+    }}
+    .inventory-note-card strong {{
+      display: block;
+      margin-bottom: 6px;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1rem;
+      letter-spacing: -0.02em;
+    }}
+    .inventory-note-card p {{
+      color: var(--muted);
+      line-height: 1.5;
+    }}
+    .inventory-groups-shell {{
+      display: grid;
+      gap: 14px;
+    }}
+    .inventory-groups-head {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      flex-wrap: wrap;
+    }}
+    .inventory-groups-meta {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }}
     .banner {{
-      border-radius: 18px;
+      border-radius: 12px;
       padding: 14px 16px;
       margin-bottom: 16px;
       border: 1px solid var(--line);
       color: var(--ink);
     }}
     .banner.notice {{
-      background: var(--accent-soft);
-      color: var(--accent);
+      background: var(--success-soft);
+      color: var(--success);
     }}
     .banner.error {{
       background: var(--danger-soft);
       color: var(--danger);
     }}
     .inventory-group {{
+      --inventory-accent: var(--accent);
+      --inventory-accent-soft: var(--accent-soft);
       border: 1px solid var(--line);
-      border-radius: 18px;
-      background: #fffdf7;
-      padding: 14px;
+      border-radius: 12px;
+      background: var(--panel);
+      padding: 16px;
       margin-top: 12px;
+      box-shadow: 0 8px 20px var(--shadow);
+    }}
+    .inventory-tone-accent {{
+      --inventory-accent: var(--accent);
+      --inventory-accent-soft: var(--accent-soft);
+    }}
+    .inventory-tone-danger {{
+      --inventory-accent: var(--danger);
+      --inventory-accent-soft: var(--danger-soft);
+    }}
+    .inventory-tone-success {{
+      --inventory-accent: var(--success);
+      --inventory-accent-soft: var(--success-soft);
+    }}
+    .inventory-tone-warn {{
+      --inventory-accent: var(--warn);
+      --inventory-accent-soft: var(--warn-soft);
+    }}
+    .inventory-tone-neutral {{
+      --inventory-accent: var(--muted);
+      --inventory-accent-soft: var(--panel-strong);
+    }}
+    .inventory-group-head {{
+      display: grid;
+      gap: 14px;
+    }}
+    .inventory-group-mark {{
+      width: 56px;
+      height: 56px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      background: var(--inventory-accent-soft);
+      color: var(--inventory-accent);
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      border: 1px solid transparent;
+    }}
+    .inventory-group-body {{
+      display: grid;
+      gap: 14px;
+      min-width: 0;
+    }}
+    .inventory-group-topline {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+      flex-wrap: wrap;
+    }}
+    .inventory-group-meta {{
+      min-width: 0;
+    }}
+    .inventory-group-name {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }}
+    .inventory-group-tags {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }}
+    .micro-chip {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 32px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--panel-muted);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }}
+    .micro-chip.ok {{
+      background: var(--success-soft);
+      border-color: transparent;
+      color: var(--success);
+    }}
+    .micro-chip.warn {{
+      background: var(--warn-soft);
+      border-color: transparent;
+      color: var(--warn);
+    }}
+    .inventory-group-total {{
+      min-width: 112px;
+      text-align: right;
+    }}
+    .inventory-group-total-value {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -0.05em;
+      line-height: 1;
+      color: var(--inventory-accent);
+    }}
+    .inventory-group-total-label {{
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-weight: 700;
+    }}
+    .inventory-batch-grid {{
+      display: grid;
+      gap: 12px;
     }}
     .batch-card {{
-      border: 1px solid rgba(216, 204, 180, 0.8);
-      border-radius: 14px;
-      padding: 12px;
-      background: #f9f2e4;
-      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--inventory-accent);
+      border-radius: 10px;
+      padding: 14px;
+      background: var(--panel-muted);
+      margin-top: 0;
+      display: grid;
+      gap: 12px;
+    }}
+    .batch-card.packed {{
+      border-left-color: var(--success);
+    }}
+    .batch-card.needs-pack {{
+      border-left-color: var(--warn);
+    }}
+    .batch-card-head {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      flex-wrap: wrap;
+    }}
+    .batch-card-quantity {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.2rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }}
+    .batch-card-subtitle {{
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.4;
+    }}
+    .batch-card-notes {{
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      padding: 10px 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }}
+    .inventory-actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }}
+    .inventory-actions form {{
+      flex: 1 1 160px;
+      margin-top: 0;
+    }}
+    button.inventory-action {{
+      min-height: 56px;
+      font-size: 0.94rem;
+      padding: 10px 12px;
     }}
     .pair-card {{
       border: 1px solid var(--line);
-      border-radius: 18px;
-      background: #fffdf7;
+      border-radius: 12px;
+      background: var(--panel);
       padding: 14px;
       color: var(--ink);
     }}
@@ -4180,37 +4818,38 @@ def home(request: Request) -> HTMLResponse:
       margin-top: 12px;
       margin-bottom: 12px;
     }}
-    button {{
+    button:not(.quick-link):not(.theme-toggle) {{
       width: 100%;
-      min-height: 50px;
-      border: 1px solid rgba(54, 95, 76, 0.2);
-      border-radius: 14px;
+      min-height: 64px;
+      border: 1px solid transparent;
+      border-radius: 10px;
       background: var(--accent);
-      color: #f8f4ea;
+      color: #ffffff;
       font-weight: 700;
       font-size: 1rem;
       cursor: pointer;
       padding: 12px 14px;
+      transition: transform 150ms ease, filter 150ms ease, background 150ms ease, border-color 150ms ease;
     }}
-    button:hover {{
+    button:not(.quick-link):not(.theme-toggle):hover {{
       filter: brightness(0.96);
     }}
-    button:active {{
+    button:not(.quick-link):not(.theme-toggle):active {{
       transform: translateY(1px);
     }}
     button.secondary {{
-      background: #d9d3c4;
+      background: var(--panel-strong);
       color: var(--ink);
-      border-color: rgba(31, 42, 35, 0.12);
+      border-color: var(--line);
     }}
     button.secondary.danger {{
       background: var(--danger-soft);
       color: var(--danger);
-      border-color: rgba(140, 47, 57, 0.18);
+      border-color: transparent;
     }}
     .empty-state {{
       color: var(--muted);
-      padding: 8px 0 4px;
+      padding: 12px 2px 6px;
     }}
     .hidden {{
       display: none !important;
@@ -4226,13 +4865,13 @@ def home(request: Request) -> HTMLResponse:
       bottom: 0;
       z-index: 55;
       padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px));
-      background: rgba(255, 250, 240, 0.98);
+      background: var(--topbar);
       border-top: 1px solid var(--line);
-      box-shadow: 0 -12px 28px rgba(65, 52, 33, 0.16);
+      box-shadow: 0 -12px 28px var(--shadow-strong);
       backdrop-filter: blur(6px);
     }}
     .touch-keyboard-inner {{
-      max-width: 760px;
+      max-width: 1320px;
       margin: 0 auto;
       display: grid;
       gap: 6px;
@@ -4251,22 +4890,22 @@ def home(request: Request) -> HTMLResponse:
       min-height: 40px;
       padding: 8px 6px;
       font-size: 0.92rem;
-      border-radius: 12px;
-      background: #f7f1e4;
+      border-radius: 10px;
+      background: var(--panel);
       color: var(--ink);
-      border: 1px solid rgba(31, 42, 35, 0.14);
+      border: 1px solid var(--line);
     }}
     .touch-keyboard button.action {{
-      background: #d9d3c4;
+      background: var(--panel-strong);
       color: var(--ink);
     }}
     .touch-keyboard button.done {{
       background: var(--accent);
-      color: #f8f4ea;
+      color: #ffffff;
     }}
     .touch-keyboard button.active {{
       background: var(--accent-soft);
-      color: var(--accent);
+      color: var(--accent-strong);
     }}
     .touch-keyboard button.wide {{
       grid-column: span 2;
@@ -4332,6 +4971,16 @@ def home(request: Request) -> HTMLResponse:
       align-items: center;
       justify-content: center;
     }}
+    .scan-preview-frame::after {{
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at center, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.42) 100%),
+        linear-gradient(180deg, rgba(5, 8, 6, 0.5) 0%, rgba(5, 8, 6, 0.05) 32%, rgba(5, 8, 6, 0.05) 68%, rgba(5, 8, 6, 0.55) 100%);
+      pointer-events: none;
+      z-index: 1;
+    }}
     .scan-preview-frame img {{
       width: 100%;
       height: 100%;
@@ -4345,14 +4994,271 @@ def home(request: Request) -> HTMLResponse:
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 0;
+      padding: 24px;
       text-align: center;
       color: #f8f4ea;
       background: #050806;
       font-size: clamp(0.95rem, 3vw, 1.1rem);
       line-height: 1.4;
+      z-index: 2;
+    }}
+    .scan-overlay {{
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 12px;
+      padding: clamp(16px, 3vw, 28px);
+      pointer-events: none;
+    }}
+    .scan-overlay-top {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      flex-wrap: wrap;
+    }}
+    .scan-overlay-actions {{
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      pointer-events: auto;
+    }}
+    .scan-hud-chip,
+    .scan-mini-chip,
+    .scan-status-card,
+    .scan-close-button {{
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(12, 14, 15, 0.72);
+      color: #f8f4ea;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+    }}
+    .scan-hud-chip {{
+      min-height: 60px;
+      padding: 12px 16px;
+      border-radius: 16px;
+      max-width: min(100%, 360px);
+    }}
+    .scan-hud-kicker {{
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: rgba(248, 244, 234, 0.72);
+    }}
+    .scan-hud-title {{
+      margin-top: 6px;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: clamp(1rem, 2vw, 1.25rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }}
+    .scan-mini-chip {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      padding: 0 14px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #ffb693;
+    }}
+    .scan-close-button {{
+      width: auto !important;
+      min-height: 56px !important;
+      padding: 0 18px !important;
+      border-radius: 16px !important;
+      background: rgba(12, 14, 15, 0.82) !important;
+      color: #f8f4ea !important;
+      font-size: 0.92rem !important;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      pointer-events: auto;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
+    }}
+    .scan-guides {{
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }}
+    .scan-viewfinder {{
+      position: relative;
+      width: min(76vw, 860px);
+      height: min(62vh, 430px);
+      max-width: calc(100vw - 56px);
+      max-height: calc(100vh - 196px);
+      border-radius: 28px;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }}
+    .scan-corner {{
+      position: absolute;
+      width: clamp(38px, 5vw, 58px);
+      height: clamp(38px, 5vw, 58px);
+      border-color: #ff6b00;
+      border-style: solid;
+      filter: drop-shadow(0 0 14px rgba(255, 107, 0, 0.35));
+    }}
+    .scan-corner.tl {{
+      top: 0;
+      left: 0;
+      border-width: 4px 0 0 4px;
+      border-top-left-radius: 20px;
+    }}
+    .scan-corner.tr {{
+      top: 0;
+      right: 0;
+      border-width: 4px 4px 0 0;
+      border-top-right-radius: 20px;
+    }}
+    .scan-corner.bl {{
+      bottom: 0;
+      left: 0;
+      border-width: 0 0 4px 4px;
+      border-bottom-left-radius: 20px;
+    }}
+    .scan-corner.br {{
+      bottom: 0;
+      right: 0;
+      border-width: 0 4px 4px 0;
+      border-bottom-right-radius: 20px;
+    }}
+    .scan-scanline {{
+      position: absolute;
+      left: 8%;
+      right: 8%;
+      top: 50%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #ffb693, transparent);
+      box-shadow: 0 0 18px rgba(255, 107, 0, 0.8);
+      animation: scan-sweep 2.8s ease-in-out infinite;
+      opacity: 0.92;
+    }}
+    @keyframes scan-sweep {{
+      0%, 100% {{
+        transform: translateY(-44%);
+        opacity: 0.25;
+      }}
+      50% {{
+        transform: translateY(44%);
+        opacity: 1;
+      }}
+    }}
+    .scan-focus-dot {{
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      border: 2px solid rgba(255, 182, 147, 0.9);
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 18px rgba(255, 107, 0, 0.26);
+    }}
+    .scan-focus-dot::after {{
+      content: "";
+      position: absolute;
+      inset: 5px;
+      border-radius: 999px;
+      background: #ff6b00;
+    }}
+    .scan-overlay-bottom {{
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+    }}
+    .scan-status-card {{
+      min-width: min(100%, 360px);
+      max-width: min(100%, 560px);
+      padding: 14px 18px;
+      border-radius: 18px;
+    }}
+    .scan-status-row {{
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }}
+    .scan-status-led {{
+      flex: 0 0 auto;
+      width: 11px;
+      height: 11px;
+      margin-top: 7px;
+      border-radius: 999px;
+      background: #ff6b00;
+      box-shadow: 0 0 14px rgba(255, 107, 0, 0.7);
+    }}
+    .scan-status-card[data-tone="danger"] .scan-status-led {{
+      background: #ffb4ab;
+      box-shadow: 0 0 14px rgba(255, 180, 171, 0.7);
+    }}
+    .scan-status-card[data-tone="success"] .scan-status-led {{
+      background: #78dc77;
+      box-shadow: 0 0 14px rgba(120, 220, 119, 0.7);
+    }}
+    .scan-status-card[data-tone="processing"] .scan-status-led {{
+      background: #ffb693;
+      box-shadow: 0 0 14px rgba(255, 182, 147, 0.7);
+    }}
+    .scan-status-title {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }}
+    .scan-status-note {{
+      margin-top: 4px;
+      color: rgba(248, 244, 234, 0.72);
+      line-height: 1.45;
+      font-size: 0.92rem;
+    }}
+    @media (max-width: 719px) {{
+      .scan-overlay {{
+        padding: 14px;
+      }}
+      .scan-overlay-top {{
+        align-items: stretch;
+      }}
+      .scan-viewfinder {{
+        width: calc(100vw - 32px);
+        height: min(52vh, 320px);
+        max-height: calc(100vh - 180px);
+      }}
+      .scan-hud-chip {{
+        max-width: 100%;
+      }}
+      .scan-close-button {{
+        flex: 1 1 auto;
+        justify-content: center;
+      }}
+    }}
+    .content-grid {{
+      display: grid;
+      gap: 16px;
+      margin-top: 18px;
+    }}
+    .content-column {{
+      display: grid;
+      gap: 16px;
+      align-content: start;
     }}
     @media (min-width: 720px) {{
+      .hero-score-row {{
+        grid-template-columns: auto 1fr;
+      }}
+      .summary-grid {{
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }}
+      .alert-columns {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
       .qr-wrap {{
         grid-template-columns: 240px 1fr;
       }}
@@ -4362,142 +5268,308 @@ def home(request: Request) -> HTMLResponse:
       .field-grid.settings-grid {{
         grid-template-columns: 1fr auto;
       }}
+      .inventory-manager-shell {{
+        grid-template-columns: minmax(0, 1.3fr) minmax(240px, 0.9fr);
+        align-items: start;
+      }}
+      .inventory-group-head {{
+        grid-template-columns: auto 1fr;
+      }}
+      .inventory-batch-grid {{
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      }}
     }}
-  </style>
+    @media (min-width: 980px) {{
+      main {{
+        padding: 22px 24px 48px;
+      }}
+      .topbar {{
+        padding: 16px 24px;
+      }}
+      .overview-grid {{
+        grid-template-columns: minmax(0, 1.45fr) minmax(340px, 0.95fr);
+        align-items: start;
+      }}
+      .hero-shell {{
+        grid-row: span 2;
+      }}
+      .content-grid {{
+        grid-template-columns: minmax(320px, 0.78fr) minmax(0, 1.22fr);
+        align-items: start;
+      }}
+    }}
+    @media (max-width: 719px) {{
+      .topbar {{
+        align-items: flex-start;
+      }}
+      .topbar-actions {{
+        width: 100%;
+        justify-content: stretch;
+      }}
+      .readiness-pill,
+      .theme-toggle {{
+        flex: 1 1 0;
+        justify-content: center;
+      }}
+      .quick-actions {{
+        grid-template-columns: 1fr;
+      }}
+    }}
+</style>
 </head>
 <body data-state-version="{escape(view_model['state_version'])}" data-open-scan="{'1' if open_scan else '0'}">
-  <main>
-    <section class="hero">
-      <div class="hero-grid">
-        <div>
-          <div class="hero-kicker">Go-Bag Pi Command Center</div>
-          <h1>Home base for this GO BAG, phone, and sync.</h1>
-          <p id="hero-next-step">{escape(view_model['next_step'])}</p>
-          <div class="hero-tags" id="hero-tags">{view_model['hero_tags_html']}</div>
-        </div>
-        <div class="panel">
-          <div class="panel-title">What to do next</div>
-          <p class="panel-note">This Raspberry Pi manages one physical GO BAG. Pair a phone, update inventory, and keep the kiosk view current.</p>
-          <div class="tag-row" style="margin-top: 12px;">
-            {view_model['missing_html']}
-          </div>
-        </div>
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="brand-mark">GB</div>
+      <div>
+        <div class="topbar-kicker">Pi Hub Dashboard</div>
+        <div class="topbar-title">GO BAG Command Center</div>
       </div>
-    </section>
-
-    <section class="summary-grid" aria-label="Status" id="summary-grid">
-      {view_model['summary_html']}
-    </section>
-
+    </div>
+    <div class="topbar-actions">
+      <div class="readiness-pill">{readiness_percent}% ready</div>
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to dark mode" title="Switch to dark mode">
+        <span class="theme-toggle-icon" id="theme-toggle-icon" aria-hidden="true">&#9791;</span>
+        <span class="theme-toggle-label" id="theme-toggle-label">Dark mode</span>
+      </button>
+    </div>
+  </header>
+  <main>
     <div class="banner notice {'hidden' if not notice else ''}" id="page-notice">{escape(notice)}</div>
     <div class="banner error {'hidden' if not error else ''}" id="page-error">{escape(error)}</div>
 
-    <section class="panel">
-      <div class="panel-head">
-        <div>
-          <div class="panel-title">Alerts</div>
-          <div class="panel-note">Use this section to catch issues before you leave.</div>
+    <section class="overview-grid">
+      <section class="hero-shell">
+        <div class="hero-shell-inner">
+          <div class="hero-kicker">System readiness</div>
+          <div class="hero-score-row">
+            <div class="readiness-ring" style="--score-color: {readiness_color}; --readiness-angle: {round(readiness_percent * 3.6)}deg;">
+              <div class="readiness-score">{readiness_percent}<span>%</span></div>
+            </div>
+            <div class="hero-text">
+              <h1 id="hero-bag-name">{escape(bag.name)}</h1>
+              <p class="hero-note" id="hero-next-step">{escape(view_model['next_step'])}</p>
+              <div class="hero-tags" id="hero-tags">{view_model['hero_tags_html']}</div>
+            </div>
+          </div>
+          <div class="hero-progress">
+            <div class="progress-meta">
+              <span>Checklist coverage</span>
+              <strong>{view_model['checked_count']}/{readiness['checklist_total']} categories covered</strong>
+            </div>
+            <div class="progress-bar"><span style="width: {readiness_percent}%; --score-color: {readiness_color};"></span></div>
+          </div>
+          <section class="summary-grid" aria-label="Status" id="summary-grid">
+            {view_model['summary_html']}
+          </section>
         </div>
-      </div>
-      <div id="alerts-readiness">{view_model['readiness_alert_rows']}</div>
-      <div id="alerts-expiry">{view_model['expiry_alert_rows']}</div>
+      </section>
+
+      <section class="panel mission-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Operational shortcuts</div>
+            <div class="panel-note">Fast actions for pairing, inventory, and scanner control on a small landscape touchscreen.</div>
+          </div>
+          <div class="pill" id="bag-size-badge">{escape(bag_size_label(bag.size_liters))}</div>
+        </div>
+        <div class="quick-actions">
+          <button type="button" class="quick-link primary" data-open-scan="1">
+            <span>
+              <strong>Scan Item</strong>
+              <small>USB camera capture</small>
+            </span>
+            <span class="quick-link-icon" aria-hidden="true">QR</span>
+          </button>
+          <a class="quick-link" href="#pairing-panel">
+            <span>
+              <strong>Pair Phone</strong>
+              <small>Open QR handoff</small>
+            </span>
+            <span class="quick-link-icon" aria-hidden="true">&rarr;</span>
+          </a>
+          <a class="quick-link" href="#inventory-panel">
+            <span>
+              <strong>Inventory</strong>
+              <small>Add or edit batches</small>
+            </span>
+            <span class="quick-link-icon" aria-hidden="true">&rarr;</span>
+          </a>
+          <a class="quick-link" href="#checklist-panel">
+            <span>
+              <strong>Checklist</strong>
+              <small>Review category coverage</small>
+            </span>
+            <span class="quick-link-icon" aria-hidden="true">&rarr;</span>
+          </a>
+        </div>
+        <div class="section-divider"></div>
+        <div class="panel-subtitle">Missing categories</div>
+        <div class="tag-row">{view_model['missing_html']}</div>
+      </section>
+
+      <section class="panel paired-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Paired phones</div>
+            <div class="panel-note">Devices currently allowed to sync with this Raspberry Pi.</div>
+          </div>
+        </div>
+        <div id="paired-phones">{view_model['phone_rows_html']}</div>
+        <form method="post" action="/ui/revoke_tokens{admin_query}">
+          <button type="submit" class="secondary danger">Revoke all phone access</button>
+        </form>
+      </section>
+
+      <section class="panel alerts-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Readiness watchlist</div>
+            <div class="panel-note">Catch coverage gaps, expiry issues, and sync blockers before you leave.</div>
+          </div>
+        </div>
+        <div class="alert-columns">
+          <div class="subpanel">
+            <div class="panel-subtitle">Readiness</div>
+            <div id="alerts-readiness">{view_model['readiness_alert_rows']}</div>
+          </div>
+          <div class="subpanel">
+            <div class="panel-subtitle">Expiry</div>
+            <div id="alerts-expiry">{view_model['expiry_alert_rows']}</div>
+          </div>
+        </div>
+      </section>
     </section>
 
-    <section class="panel">
-      <div class="panel-head">
-        <div>
-          <div class="panel-title">Bag Settings</div>
-          <div class="panel-note">This Raspberry Pi keeps one local GO BAG. The only bag-specific setting here is the bag size.</div>
-        </div>
-        <div class="pill" id="bag-size-badge">{escape(bag_size_label(bag.size_liters))}</div>
-      </div>
-      <div class="list-row" style="padding-top: 0; border-top: none;">
-        <div>
-          <div class="row-title" id="bag-name-label">{escape(bag.name)}</div>
-          <div class="row-subtitle">Device: {escape(DEVICE_NAME)}</div>
-        </div>
-      </div>
-      <form method="post" action="/ui/bag/settings">
-        <div class="field-grid settings-grid">
-          <select name="bag_type" aria-label="Bag size">
-            {view_model['bag_size_options']}
-          </select>
-          <button type="submit">Save bag size</button>
-        </div>
-      </form>
-    </section>
+    <section class="content-grid">
+      <div class="content-column">
+        <section class="panel" id="bag-settings-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Bag Settings</div>
+              <div class="panel-note">This Raspberry Pi keeps one local GO BAG. The only bag-specific setting here is the bag size.</div>
+            </div>
+          </div>
+          <div class="list-row" style="margin-top: 0;">
+            <div>
+              <div class="row-title" id="bag-name-label">{escape(bag.name)}</div>
+              <div class="row-subtitle">Device: {escape(DEVICE_NAME)}</div>
+            </div>
+          </div>
+          <form method="post" action="/ui/bag/settings">
+            <div class="field-grid settings-grid">
+              <select name="bag_type" aria-label="Bag size">
+                {view_model['bag_size_options']}
+              </select>
+              <button type="submit">Save bag size</button>
+            </div>
+          </form>
+        </section>
 
-    <section class="panel">
-      <div class="panel-head">
-        <div>
-          <div class="panel-title">Pairing QR</div>
-          <div class="panel-note">Open the Android app, go to Pair, and scan this GO BAG QR code.</div>
-        </div>
-        <div class="pill warn" id="pair-expires">Expires {escape(format_time_ms(int(view_model['pair']['expires_at'])))}</div>
-      </div>
-      <div id="pairing-card">{view_model['pairing_card_html']}</div>
-      <form method="post" action="/ui/pair-code/new{admin_query}">
-        <button type="submit">Generate new pair code</button>
-      </form>
-    </section>
+        <section class="panel" id="pairing-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Pairing QR</div>
+              <div class="panel-note">Open the Android app, go to Pair, and scan this GO BAG QR code.</div>
+            </div>
+            <div class="pill warn" id="pair-expires">Expires {escape(format_time_ms(int(view_model['pair']['expires_at'])))}</div>
+          </div>
+          <div id="pairing-card">{view_model['pairing_card_html']}</div>
+          <form method="post" action="/ui/pair-code/new{admin_query}">
+            <button type="submit">Generate new pair code</button>
+          </form>
+        </section>
 
-    <section class="panel">
-      <div class="panel-head">
-        <div>
-          <div class="panel-title">Inventory Manager</div>
-          <div class="panel-note">Manual add and QR scan both merge by item name, unit, and category. Different expiration dates stay as separate batches under one grouped item.</div>
-        </div>
+        <section class="panel" id="checklist-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Checklist</div>
+              <div class="panel-note">These are the core categories every go-bag should cover.</div>
+            </div>
+            <div class="pill">{view_model['checked_count']}/{readiness['checklist_total']}</div>
+          </div>
+          {checklist_rows}
+        </section>
       </div>
-      <div class="row-subtitle" id="inventory-live-note" style="margin-bottom: 12px;">{escape(view_model['inventory_notice'])}</div>
-      <form method="post" action="/ui/items/save">
-        <input type="hidden" name="bag_id" value="{escape(bag.bag_id)}">
-        <input type="hidden" name="item_id" value="{escape(edit_item.id if edit_item else '')}">
-        <div class="field-grid">
-          <input type="text" name="name" placeholder="Item name" value="{escape(edit_item.name if edit_item else '')}" required>
-          <input type="number" step="0.01" min="0.01" name="quantity" placeholder="Quantity" value="{edit_item.quantity if edit_item else '1'}" required>
-          <input type="text" name="unit" placeholder="Unit" value="{escape(edit_item.unit if edit_item else 'pcs')}" required>
-        </div>
-        <div class="field-grid" style="margin-top: 12px;">
-          <select name="category_id" required>
-            {category_options}
-          </select>
-          <input type="date" name="expiry_date" value="{escape(edit_item.expiry_date if edit_item and edit_item.expiry_date else '')}">
-          <label style="display:flex; align-items:center; gap:8px; padding: 12px 0;">
-            <input type="checkbox" name="packed_status" {"checked" if edit_item and edit_item.packed_status else ""} style="width:auto;">
-            Mark batch as packed
-          </label>
-        </div>
-        <textarea name="notes" placeholder="Notes" style="margin-top: 12px;">{escape(edit_item.notes if edit_item else '')}</textarea>
-        <div class="button-row">
-          <button type="submit">{'Update inventory batch' if edit_item else 'Manual Add'}</button>
-          <button type="button" class="secondary" id="scan-open-button">Scan with USB camera</button>
-        </div>
-      </form>
-      <div id="inventory-groups">{view_model['inventory_groups_html']}</div>
-    </section>
 
-    <section class="panel">
-      <div class="panel-head">
-        <div>
-          <div class="panel-title">Pairing access</div>
-          <div class="panel-note">Devices currently allowed to sync with this Raspberry Pi.</div>
-        </div>
-      </div>
-      <div id="paired-phones">{view_model['phone_rows_html']}</div>
-      <form method="post" action="/ui/revoke_tokens{admin_query}">
-        <button type="submit" class="secondary danger">Revoke all phone access</button>
-      </form>
-    </section>
+      <div class="content-column content-column-wide">
+        <section class="panel inventory-panel" id="inventory-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Inventory Manager</div>
+              <div class="panel-note">Manual add and QR scan both merge by item name, unit, and category. Different expiration dates stay as separate batches under one grouped item.</div>
+            </div>
+            <div class="pill {'warn' if edit_item else ''}">{'Edit mode' if edit_item else 'Add mode'}</div>
+          </div>
+          <div class="inventory-manager-shell">
+            <section class="inventory-entry-panel">
+              <div class="inventory-form-kicker">{escape(inventory_form_kicker)}</div>
+              <div class="inventory-form-title">{escape(inventory_form_title)}</div>
+              <div class="inventory-form-description">{escape(inventory_form_description)}</div>
+              <form method="post" action="/ui/items/save">
+                <input type="hidden" name="bag_id" value="{escape(bag.bag_id)}">
+                <input type="hidden" name="item_id" value="{escape(edit_item.id if edit_item else '')}">
+                <div class="inventory-form-grid">
+                  <div class="field-grid">
+                    <input type="text" name="name" placeholder="Item name" value="{escape(edit_item.name if edit_item else '')}" required>
+                    <input type="number" step="0.01" min="0.01" name="quantity" placeholder="Quantity" value="{edit_item.quantity if edit_item else '1'}" required>
+                    <input type="text" name="unit" placeholder="Unit" value="{escape(edit_item.unit if edit_item else 'pcs')}" required>
+                  </div>
+                  <div class="field-grid">
+                    <select name="category_id" required>
+                      {category_options}
+                    </select>
+                    <input type="date" name="expiry_date" value="{escape(edit_item.expiry_date if edit_item and edit_item.expiry_date else '')}">
+                    <label class="inventory-checkbox-row">
+                      <input type="checkbox" name="packed_status" {"checked" if edit_item and edit_item.packed_status else ""}>
+                      Mark batch as packed
+                    </label>
+                  </div>
+                  <textarea name="notes" placeholder="Notes">{escape(edit_item.notes if edit_item else '')}</textarea>
+                </div>
+                <div class="button-row">
+                  <button type="submit">{escape(inventory_submit_label)}</button>
+                  <button type="button" class="secondary" data-open-scan="1">Scan with USB camera</button>
+                </div>
+              </form>
+            </section>
 
-    <section class="panel">
-      <div class="panel-head">
-        <div>
-          <div class="panel-title">Checklist</div>
-          <div class="panel-note">These are the core categories every go-bag should cover.</div>
-        </div>
-        <div class="pill">{view_model['checked_count']}/{readiness['checklist_total']}</div>
+            <aside class="inventory-command-panel">
+              <div class="inventory-note-card">
+                <strong>Scanner status</strong>
+                <p id="inventory-live-note">{escape(view_model['inventory_notice'])}</p>
+              </div>
+              <div class="inventory-note-card">
+                <strong>Grouping rule</strong>
+                <p>Batches merge by item name, unit, and category. Expiration dates stay separate so replacements stay precise.</p>
+              </div>
+              <div class="inventory-note-card">
+                <strong>Fast action</strong>
+                <p>Use the USB camera to capture QR labels without leaving this dashboard.</p>
+                <div class="button-row compact">
+                  <button type="button" class="secondary" data-open-scan="1">Open scanner</button>
+                </div>
+              </div>
+            </aside>
+          </div>
+
+          <section class="inventory-groups-shell">
+            <div class="inventory-groups-head">
+              <div>
+                <div class="inventory-groups-kicker">Grouped inventory</div>
+                <div class="inventory-groups-title">Supply batches</div>
+                <div class="inventory-groups-caption">Each grouped card keeps separate batches visible for expiry review, packing status, edit, and delete actions.</div>
+              </div>
+              <div class="inventory-groups-meta">
+                <span class="micro-chip">Local Pi store</span>
+                <span class="micro-chip">Grouped by item</span>
+                <span class="micro-chip">Edit in place</span>
+              </div>
+            </div>
+            <div id="inventory-groups">{view_model['inventory_groups_html']}</div>
+          </section>
+        </section>
       </div>
-      {checklist_rows}
     </section>
 
     <div class="scan-modal hidden" id="scan-modal" aria-hidden="true">
@@ -4506,6 +5578,39 @@ def home(request: Request) -> HTMLResponse:
           <div class="scan-preview-frame">
             <img id="scan-preview-image" class="hidden" alt="USB camera preview">
             <div class="scan-preview-placeholder" id="scan-preview-placeholder"></div>
+          </div>
+        </div>
+        <div class="scan-overlay" aria-hidden="true">
+          <div class="scan-overlay-top">
+            <div class="scan-hud-chip">
+              <div class="scan-hud-kicker">USB QR scanner</div>
+              <div class="scan-hud-title">{escape(bag.name)}</div>
+            </div>
+            <div class="scan-overlay-actions">
+              <div class="scan-mini-chip" id="scan-live-chip">Auto detect</div>
+              <button type="button" class="scan-close-button" id="scan-close-button">Close</button>
+            </div>
+          </div>
+          <div class="scan-guides">
+            <div class="scan-viewfinder">
+              <div class="scan-corner tl"></div>
+              <div class="scan-corner tr"></div>
+              <div class="scan-corner bl"></div>
+              <div class="scan-corner br"></div>
+              <div class="scan-scanline"></div>
+              <div class="scan-focus-dot"></div>
+            </div>
+          </div>
+          <div class="scan-overlay-bottom">
+            <div class="scan-status-card" id="scan-status-card" data-tone="active">
+              <div class="scan-status-row">
+                <div class="scan-status-led"></div>
+                <div>
+                  <div class="scan-status-title" id="scan-status-title">Starting camera</div>
+                  <div class="scan-status-note" id="scan-status-note">Opening the USB preview for automatic QR detection.</div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <form id="scan-capture-form" class="hidden">
@@ -4545,16 +5650,54 @@ def home(request: Request) -> HTMLResponse:
       const pageNotice = document.getElementById("page-notice");
       const pageError = document.getElementById("page-error");
       const documentRoot = document.documentElement;
+      const themeStorageKey = "gobag-pi-theme";
+      const themeToggle = document.getElementById("theme-toggle");
+      const themeToggleIcon = document.getElementById("theme-toggle-icon");
+      const themeToggleLabel = document.getElementById("theme-toggle-label");
       const scanModal = document.getElementById("scan-modal");
-      const scanOpenButton = document.getElementById("scan-open-button");
+      const scanOpenButtons = Array.from(document.querySelectorAll('[data-open-scan="1"]'));
       const scanCaptureForm = document.getElementById("scan-capture-form");
       const scanPreviewImage = document.getElementById("scan-preview-image");
       const scanPreviewPlaceholder = document.getElementById("scan-preview-placeholder");
+      const scanCloseButton = document.getElementById("scan-close-button");
+      const scanLiveChip = document.getElementById("scan-live-chip");
+      const scanStatusCard = document.getElementById("scan-status-card");
+      const scanStatusTitle = document.getElementById("scan-status-title");
+      const scanStatusNote = document.getElementById("scan-status-note");
       const touchKeyboard = document.getElementById("touch-keyboard");
       const scrollStateKey = "gobag-scroll-state";
       const keyboardEligibleSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="date"]):not([type="file"]):not([type="radio"]):not([type="range"]):not([disabled]), textarea:not([disabled])';
       let keyboardTarget = null;
       let keyboardShift = false;
+
+      function currentTheme() {{
+        return documentRoot.dataset.theme === "dark" ? "dark" : "light";
+      }}
+
+      function applyTheme(theme, persist = true) {{
+        const nextTheme = theme === "dark" ? "dark" : "light";
+        documentRoot.dataset.theme = nextTheme;
+        const darkMode = nextTheme === "dark";
+        if (persist) {{
+          try {{
+            localStorage.setItem(themeStorageKey, nextTheme);
+          }} catch (_error) {{
+          }}
+        }}
+        if (themeToggle) {{
+          const nextLabel = darkMode ? "Light mode" : "Dark mode";
+          const nextHint = darkMode ? "Switch to light mode" : "Switch to dark mode";
+          themeToggle.setAttribute("aria-pressed", darkMode ? "true" : "false");
+          themeToggle.setAttribute("aria-label", nextHint);
+          themeToggle.setAttribute("title", nextHint);
+          if (themeToggleLabel) {{
+            themeToggleLabel.textContent = nextLabel;
+          }}
+          if (themeToggleIcon) {{
+            themeToggleIcon.textContent = darkMode ? "\\u2600" : "\\u263D";
+          }}
+        }}
+      }}
 
       function saveScrollState() {{
         try {{
@@ -4590,6 +5733,15 @@ def home(request: Request) -> HTMLResponse:
           window.setTimeout(applyScroll, 260);
         }} catch (_error) {{
         }}
+      }}
+
+      function initializeTheme() {{
+        let storedTheme = "";
+        try {{
+          storedTheme = localStorage.getItem(themeStorageKey) || "";
+        }} catch (_error) {{
+        }}
+        applyTheme(storedTheme === "dark" || storedTheme === "light" ? storedTheme : currentTheme(), false);
       }}
 
       function keyboardTargetSupportsSelection(target) {{
@@ -4771,6 +5923,28 @@ def home(request: Request) -> HTMLResponse:
         scanPreviewPlaceholder.textContent = message || "";
       }}
 
+      function setScanUiStatus(title, note = "", tone = "active") {{
+        if (scanStatusTitle) {{
+          scanStatusTitle.textContent = title || "";
+        }}
+        if (scanStatusNote) {{
+          scanStatusNote.textContent = note || "";
+        }}
+        if (scanStatusCard) {{
+          scanStatusCard.dataset.tone = tone || "active";
+        }}
+        if (scanLiveChip) {{
+          scanLiveChip.textContent =
+            tone === "danger"
+              ? "Attention"
+              : tone === "processing"
+              ? "Processing"
+              : tone === "success"
+              ? "Detected"
+              : "Auto detect";
+        }}
+      }}
+
       function setPreviewVisible(isVisible) {{
         if (scanPreviewImage) scanPreviewImage.classList.toggle("hidden", !isVisible);
         if (scanPreviewPlaceholder) scanPreviewPlaceholder.classList.toggle("hidden", isVisible);
@@ -4866,6 +6040,11 @@ def home(request: Request) -> HTMLResponse:
         lastDetectedRawContent = "";
         lastDetectedAt = 0;
         setPreviewPlaceholderMessage("");
+        setScanUiStatus(
+          "Align QR inside frame",
+          "The Pi will process the code automatically when the camera locks on.",
+          "active",
+        );
       }}
 
       async function refreshDashboard() {{
@@ -4893,6 +6072,7 @@ def home(request: Request) -> HTMLResponse:
           const inventoryLiveNote = document.getElementById("inventory-live-note");
           const inventoryGroups = document.getElementById("inventory-groups");
           const pairedPhones = document.getElementById("paired-phones");
+          const heroBagName = document.getElementById("hero-bag-name");
           const bagNameLabel = document.getElementById("bag-name-label");
           const bagSizeBadge = document.getElementById("bag-size-badge");
           if (heroNextStep) heroNextStep.textContent = state.next_step || "";
@@ -4905,6 +6085,7 @@ def home(request: Request) -> HTMLResponse:
           if (inventoryLiveNote) inventoryLiveNote.textContent = state.inventory_notice || "";
           if (inventoryGroups) inventoryGroups.innerHTML = state.inventory_groups_html || "";
           if (pairedPhones) pairedPhones.innerHTML = state.phone_rows_html || "";
+          if (heroBagName) heroBagName.textContent = state.bag_name || "";
           if (bagNameLabel) bagNameLabel.textContent = state.bag_name || "";
           if (bagSizeBadge) bagSizeBadge.textContent = state.bag_size_label || "";
           if (keyboardTarget && !document.contains(keyboardTarget)) {{
@@ -4954,10 +6135,23 @@ def home(request: Request) -> HTMLResponse:
           previewLoading = false;
           previewFailureCount = 0;
           setPreviewVisible(true);
+          if (!scanBusy) {{
+            setScanUiStatus(
+              "Searching for QR code",
+              "Hold the label inside the frame. Detection runs automatically.",
+              "active",
+            );
+          }}
         }};
         scanPreviewImage.onerror = () => {{
           previewLoading = false;
           setPreviewVisible(false);
+          setPreviewPlaceholderMessage("USB camera preview unavailable.");
+          setScanUiStatus(
+            "Preview unavailable",
+            "Check the USB camera connection and reopen the scanner.",
+            "danger",
+          );
           previewFailureCount += 1;
           if (previewFailureCount >= 3) {{
             closeScannerWithError("USB camera preview failed. Check the USB camera connection.");
@@ -4991,6 +6185,11 @@ def home(request: Request) -> HTMLResponse:
             await loadSessionFrame(latestSessionFrameId);
           }}
           if (payload.decoded_content && !scanBusy) {{
+            setScanUiStatus(
+              "QR detected",
+              "Processing the decoded label and preparing the inventory update.",
+              "processing",
+            );
             await submitDecodedUsbScan(payload.decoded_content, true);
           }}
         }} catch (_error) {{
@@ -5000,7 +6199,12 @@ def home(request: Request) -> HTMLResponse:
 
       async function preparePreview() {{
         setPreviewVisible(false);
-        setPreviewPlaceholderMessage("");
+        setPreviewPlaceholderMessage("Opening USB camera...");
+        setScanUiStatus(
+          "Starting camera",
+          "Opening the USB preview for automatic QR detection.",
+          "processing",
+        );
         previewFailureCount = 0;
         try {{
           const response = await fetch("/camera/usb/session/start", {{
@@ -5067,6 +6271,11 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       async function handleScanSuccess(payload) {{
+        setScanUiStatus(
+          "Inventory updated",
+          "The scanned item was accepted and added to this GO BAG.",
+          "success",
+        );
         setBanner("notice", payload.message || "QR code detected and item added.");
         await refreshDashboard();
         closeScanModal();
@@ -5081,6 +6290,11 @@ def home(request: Request) -> HTMLResponse:
         }}
         scanBusy = true;
         scanCooldownUntil = Date.now() + 1000;
+        setScanUiStatus(
+          "Processing scan",
+          "Decoding the current camera frame and validating the QR payload.",
+          "processing",
+        );
         stopScanStatusLoop();
         stopPreviewLoop();
         stopAutoScanLoop();
@@ -5120,6 +6334,11 @@ def home(request: Request) -> HTMLResponse:
         }}
         scanBusy = true;
         scanCooldownUntil = Date.now() + 1400;
+        setScanUiStatus(
+          "Processing scan",
+          "Applying the decoded QR content to the inventory manager.",
+          "processing",
+        );
         stopScanStatusLoop();
         stopPreviewLoop();
         stopAutoScanLoop();
@@ -5150,9 +6369,17 @@ def home(request: Request) -> HTMLResponse:
         }}
       }}
 
-      if (scanOpenButton) {{
-        scanOpenButton.addEventListener("click", openScanModal);
+      if (themeToggle) {{
+        themeToggle.addEventListener("click", () => {{
+          applyTheme(currentTheme() === "dark" ? "light" : "dark");
+        }});
       }}
+      if (scanCloseButton) {{
+        scanCloseButton.addEventListener("click", closeScanModal);
+      }}
+      scanOpenButtons.forEach((button) => {{
+        button.addEventListener("click", openScanModal);
+      }});
       if (scanCaptureForm) {{
         scanCaptureForm.addEventListener("submit", submitUsbScan);
       }}
@@ -5200,6 +6427,7 @@ def home(request: Request) -> HTMLResponse:
         }});
       }}
 
+      initializeTheme();
       restoreScrollState();
 
       window.addEventListener("keydown", (event) => {{

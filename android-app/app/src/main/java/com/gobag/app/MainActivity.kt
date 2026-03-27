@@ -5,15 +5,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.gobag.app.ui.theme.TacticalTheme
 import com.gobag.feature.checkmode.CheckModeScreen
 import com.gobag.feature.checkmode.CheckModeViewModel
 import com.gobag.feature.inventory.InventoryScreen
@@ -26,39 +25,6 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-
-private val GoBagBlack = Color(0xFF0E0E0E)
-private val GoBagSurface = Color(0xFF1A1A1A)
-private val GoBagSurfaceHigh = Color(0xFF20201F)
-private val GoBagSurfaceHighest = Color(0xFF262626)
-private val GoBagPrimary = Color(0xFFFF9F4A)
-private val GoBagSecondary = Color(0xFFFFA52A)
-private val GoBagTertiary = Color(0xFFFFE393)
-private val GoBagError = Color(0xFFFF7351)
-private val GoBagText = Color(0xFFFFFFFF)
-private val GoBagMuted = Color(0xFFADAAAA)
-private val GoBagOnPrimary = Color(0xFF532A00)
-
-@Composable
-fun TacticalTheme(content: @Composable () -> Unit) {
-    val colors = darkColorScheme(
-        primary = GoBagPrimary,
-        onPrimary = GoBagOnPrimary,
-        background = GoBagBlack,
-        onBackground = GoBagText,
-        surface = GoBagSurface,
-        onSurface = GoBagText,
-        surfaceVariant = GoBagSurfaceHighest,
-        onSurfaceVariant = GoBagMuted,
-        error = GoBagError,
-        onError = Color.Black,
-        secondary = GoBagSecondary,
-        onSecondary = Color.Black,
-        tertiary = GoBagTertiary,
-        onTertiary = Color.Black
-    )
-    MaterialTheme(colorScheme = colors, content = content)
-}
 
 private data class StartupState(
     val phone_device_id: String,
