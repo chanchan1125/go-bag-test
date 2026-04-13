@@ -4779,13 +4779,13 @@ def home(request: Request) -> HTMLResponse:
       --action-button-padding: calc(12px * var(--ui-density-scale)) calc(14px * var(--ui-density-scale));
       --action-button-font-size: calc(1rem * var(--ui-font-scale));
       --touch-keyboard-padding:
-        calc(5px * var(--ui-density-scale))
-        calc(5px * var(--ui-density-scale))
-        calc((5px * var(--ui-density-scale)) + env(safe-area-inset-bottom, 0px));
-      --touch-keyboard-gap: calc(3px * var(--ui-density-scale));
-      --touch-keyboard-button-height: calc(28px * var(--ui-density-scale));
-      --touch-keyboard-button-padding: calc(3px * var(--ui-density-scale)) calc(3px * var(--ui-density-scale));
-      --touch-keyboard-button-font-size: calc(0.74rem * var(--ui-font-scale));
+        calc(4px * var(--ui-density-scale))
+        calc(4px * var(--ui-density-scale))
+        calc((4px * var(--ui-density-scale)) + env(safe-area-inset-bottom, 0px));
+      --touch-keyboard-gap: calc(2px * var(--ui-density-scale));
+      --touch-keyboard-button-height: calc(24px * var(--ui-density-scale));
+      --touch-keyboard-button-padding: calc(2px * var(--ui-density-scale)) calc(2px * var(--ui-density-scale));
+      --touch-keyboard-button-font-size: calc(0.68rem * var(--ui-font-scale));
       font-size: calc(16px * var(--ui-font-scale));
     }}
     html[data-ui-scale="0"] {{
@@ -4819,11 +4819,11 @@ def home(request: Request) -> HTMLResponse:
         --header-chip-height: 30px;
         --header-chip-padding: 0 8px;
         --header-chip-gap: 5px;
-        --touch-keyboard-padding: 3px 4px calc(4px + env(safe-area-inset-bottom, 0px));
-        --touch-keyboard-gap: 2px;
-        --touch-keyboard-button-height: 22px;
-        --touch-keyboard-button-padding: 2px 1px;
-        --touch-keyboard-button-font-size: 0.62rem;
+        --touch-keyboard-padding: 2px 3px calc(3px + env(safe-area-inset-bottom, 0px));
+        --touch-keyboard-gap: 1px;
+        --touch-keyboard-button-height: 20px;
+        --touch-keyboard-button-padding: 1px 1px;
+        --touch-keyboard-button-font-size: 0.56rem;
       }}
     }}
     body {{
@@ -6039,8 +6039,8 @@ def home(request: Request) -> HTMLResponse:
       display: none !important;
     }}
     body.keyboard-open {{
-      padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 12px);
-      scroll-padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 24px);
+      padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 4px);
+      scroll-padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 8px);
     }}
     .touch-keyboard {{
       position: fixed;
@@ -6051,11 +6051,11 @@ def home(request: Request) -> HTMLResponse:
       padding: var(--touch-keyboard-padding);
       background: var(--topbar);
       border-top: 1px solid var(--line);
-      box-shadow: 0 -12px 28px var(--shadow-strong);
-      backdrop-filter: blur(6px);
+      box-shadow: 0 -6px 16px var(--shadow-strong);
+      backdrop-filter: blur(4px);
     }}
     .touch-keyboard-inner {{
-      max-width: 1320px;
+      max-width: 420px;
       margin: 0 auto;
       display: grid;
       gap: var(--touch-keyboard-gap);
@@ -6074,7 +6074,8 @@ def home(request: Request) -> HTMLResponse:
       min-height: var(--touch-keyboard-button-height);
       padding: var(--touch-keyboard-button-padding);
       font-size: var(--touch-keyboard-button-font-size);
-      border-radius: 8px;
+      line-height: 1;
+      border-radius: 6px;
       background: var(--panel);
       color: var(--ink);
       border: 1px solid var(--line);
@@ -6531,67 +6532,67 @@ def home(request: Request) -> HTMLResponse:
       display: flex;
       align-items: flex-start;
       justify-content: center;
-      padding: 8px 8px calc(var(--touch-keyboard-offset, 0px) + 8px);
+      padding: 4px 4px calc(var(--touch-keyboard-offset, 0px) + 4px);
       background: rgba(5, 8, 6, 0.76);
       backdrop-filter: blur(12px);
       overflow: hidden;
       touch-action: pan-y;
     }}
     .wifi-dialog {{
-      width: min(100%, 386px);
+      width: min(100%, 378px);
       min-height: 0;
-      max-height: calc(100dvh - var(--touch-keyboard-offset, 0px) - 10px);
+      max-height: calc(100dvh - var(--touch-keyboard-offset, 0px) - 4px);
       display: grid;
       grid-template-rows: auto auto auto minmax(0, 1fr);
-      gap: 8px;
-      border-radius: 18px;
+      gap: 5px;
+      border-radius: 14px;
       border: 1px solid var(--line);
       background: var(--panel);
-      box-shadow: 0 18px 32px var(--shadow-strong);
+      box-shadow: 0 12px 22px var(--shadow-strong);
       color: var(--ink);
-      padding: 10px;
+      padding: 6px;
       overflow: hidden;
     }}
     .wifi-dialog-head {{
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: 6px;
     }}
     .wifi-dialog-head-main {{
       min-width: 0;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 6px;
     }}
     .wifi-dialog-icon {{
-      width: 38px;
-      height: 38px;
+      width: 28px;
+      height: 28px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 12px;
+      border-radius: 8px;
       background: var(--accent-soft);
       color: var(--accent);
-      font-size: 1rem;
+      font-size: 0.82rem;
       line-height: 1;
     }}
     .wifi-close-button {{
-      width: 34px !important;
-      min-width: 34px;
-      min-height: 34px !important;
+      width: 28px !important;
+      min-width: 28px;
+      min-height: 28px !important;
       padding: 0 !important;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 10px !important;
-      font-size: 1.05rem !important;
+      border-radius: 8px !important;
+      font-size: 0.88rem !important;
       line-height: 1;
       flex: 0 0 auto;
     }}
     .wifi-dialog-title {{
       font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: 1rem;
+      font-size: 0.84rem;
       font-weight: 800;
       letter-spacing: -0.03em;
     }}
@@ -6600,18 +6601,22 @@ def home(request: Request) -> HTMLResponse:
     .wifi-network-meta,
     .wifi-empty-state {{
       color: var(--muted);
-      line-height: 1.4;
-      font-size: 0.84rem;
+      line-height: 1.2;
+      font-size: 0.7rem;
+    }}
+    .wifi-dialog .panel-subtitle {{
+      font-size: 0.54rem;
+      letter-spacing: 0.14em;
     }}
     .wifi-status-message {{
       min-height: 1.2em;
-      border-radius: 12px;
-      padding: 8px 10px;
+      border-radius: 9px;
+      padding: 5px 7px;
       border: 1px solid var(--line);
       background: var(--panel-muted);
       color: var(--muted);
-      font-size: 0.8rem;
-      line-height: 1.4;
+      font-size: 0.68rem;
+      line-height: 1.2;
     }}
     .wifi-status-message.notice {{
       background: var(--success-soft);
@@ -6625,52 +6630,59 @@ def home(request: Request) -> HTMLResponse:
     }}
     .wifi-entry-panel {{
       display: grid;
-      gap: 6px;
+      gap: 4px;
       min-height: 0;
     }}
     .wifi-selected-card {{
       display: grid;
-      gap: 4px;
-      padding: 8px 10px;
-      border-radius: 14px;
+      gap: 2px;
+      padding: 5px 7px;
+      border-radius: 10px;
       border: 1px solid var(--line);
       background: var(--panel-muted);
     }}
     .wifi-selected-name {{
       font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: 1rem;
+      font-size: 0.82rem;
       font-weight: 800;
       letter-spacing: -0.03em;
       word-break: break-word;
     }}
     .wifi-password-shell {{
       display: grid;
-      gap: 5px;
+      gap: 3px;
     }}
     .wifi-password-row {{
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
-      gap: 5px;
+      gap: 4px;
       align-items: stretch;
     }}
     .wifi-password-row input {{
       min-width: 0;
-      min-height: 38px;
-      font-size: 0.95rem;
+      min-height: 32px;
+      font-size: 0.82rem;
+      padding: 0 8px;
     }}
     .wifi-password-toggle {{
-      min-width: 54px;
-      min-height: 38px;
-      padding: 0 8px;
+      min-width: 44px;
+      min-height: 32px;
+      padding: 0 6px;
+      font-size: 0.72rem;
     }}
     .wifi-actions {{
       display: grid;
       grid-template-columns: 1fr;
-      gap: 6px;
+      gap: 4px;
+    }}
+    .wifi-actions button {{
+      min-height: 32px;
+      padding: 0 10px;
+      font-size: 0.8rem;
     }}
     .wifi-network-section {{
       display: grid;
-      gap: 6px;
+      gap: 4px;
       min-height: 0;
       grid-template-rows: auto minmax(0, 1fr);
       overflow: hidden;
@@ -6679,14 +6691,20 @@ def home(request: Request) -> HTMLResponse:
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: 6px;
       flex-wrap: wrap;
+    }}
+    .wifi-network-head .micro-chip {{
+      min-height: 20px;
+      padding: 0 6px;
+      font-size: 0.58rem;
+      letter-spacing: 0.08em;
     }}
     .wifi-network-list {{
       display: grid;
-      gap: 6px;
+      gap: 4px;
       min-height: 0;
-      padding-bottom: 4px;
+      padding-bottom: 2px;
       max-height: none;
       overflow-x: hidden;
       overflow-y: auto;
@@ -6698,11 +6716,11 @@ def home(request: Request) -> HTMLResponse:
     .wifi-network-button {{
       width: 100%;
       display: grid;
-      gap: 4px;
+      gap: 2px;
       justify-items: start;
       text-align: left;
-      padding: 8px 10px;
-      border-radius: 12px;
+      padding: 6px 8px;
+      border-radius: 10px;
       border: 1px solid var(--line);
       background: var(--panel-muted);
       color: var(--ink);
@@ -6712,6 +6730,14 @@ def home(request: Request) -> HTMLResponse:
     }}
     .wifi-network-button:hover {{
       filter: brightness(0.98);
+    }}
+    .wifi-network-name {{
+      font-size: 0.82rem;
+      line-height: 1.12;
+    }}
+    body.keyboard-open .wifi-dialog-note,
+    body.keyboard-open .wifi-selected-note {{
+      display: none;
     }}
     .wifi-network-button:active {{
       transform: translateY(1px);
@@ -6973,9 +6999,9 @@ def home(request: Request) -> HTMLResponse:
         flex: 0 0 auto;
       }}
       .wifi-dialog {{
-        width: min(100%, calc(100vw - 12px));
-        max-height: calc(100dvh - var(--touch-keyboard-offset, 0px) - 8px);
-        padding: 8px;
+        width: min(100%, calc(100vw - 6px));
+        max-height: calc(100dvh - var(--touch-keyboard-offset, 0px) - 4px);
+        padding: 5px;
       }}
       .bottom-nav {{
         gap: 4px;
@@ -7123,7 +7149,7 @@ def home(request: Request) -> HTMLResponse:
             <div class="wifi-dialog-icon" aria-hidden="true">&#128246;</div>
             <div>
               <div class="wifi-dialog-title">Wi-Fi connection</div>
-              <div class="wifi-dialog-note">View nearby networks and connect this Raspberry Pi from the touchscreen.</div>
+              <div class="wifi-dialog-note">Select a network and connect.</div>
             </div>
           </div>
           <button type="button" class="secondary wifi-close-button" id="wifi-close-button" aria-label="Close Wi-Fi panel" title="Close Wi-Fi panel">&#10005;</button>
@@ -7133,7 +7159,7 @@ def home(request: Request) -> HTMLResponse:
           <div class="wifi-selected-card">
             <div class="panel-subtitle">Selected network</div>
             <div class="wifi-selected-name" id="wifi-selected-name">Choose a network</div>
-            <div class="wifi-selected-note" id="wifi-selected-note">Tap a network below to connect this Raspberry Pi to Wi-Fi.</div>
+            <div class="wifi-selected-note" id="wifi-selected-note">Tap a network below.</div>
           </div>
           <div class="wifi-password-shell hidden" id="wifi-password-shell">
             <div class="panel-subtitle">Password</div>
@@ -7463,13 +7489,13 @@ def home(request: Request) -> HTMLResponse:
         }}
         if (wifiSelectedNote) {{
           if (!nextSsid) {{
-            wifiSelectedNote.textContent = "Tap a network below to connect this Raspberry Pi to Wi-Fi.";
+            wifiSelectedNote.textContent = "Tap a network below.";
           }} else if (alreadyConnected) {{
-            wifiSelectedNote.textContent = `This Raspberry Pi is already connected to ${{nextSsid}}.`;
+            wifiSelectedNote.textContent = `Already connected to ${{nextSsid}}.`;
           }} else if (wifiSelectedNetworkRequiresPassword) {{
-            wifiSelectedNote.textContent = `${{nextSsid}} requires a password. Enter it below to connect.`;
+            wifiSelectedNote.textContent = "Enter the password to connect.";
           }} else {{
-            wifiSelectedNote.textContent = `${{nextSsid}} is open and can be connected without a password.`;
+            wifiSelectedNote.textContent = "Open network. Tap Connect.";
           }}
         }}
         if (wifiPasswordInput && previousSsid !== nextSsid) {{
