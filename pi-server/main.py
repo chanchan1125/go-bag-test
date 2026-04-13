@@ -3373,6 +3373,9 @@ def render_summary_html(summary_cards: List[tuple[str, str, str]]) -> str:
     tone_map = {
         "status": "accent",
         "readiness": "warn",
+        "expired": "danger",
+        "missing": "warn",
+        "inventory": "neutral",
         "last sync": "success",
     }
     return "".join(
@@ -3406,6 +3409,51 @@ def render_phone_rows_html(paired_rows: List[sqlite3.Row]) -> str:
     ) or '<div class="empty-state">No paired phones yet.</div>'
 
 
+def render_checklist_rows_html(checklist: List[dict]) -> str:
+    return "".join(
+        [
+            f'<div class="check-row {"ok" if row["checked"] else "warn"}"><span>{escape(row["name"])}</span><strong>{"Ready" if row["checked"] else "Missing"}</strong></div>'
+            for row in checklist
+        ]
+    ) or '<div class="empty-state">No checklist data yet.</div>'
+
+
+def render_readiness_alert_rows_html(readiness: dict) -> str:
+    if not readiness["alerts"]:
+        return '<div class="empty-state">No readiness alerts.</div>'
+    return "".join(
+        [
+            f"""
+            <button type="button" class="alert-row actionable" data-nav-screen="check">
+              <strong>{escape("Coverage alert")}</strong><br>{escape(alert)}
+            </button>
+            """
+            for alert in readiness["alerts"]
+        ]
+    )
+
+
+def render_expiry_alert_rows_html(alerts: List[AlertItem]) -> str:
+    if not alerts:
+        return '<div class="empty-state">No expiry alerts.</div>'
+    return "".join(
+        [
+            f"""
+            <button
+              type="button"
+              class="alert-row actionable {'critical' if alert.type == 'expired' else 'warning'}"
+              data-nav-screen="inventory"
+              data-focus-item="{escape(alert.item_id)}"
+            >
+              <strong>{escape(alert.item_name)}</strong><br>
+              {escape(alert.bag_name)} | {escape("Expired" if alert.type == "expired" else "Expiring soon")} | {escape(format_expiry_date_ms(alert.expiry_date_ms))}
+            </button>
+            """
+            for alert in alerts
+        ]
+    )
+
+
 def inventory_category_code(category: str) -> str:
     return {
         "Water & Food": "WF",
@@ -3432,57 +3480,62 @@ def render_inventory_groups_html(inventory_groups: List[InventoryGroupView]) -> 
     return "".join(
         [
             f"""
-            <div class="inventory-group inventory-tone-{inventory_category_tone(group.category)}">
-              <div class="inventory-group-head">
-                <div class="inventory-group-mark">{escape(inventory_category_code(group.category))}</div>
-                <div class="inventory-group-body">
-                  <div class="inventory-group-topline">
-                    <div class="inventory-group-meta">
-                      <div class="inventory-group-name">{escape(group.name)}</div>
-                      <div class="inventory-group-tags">
-                        <span class="micro-chip">{escape(group.category)}</span>
-                        <span class="micro-chip">{len(group.batches)} batch{'es' if len(group.batches) != 1 else ''}</span>
-                        <span class="micro-chip ok">{sum(1 for batch in group.batches if batch.item.packed_status)} packed</span>
-                        {f'<span class="micro-chip warn">{sum(1 for batch in group.batches if not batch.item.packed_status)} unpacked</span>' if any(not batch.item.packed_status for batch in group.batches) else ''}
-                      </div>
-                    </div>
-                    <div class="inventory-group-total">
-                      <div class="inventory-group-total-value">{group.total_quantity:g}</div>
-                      <div class="inventory-group-total-label">{escape(group.unit)} total</div>
-                    </div>
-                  </div>
-                  <div class="inventory-batch-grid">
-              {''.join(
-                  [
-                      f'''
-                      <div class="batch-card {'packed' if batch.item.packed_status else 'needs-pack'}">
-                        <div class="batch-card-head">
-                          <div>
-                            <div class="batch-card-quantity">{batch.item.quantity:g} {escape(batch.item.unit)}</div>
-                            <div class="batch-card-subtitle">{escape("No expiration" if batch.expiry_label == "No expiration" else f"Expiry {batch.expiry_label}")}</div>
-                          </div>
-                          <div class="pill {'ok' if batch.item.packed_status else 'warn'}">{'Packed' if batch.item.packed_status else 'Needs pack'}</div>
-                        </div>
-                        {f'<div class="batch-card-notes">{escape(batch.item.notes)}</div>' if batch.item.notes else ''}
-                        <div class="inventory-actions">
-                          <form method="get" action="/">
-                            <input type="hidden" name="edit_item_id" value="{escape(batch.item.id)}">
-                            <button type="submit" class="secondary inventory-action">Edit batch</button>
-                          </form>
-                          <form method="post" action="/ui/items/{escape(batch.item.id)}/delete">
-                            <input type="hidden" name="bag_id" value="{escape(group.bag_id)}">
-                            <button type="submit" class="secondary danger inventory-action">Delete batch</button>
-                          </form>
+            <details
+              class="inventory-group-card inventory-tone-{inventory_category_tone(group.category)}"
+              data-category="{escape(normalize_category(group.category).lower())}"
+              data-search="{escape(' '.join([group.name, group.category] + [batch.item.notes for batch in group.batches if batch.item.notes]).lower())}"
+              {'open' if inventory_groups.index(group) == 0 else ''}
+            >
+              <summary class="inventory-group-summary">
+                <div class="inventory-group-head">
+                  <div class="inventory-group-mark">{escape(inventory_category_code(group.category))}</div>
+                  <div class="inventory-group-body">
+                    <div class="inventory-group-topline">
+                      <div class="inventory-group-meta">
+                        <div class="inventory-group-name">{escape(group.name)}</div>
+                        <div class="inventory-group-tags">
+                          <span class="micro-chip">{escape(group.category)}</span>
+                          <span class="micro-chip">{len(group.batches)} batch{'es' if len(group.batches) != 1 else ''}</span>
+                          <span class="micro-chip ok">{sum(1 for batch in group.batches if batch.item.packed_status)} packed</span>
+                          {f'<span class="micro-chip warn">{sum(1 for batch in group.batches if not batch.item.packed_status)} unpacked</span>' if any(not batch.item.packed_status for batch in group.batches) else ''}
                         </div>
                       </div>
-                      '''
-                      for batch in group.batches
-                  ]
-              )}
+                      <div class="inventory-group-total">
+                        <div class="inventory-group-total-value">{group.total_quantity:g}</div>
+                        <div class="inventory-group-total-label">{escape(group.unit)} total</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
+              </summary>
+              <div class="inventory-group-expanded">
+                <div class="inventory-batches-readonly">
+                  {''.join(
+                      [
+                          f'''
+                          <article class="inventory-batch-card {'packed' if batch.item.packed_status else 'needs-pack'}" data-item-id="{escape(batch.item.id)}">
+                            <div class="batch-card-head">
+                              <div>
+                                <div class="batch-card-quantity">{batch.item.quantity:g} {escape(batch.item.unit)}</div>
+                                <div class="batch-card-subtitle">{escape("No expiration" if batch.expiry_label == "No expiration" else f"Expiry {batch.expiry_label}")}</div>
+                              </div>
+                              <div class="pill {'ok' if batch.item.packed_status else 'warn'}">{'Packed' if batch.item.packed_status else 'Needs pack'}</div>
+                            </div>
+                            <div class="inventory-batch-detail-grid">
+                              <div class="batch-detail-cell"><span>Category</span><strong>{escape(group.category)}</strong></div>
+                              <div class="batch-detail-cell"><span>Status</span><strong>{escape(batch.item.condition_status.title())}</strong></div>
+                              <div class="batch-detail-cell"><span>Updated</span><strong>{escape(format_time_ms(batch.item.updated_at))}</strong></div>
+                              <div class="batch-detail-cell"><span>Created</span><strong>{escape(format_time_ms(batch.item.created_at))}</strong></div>
+                            </div>
+                            {f'<div class="batch-card-notes">{escape(batch.item.notes)}</div>' if batch.item.notes else '<div class="batch-card-notes subtle">No notes saved for this batch.</div>'}
+                          </article>
+                          '''
+                          for batch in group.batches
+                      ]
+                  )}
+                </div>
               </div>
-            </div>
+            </details>
             """
             for group in inventory_groups
         ]
@@ -3620,25 +3673,25 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
     missing_categories = [row["name"] for row in readiness["checklist"] if not row["checked"]]
     expiring_items = [a for a in alerts if a.type == "expiring_soon"]
     expired_items = [a for a in alerts if a.type == "expired"]
+    readiness_percent = round((checked_count / readiness["checklist_total"]) * 100) if readiness["checklist_total"] else 0
+    paired_phone_count = len(paired_rows)
+    batch_count = len(items)
+    inventory_group_count = len(inventory_groups)
+    sync_status_label = format_time_ms(last_sync_time_ms) if last_sync_time_ms else "Awaiting first sync"
     next_step = (
-        "Generate or scan the pairing QR so a phone can connect to this GO BAG."
+        "Pair a phone to enable sync and live monitoring for this GO BAG."
         if not paired
-        else "Use the Android app or this Pi inventory manager, then sync this GO BAG."
+        else "Review bag status here, then use the Android app for any inventory changes."
     )
     summary_cards = [
-        ("Status", readiness["device_status"], "Connected" if paired else "Waiting for a phone"),
-        ("Readiness", readiness["bag_readiness"], f"{checked_count} of {readiness['checklist_total']} categories covered"),
-        ("Last Sync", format_time_ms(last_sync_time_ms), f"{len(expired_items)} expired, {len(expiring_items)} near expiry"),
+        ("Status", readiness["bag_readiness"], readiness["device_status"]),
+        ("Expired", str(len(expired_items)), f"{len(expiring_items)} near expiry"),
+        ("Missing", str(len(missing_categories)), "Checklist categories"),
+        ("Inventory", f"{inventory_group_count} groups", f"{batch_count} local batches"),
+        ("Last Sync", sync_status_label, f"{paired_phone_count} paired phone(s)"),
     ]
-    readiness_alert_rows = "".join(
-        [f'<div class="alert-row">{escape(alert)}</div>' for alert in readiness["alerts"]]
-    ) or '<div class="empty-state">No readiness alerts.</div>'
-    expiry_alert_rows = "".join(
-        [
-            f'<div class="alert-row"><strong>{escape(a.item_name)}</strong><br>{escape(a.bag_name)} | {escape("Expired" if a.type == "expired" else "Expiring soon")} | {escape(format_expiry_date_ms(a.expiry_date_ms))}</div>'
-            for a in alerts
-        ]
-    ) or '<div class="empty-state">No expiry alerts.</div>'
+    readiness_alert_rows = render_readiness_alert_rows_html(readiness)
+    expiry_alert_rows = render_expiry_alert_rows_html(alerts)
     missing_html = (
         "".join([f'<span class="tag warn">{escape(category)}</span>' for category in missing_categories])
         if missing_categories
@@ -3666,17 +3719,28 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         "edit_item": edit_item,
         "readiness": readiness,
         "checked_count": checked_count,
+        "checklist_total": readiness["checklist_total"],
+        "readiness_percent": readiness_percent,
         "last_sync_time_ms": last_sync_time_ms,
+        "sync_status_label": sync_status_label,
         "pair": pair,
         "paired": paired,
+        "paired_phone_count": paired_phone_count,
         "next_step": next_step,
         "summary_html": render_summary_html(summary_cards),
         "hero_tags_html": render_hero_tags_html(paired, readiness, bag, len(items)),
+        "checklist_rows_html": render_checklist_rows_html(readiness["checklist"]),
         "readiness_alert_rows": readiness_alert_rows,
         "expiry_alert_rows": expiry_alert_rows,
         "missing_html": missing_html,
         "pairing_card_html": render_pairing_card_html(base_url, pair, pi_device_id, bag, paired),
         "inventory_groups_html": render_inventory_groups_html(inventory_groups),
+        "inventory_groups": inventory_groups,
+        "inventory_group_count": inventory_group_count,
+        "batch_count": batch_count,
+        "expired_count": len(expired_items),
+        "expiring_count": len(expiring_items),
+        "missing_count": len(missing_categories),
         "phone_rows_html": render_phone_rows_html(paired_rows),
         "inventory_notice": inventory_notice,
         "bag_size_options": bag_size_options,
@@ -3722,8 +3786,10 @@ def ui_state(request: Request) -> dict:
         "next_step": view_model["next_step"],
         "summary_html": view_model["summary_html"],
         "hero_tags_html": view_model["hero_tags_html"],
+        "checklist_rows_html": view_model["checklist_rows_html"],
         "readiness_alert_rows": view_model["readiness_alert_rows"],
         "expiry_alert_rows": view_model["expiry_alert_rows"],
+        "missing_html": view_model["missing_html"],
         "pairing_card_html": view_model["pairing_card_html"],
         "pair_expires_label": format_time_ms(int(view_model["pair"]["expires_at"])),
         "inventory_groups_html": view_model["inventory_groups_html"],
@@ -3731,6 +3797,16 @@ def ui_state(request: Request) -> dict:
         "phone_rows_html": view_model["phone_rows_html"],
         "bag_name": view_model["bag"].name,
         "bag_size_label": bag_size_label(view_model["bag"].size_liters),
+        "checked_count": view_model["checked_count"],
+        "checklist_total": view_model["checklist_total"],
+        "readiness_percent": view_model["readiness_percent"],
+        "sync_status_label": view_model["sync_status_label"],
+        "paired_phone_count": view_model["paired_phone_count"],
+        "expired_count": view_model["expired_count"],
+        "expiring_count": view_model["expiring_count"],
+        "missing_count": view_model["missing_count"],
+        "inventory_group_count": view_model["inventory_group_count"],
+        "batch_count": view_model["batch_count"],
     }
 
 
@@ -4016,30 +4092,13 @@ def home(request: Request) -> HTMLResponse:
     edit_item_id = request.query_params.get("edit_item_id", "").strip()
     view_model = build_dashboard_view_model(request, edit_item_id=edit_item_id)
     bag = view_model["bag"]
-    edit_item = view_model["edit_item"]
     readiness = view_model["readiness"]
-    category_rows = view_model["category_rows"]
     notice = request.query_params.get("notice", "").strip()
     error = request.query_params.get("error", "").strip()
     open_scan = request.query_params.get("scan", "").strip() == "1"
     admin_query = f"?token={ADMIN_TOKEN}" if ADMIN_TOKEN else ""
-    category_options = "".join(
-        [
-            f'<option value="{escape(row["id"])}" {"selected" if edit_item and edit_item.category_id == row["id"] else ""}>{escape(row["name"])}</option>'
-            for row in category_rows
-        ]
-    )
-    checklist_rows = "".join(
-        [
-            f'<div class="check-row {"ok" if c["checked"] else "warn"}"><span>{escape(c["name"])}</span><strong>{"Ready" if c["checked"] else "Missing"}</strong></div>'
-            for c in readiness["checklist"]
-        ]
-    )
-    readiness_percent = (
-        round((view_model["checked_count"] / readiness["checklist_total"]) * 100)
-        if readiness["checklist_total"]
-        else 0
-    )
+    inventory_groups = view_model["inventory_groups"]
+    readiness_percent = view_model["readiness_percent"]
     readiness_color = (
         "var(--success)"
         if readiness_percent >= 90
@@ -4047,20 +4106,349 @@ def home(request: Request) -> HTMLResponse:
         if readiness_percent >= 51
         else "var(--danger)"
     )
-    inventory_form_kicker = "Edit supply batch" if edit_item else "New supply item"
-    inventory_form_title = "Update this inventory batch" if edit_item else "Add a supply batch"
-    inventory_form_description = (
-        "Adjust quantity, expiry, notes, or packed state for the selected batch."
-        if edit_item
-        else "Manual add and USB scan both store batches locally, then sync later to the phone."
+    readiness_tone = "ok" if readiness_percent >= 90 else "warn" if readiness_percent >= 51 else "danger"
+    sync_tone = "ok" if view_model["paired"] else "warn"
+    missing_categories = [row["name"] for row in readiness["checklist"] if not row["checked"]]
+    inventory_categories = sorted({normalize_category(group.category) for group in inventory_groups})
+    inventory_filter_buttons = "".join(
+        [
+            f'<button type="button" class="filter-pill {"active" if index == 0 else ""}" data-category-filter="{escape(category.lower())}">{escape(category)}</button>'
+            for index, category in enumerate(["All"] + inventory_categories)
+        ]
     )
-    inventory_submit_label = "Update inventory batch" if edit_item else "Manual add"
     brand_icon_uri = redesign_icon_data_uri()
     brand_mark_inner = (
         f'<img src="{brand_icon_uri}" alt="GO BAG icon">'
         if brand_icon_uri
         else "GB"
     )
+    dashboard_screen = f"""
+    <section class="app-screen is-active" data-screen="dashboard" aria-labelledby="dashboard-title">
+      <div class="screen-stack">
+        <section class="hero-shell dashboard-hero">
+          <div class="hero-shell-inner">
+            <div class="hero-kicker">Mission dashboard</div>
+            <div class="hero-score-row">
+              <div class="readiness-ring" id="dashboard-readiness-ring" style="--score-color: {readiness_color}; --readiness-angle: {round(readiness_percent * 3.6)}deg;">
+                <div class="readiness-score" id="dashboard-readiness-score">{readiness_percent}<span>%</span></div>
+              </div>
+              <div class="hero-text">
+                <h1 id="dashboard-title"><span id="hero-bag-name">{escape(bag.name)}</span></h1>
+                <p class="hero-note" id="hero-next-step">{escape(view_model['next_step'])}</p>
+                <div class="hero-tags" id="hero-tags">{view_model['hero_tags_html']}</div>
+              </div>
+            </div>
+            <div class="hero-progress">
+              <div class="progress-meta">
+                <span>Checklist coverage</span>
+                <strong id="coverage-label">{view_model['checked_count']}/{readiness['checklist_total']} categories covered</strong>
+              </div>
+              <div class="progress-bar"><span id="coverage-progress" style="width: {readiness_percent}%; --score-color: {readiness_color};"></span></div>
+            </div>
+            <section class="summary-grid" aria-label="Status" id="summary-grid">
+              {view_model['summary_html']}
+            </section>
+          </div>
+        </section>
+
+        <section class="dashboard-grid">
+          <section class="panel mission-panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Quick actions</div>
+                <div class="panel-note">Fast access to the core monitoring tools on this Pi touchscreen.</div>
+              </div>
+              <div class="pill {readiness_tone}" id="bag-size-badge">{escape(bag_size_label(bag.size_liters))}</div>
+            </div>
+            <div class="quick-action-grid">
+              <button type="button" class="quick-link primary" data-open-scan="1">
+                <span><strong>Scan Item</strong><small>USB QR camera</small></span>
+                <span class="quick-link-icon" aria-hidden="true">QR</span>
+              </button>
+              <button type="button" class="quick-link" data-nav-screen="check">
+                <span><strong>Check Mode</strong><small>Checklist coverage</small></span>
+                <span class="quick-link-icon" aria-hidden="true">&#10003;</span>
+              </button>
+              <button type="button" class="quick-link" data-nav-screen="sync">
+                <span><strong>Sync Status</strong><small>Phone link + pairing</small></span>
+                <span class="quick-link-icon" aria-hidden="true">&#8645;</span>
+              </button>
+              <button type="button" class="quick-link" data-nav-screen="inventory">
+                <span><strong>View Inventory</strong><small>Read-only grouped list</small></span>
+                <span class="quick-link-icon" aria-hidden="true">&#9776;</span>
+              </button>
+              <button type="button" class="quick-link" data-nav-screen="settings">
+                <span><strong>Settings</strong><small>Display + device info</small></span>
+                <span class="quick-link-icon" aria-hidden="true">&#9881;</span>
+              </button>
+            </div>
+            <div class="section-divider"></div>
+            <div class="panel-subtitle">Missing categories</div>
+            <div class="tag-row" id="missing-tags">{view_model['missing_html']}</div>
+          </section>
+
+          <section class="panel status-cluster-panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Bag at a glance</div>
+                <div class="panel-note">The Pi stays view-only here. Make inventory changes from the Android phone app.</div>
+              </div>
+            </div>
+            <div class="status-cluster-grid">
+              <div class="subpanel status-cluster-card">
+                <div class="panel-subtitle">Current bag</div>
+                <div class="status-card-value" id="bag-name-label">{escape(bag.name)}</div>
+                <div class="status-card-note">{escape(bag_size_label(bag.size_liters))} loadout on this Raspberry Pi</div>
+              </div>
+              <div class="subpanel status-cluster-card">
+                <div class="panel-subtitle">Last sync</div>
+                <div class="status-card-value" id="sync-status-label">{escape(view_model['sync_status_label'])}</div>
+                <div class="status-card-note"><span id="paired-phone-count">{view_model['paired_phone_count']}</span> paired phone(s)</div>
+              </div>
+              <div class="subpanel status-cluster-card">
+                <div class="panel-subtitle">Expiring soon</div>
+                <div class="status-card-value"><span id="expiring-count">{view_model['expiring_count']}</span> items</div>
+                <div class="status-card-note"><span id="expired-count">{view_model['expired_count']}</span> already expired</div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="panel alerts-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Alerts watchlist</div>
+              <div class="panel-note">Critical issues stay one tap away from checklist review or inventory detail.</div>
+            </div>
+          </div>
+          <div class="alert-columns dashboard-alert-columns">
+            <div class="subpanel">
+              <div class="panel-subtitle">Readiness</div>
+              <div id="alerts-readiness">{view_model['readiness_alert_rows']}</div>
+            </div>
+            <div class="subpanel">
+              <div class="panel-subtitle">Expiry</div>
+              <div id="alerts-expiry">{view_model['expiry_alert_rows']}</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+    """
+    inventory_screen = f"""
+    <section class="app-screen" data-screen="inventory" aria-labelledby="inventory-title">
+      <div class="screen-stack">
+        <section class="panel inventory-screen-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title" id="inventory-title">Inventory</div>
+              <div class="panel-note">Read-only grouped batches from the local Pi store. Use the phone app for edits and updates.</div>
+            </div>
+            <div class="pill neutral"><span id="inventory-group-count">{view_model['inventory_group_count']}</span> groups</div>
+          </div>
+          <div class="inventory-search-shell">
+            <input type="text" id="inventory-search" placeholder="Search item, category, or notes" autocomplete="off">
+          </div>
+          <div class="filter-pill-row" id="inventory-filter-bar">
+            {inventory_filter_buttons}
+          </div>
+          <div class="inventory-note-banner" id="inventory-live-note">{escape(view_model['inventory_notice'])}</div>
+          <section class="inventory-groups-shell">
+            <div class="inventory-groups-head">
+              <div>
+                <div class="inventory-groups-kicker">Grouped inventory</div>
+                <div class="inventory-groups-title">View-only supply batches</div>
+                <div class="inventory-groups-caption">Open a group to inspect expiration, quantity, packed status, and notes without changing Pi data.</div>
+              </div>
+              <div class="inventory-groups-meta">
+                <span class="micro-chip">Phone manages edits</span>
+                <span class="micro-chip"><span id="batch-count">{view_model['batch_count']}</span> batches</span>
+              </div>
+            </div>
+            <div class="inventory-empty hidden" id="inventory-empty">No grouped inventory matches this filter.</div>
+            <div id="inventory-groups">{view_model['inventory_groups_html']}</div>
+          </section>
+        </section>
+      </div>
+    </section>
+    """
+    check_screen = f"""
+    <section class="app-screen" data-screen="check" aria-labelledby="check-title">
+      <div class="screen-stack">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title" id="check-title">Check Mode</div>
+              <div class="panel-note">Review category coverage and tap any alert to see what needs attention before leaving.</div>
+            </div>
+            <div class="pill {readiness_tone}"><span id="check-readiness-percent">{readiness_percent}</span>% ready</div>
+          </div>
+          <div class="screen-meta-grid">
+            <div class="subpanel">
+              <div class="panel-subtitle">Coverage summary</div>
+              <div class="status-card-value" id="check-coverage-value">{view_model['checked_count']}/{readiness['checklist_total']}</div>
+              <div class="status-card-note">Core checklist categories covered</div>
+            </div>
+            <div class="subpanel">
+              <div class="panel-subtitle">Missing now</div>
+              <div class="status-card-value" id="missing-count">{view_model['missing_count']}</div>
+              <div class="status-card-note">{escape(", ".join(missing_categories[:2])) if missing_categories else "All core categories covered"}</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Checklist</div>
+              <div class="panel-note">Every category below should show ready before the bag is mission-ready.</div>
+            </div>
+          </div>
+          <div id="checklist-rows">{view_model['checklist_rows_html']}</div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Actionable alerts</div>
+              <div class="panel-note">Tap an alert to jump straight to the relevant screen.</div>
+            </div>
+          </div>
+          <div class="alert-columns">
+            <div class="subpanel">
+              <div class="panel-subtitle">Readiness</div>
+              <div id="check-alerts-readiness">{view_model['readiness_alert_rows']}</div>
+            </div>
+            <div class="subpanel">
+              <div class="panel-subtitle">Expiry</div>
+              <div id="check-alerts-expiry">{view_model['expiry_alert_rows']}</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+    """
+    sync_screen = f"""
+    <section class="app-screen" data-screen="sync" aria-labelledby="sync-title">
+      <div class="screen-stack">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title" id="sync-title">Sync & pairing</div>
+              <div class="panel-note">The phone initiates sync. This Pi screen shows the current connection state and pairing controls.</div>
+            </div>
+            <div class="pill {sync_tone}" id="sync-pill-detail">{escape(readiness['device_status'])}</div>
+          </div>
+          <div class="screen-meta-grid">
+            <div class="subpanel">
+              <div class="panel-subtitle">Last sync</div>
+              <div class="status-card-value" id="sync-status-detail">{escape(view_model['sync_status_label'])}</div>
+              <div class="status-card-note">Latest phone-to-Pi checkpoint</div>
+            </div>
+            <div class="subpanel">
+              <div class="panel-subtitle">Paired phones</div>
+              <div class="status-card-value" id="sync-phone-count">{view_model['paired_phone_count']}</div>
+              <div class="status-card-note">Devices allowed to sync</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="sync-grid">
+          <section class="panel" id="pairing-panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Pair phone</div>
+                <div class="panel-note">Use this QR or the pair code in the Android app to connect the Pi hub.</div>
+              </div>
+              <div class="pill warn" id="pair-expires">Expires {escape(format_time_ms(int(view_model['pair']['expires_at'])))}</div>
+            </div>
+            <div id="pairing-card">{view_model['pairing_card_html']}</div>
+            <div class="button-row compact">
+              <form method="post" action="/ui/pair-code/new{admin_query}">
+                <button type="submit">Generate new pair code</button>
+              </form>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Linked phones</div>
+                <div class="panel-note">Visibility only. Use revoke if you need to force a new pairing flow.</div>
+              </div>
+            </div>
+            <div id="paired-phones">{view_model['phone_rows_html']}</div>
+            <form method="post" action="/ui/revoke_tokens{admin_query}">
+              <button type="submit" class="secondary danger">Revoke all phone access</button>
+            </form>
+          </section>
+        </section>
+      </div>
+    </section>
+    """
+    settings_screen = f"""
+    <section class="app-screen" data-screen="settings" aria-labelledby="settings-title">
+      <div class="screen-stack">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title" id="settings-title">Settings</div>
+              <div class="panel-note">Display tuning, device details, and safe power controls for this embedded touchscreen.</div>
+            </div>
+          </div>
+          <div class="settings-grid-compact">
+            <div class="subpanel status-cluster-card">
+              <div class="panel-subtitle">Device</div>
+              <div class="status-card-value">{escape(DEVICE_NAME)}</div>
+              <div class="status-card-note">Raspberry Pi GO BAG hub</div>
+            </div>
+            <div class="subpanel status-cluster-card">
+              <div class="panel-subtitle">Access URL</div>
+              <div class="status-card-value settings-url">{escape(view_model['base_url'])}</div>
+              <div class="status-card-note">Used by the Android phone app for pairing and sync</div>
+            </div>
+            <div class="subpanel status-cluster-card">
+              <div class="panel-subtitle">Bag profile</div>
+              <div class="status-card-value">{escape(bag_size_label(bag.size_liters))}</div>
+              <div class="status-card-note">{escape(bag.name)} is displayed here read-only</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Display controls</div>
+              <div class="panel-note">Theme, zoom, and system power stay available in the header for quick touch access.</div>
+            </div>
+          </div>
+          <div class="settings-list">
+            <div class="list-row">
+              <div>
+                <div class="row-title">Theme mode</div>
+                <div class="row-subtitle">Use the sun and moon button in the top bar to switch between light and dark.</div>
+              </div>
+              <div class="pill">Header control</div>
+            </div>
+            <div class="list-row">
+              <div>
+                <div class="row-title">Content zoom</div>
+                <div class="row-subtitle">Use the minus and plus buttons in the top bar to fit more panels on the 3.5-inch display.</div>
+              </div>
+              <div class="pill">Header control</div>
+            </div>
+            <div class="list-row">
+              <div>
+                <div class="row-title">Power off</div>
+                <div class="row-subtitle">The power button safely shuts down the Pi after confirmation.</div>
+              </div>
+              <div class="pill danger">Protected</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+    """
     html = f"""
 <!doctype html>
 <html>
@@ -4092,6 +4480,7 @@ def home(request: Request) -> HTMLResponse:
       scroll-behavior: smooth;
       --touch-keyboard-offset: 0px;
       --page-padding: 18px 16px 40px;
+      --bottom-nav-height: 82px;
       --topbar-padding: 14px 16px;
       --topbar-gap: 16px;
       --brand-gap: 14px;
@@ -4120,6 +4509,7 @@ def home(request: Request) -> HTMLResponse:
     }}
     html[data-ui-scale="fit"] {{
       --page-padding: 10px 10px 24px;
+      --bottom-nav-height: 74px;
       --overview-gap: 10px;
       --hero-padding: 14px;
       --panel-padding: 14px;
@@ -4167,6 +4557,7 @@ def home(request: Request) -> HTMLResponse:
       max-width: 1320px;
       margin: 0 auto;
       padding: var(--page-padding);
+      padding-bottom: calc(var(--bottom-nav-height) + 18px + var(--touch-keyboard-offset));
     }}
     h1, h2, h3, p {{ margin: 0; }}
     .topbar {{
@@ -4497,6 +4888,7 @@ def home(request: Request) -> HTMLResponse:
     .summary-grid {{
       display: grid;
       gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }}
     .stat-card {{
       position: relative;
@@ -4634,8 +5026,8 @@ def home(request: Request) -> HTMLResponse:
       font-size: 0.92rem;
       line-height: 1.4;
     }}
-    .check-row strong.ok {{ color: var(--accent); }}
-    .check-row strong.warn {{ color: var(--warn); }}
+    .check-row.ok strong {{ color: var(--success); }}
+    .check-row.warn strong {{ color: var(--warn); }}
     .alert-row {{
       padding: 12px 14px;
       border-radius: 10px;
@@ -5041,7 +5433,7 @@ def home(request: Request) -> HTMLResponse:
       margin-top: 12px;
       margin-bottom: 12px;
     }}
-    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button) {{
+    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button):not(.bottom-nav-button):not(.filter-pill):not(.alert-row) {{
       width: 100%;
       min-height: var(--action-button-height);
       border: 1px solid transparent;
@@ -5054,10 +5446,10 @@ def home(request: Request) -> HTMLResponse:
       padding: var(--action-button-padding);
       transition: transform 150ms ease, filter 150ms ease, background 150ms ease, border-color 150ms ease;
     }}
-    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button):hover {{
+    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button):not(.bottom-nav-button):not(.filter-pill):not(.alert-row):hover {{
       filter: brightness(0.96);
     }}
-    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button):active {{
+    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button):not(.bottom-nav-button):not(.filter-pill):not(.alert-row):active {{
       transform: translateY(1px);
     }}
     button.secondary {{
@@ -5073,6 +5465,270 @@ def home(request: Request) -> HTMLResponse:
     .empty-state {{
       color: var(--muted);
       padding: 12px 2px 6px;
+    }}
+    .app-shell {{
+      position: relative;
+    }}
+    .screen-shell {{
+      display: grid;
+    }}
+    .app-screen {{
+      display: none;
+      animation: screen-fade 180ms ease;
+    }}
+    .app-screen.is-active {{
+      display: block;
+    }}
+    @keyframes screen-fade {{
+      from {{
+        opacity: 0;
+        transform: translateY(6px);
+      }}
+      to {{
+        opacity: 1;
+        transform: translateY(0);
+      }}
+    }}
+    .screen-stack {{
+      display: grid;
+      gap: 14px;
+    }}
+    .dashboard-hero {{
+      min-height: 0;
+    }}
+    .dashboard-grid,
+    .sync-grid,
+    .settings-grid-compact,
+    .screen-meta-grid,
+    .status-cluster-grid {{
+      display: grid;
+      gap: 12px;
+    }}
+    .quick-action-grid {{
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }}
+    .status-card-value {{
+      margin-top: 8px;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.35rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+    }}
+    .status-card-note {{
+      margin-top: 6px;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 0.92rem;
+    }}
+    .secondary-pill {{
+      color: var(--ink);
+    }}
+    .secondary-pill.ok {{
+      color: var(--success);
+    }}
+    .secondary-pill.warn {{
+      color: var(--warn);
+    }}
+    .nav-toggle-button {{
+      text-decoration: none;
+      cursor: pointer;
+    }}
+    .inventory-search-shell {{
+      margin-top: 6px;
+    }}
+    .inventory-note-banner {{
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--panel-muted);
+      color: var(--muted);
+      line-height: 1.45;
+    }}
+    .filter-pill-row {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }}
+    .filter-pill {{
+      min-height: 34px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel-muted);
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }}
+    .filter-pill.active {{
+      background: var(--accent-soft);
+      border-color: transparent;
+      color: var(--accent);
+    }}
+    .inventory-empty {{
+      padding: 16px 4px 4px;
+      color: var(--muted);
+      text-align: center;
+    }}
+    .inventory-group-card {{
+      --inventory-accent: var(--accent);
+      --inventory-accent-soft: var(--accent-soft);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: 0 8px 20px var(--shadow);
+      margin-top: 12px;
+      overflow: hidden;
+    }}
+    .inventory-group-card:first-child {{
+      margin-top: 0;
+    }}
+    .inventory-group-summary {{
+      list-style: none;
+      padding: 16px;
+      cursor: pointer;
+    }}
+    .inventory-group-summary::-webkit-details-marker {{
+      display: none;
+    }}
+    .inventory-group-expanded {{
+      padding: 0 16px 16px;
+      border-top: 1px solid var(--line);
+      background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.04));
+    }}
+    .inventory-batches-readonly {{
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }}
+    .inventory-batch-card {{
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--inventory-accent);
+      border-radius: 10px;
+      padding: 14px;
+      background: var(--panel-muted);
+      display: grid;
+      gap: 12px;
+      scroll-margin-top: 96px;
+      transition: box-shadow 150ms ease, border-color 150ms ease, background 150ms ease;
+    }}
+    .inventory-batch-card.packed {{
+      border-left-color: var(--success);
+    }}
+    .inventory-batch-card.needs-pack {{
+      border-left-color: var(--warn);
+    }}
+    .inventory-batch-card.focused {{
+      box-shadow: 0 0 0 2px var(--accent-soft), 0 12px 24px var(--shadow-strong);
+      border-color: var(--accent);
+      background: linear-gradient(180deg, var(--panel-muted), var(--accent-soft));
+    }}
+    .inventory-batch-detail-grid {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }}
+    .batch-detail-cell {{
+      display: grid;
+      gap: 4px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }}
+    .batch-detail-cell span {{
+      color: var(--muted);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }}
+    .batch-detail-cell strong {{
+      font-size: 0.92rem;
+      line-height: 1.35;
+    }}
+    .batch-card-notes.subtle {{
+      font-style: italic;
+      opacity: 0.82;
+    }}
+    .alert-row.actionable {{
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 150ms ease, transform 150ms ease, background 150ms ease;
+    }}
+    .alert-row.actionable:hover,
+    .alert-row.actionable:active {{
+      transform: translateY(1px);
+      border-color: var(--accent);
+    }}
+    .alert-row.warning {{
+      background: var(--warn-soft);
+      border-color: transparent;
+    }}
+    .alert-row.critical {{
+      background: var(--danger-soft);
+      border-color: transparent;
+    }}
+    .settings-list {{
+      display: grid;
+      gap: 10px;
+    }}
+    .settings-url {{
+      font-size: 1rem;
+      line-height: 1.2;
+      word-break: break-word;
+    }}
+    .bottom-nav {{
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 32;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+      background: var(--topbar);
+      border-top: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 -10px 22px var(--shadow);
+    }}
+    .bottom-nav-button {{
+      min-height: 60px;
+      display: grid;
+      gap: 3px;
+      align-content: center;
+      justify-items: center;
+      padding: 8px 6px;
+      border-radius: 14px;
+      border: 1px solid transparent;
+      background: var(--panel);
+      color: var(--muted);
+      cursor: pointer;
+    }}
+    .bottom-nav-button.active {{
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: transparent;
+      box-shadow: 0 8px 16px rgba(255, 107, 0, 0.16);
+    }}
+    .bottom-nav-icon {{
+      font-size: 1rem;
+      line-height: 1;
+    }}
+    .bottom-nav-label {{
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
     }}
     .hidden {{
       display: none !important;
@@ -5592,6 +6248,11 @@ def home(request: Request) -> HTMLResponse:
     html[data-ui-scale="fit"] .hero-progress,
     html[data-ui-scale="fit"] .summary-grid,
     html[data-ui-scale="fit"] .alert-columns,
+    html[data-ui-scale="fit"] .screen-stack,
+    html[data-ui-scale="fit"] .dashboard-grid,
+    html[data-ui-scale="fit"] .screen-meta-grid,
+    html[data-ui-scale="fit"] .sync-grid,
+    html[data-ui-scale="fit"] .settings-grid-compact,
     html[data-ui-scale="fit"] .content-grid,
     html[data-ui-scale="fit"] .content-column,
     html[data-ui-scale="fit"] .inventory-panel,
@@ -5627,6 +6288,17 @@ def home(request: Request) -> HTMLResponse:
     html[data-ui-scale="fit"] .quick-link small {{
       display: none;
     }}
+    html[data-ui-scale="fit"] .bottom-nav {{
+      gap: 6px;
+      padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+    }}
+    html[data-ui-scale="fit"] .bottom-nav-button {{
+      min-height: 54px;
+      padding: 6px 4px;
+    }}
+    html[data-ui-scale="fit"] .bottom-nav-label {{
+      font-size: 0.66rem;
+    }}
     html[data-ui-scale="fit"] .tag,
     html[data-ui-scale="fit"] .pill,
     html[data-ui-scale="fit"] .micro-chip {{
@@ -5642,6 +6314,10 @@ def home(request: Request) -> HTMLResponse:
       margin-bottom: 10px;
     }}
     @media (min-width: 720px) {{
+      .dashboard-grid {{
+        grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+        align-items: start;
+      }}
       .hero-score-row {{
         grid-template-columns: auto 1fr;
       }}
@@ -5650,6 +6326,15 @@ def home(request: Request) -> HTMLResponse:
       }}
       .alert-columns {{
         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+      .status-cluster-grid,
+      .screen-meta-grid,
+      .settings-grid-compact {{
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }}
+      .sync-grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: start;
       }}
       .qr-wrap {{
         grid-template-columns: 240px 1fr;
@@ -5708,6 +6393,14 @@ def home(request: Request) -> HTMLResponse:
       .quick-actions {{
         grid-template-columns: 1fr;
       }}
+      .quick-action-grid,
+      .status-cluster-grid,
+      .screen-meta-grid,
+      .sync-grid,
+      .settings-grid-compact,
+      .inventory-batch-detail-grid {{
+        grid-template-columns: 1fr;
+      }}
     }}
     @media (max-width: 520px), (max-height: 360px) {{
       .topbar {{
@@ -5724,6 +6417,18 @@ def home(request: Request) -> HTMLResponse:
       .power-button {{
         flex: 0 0 auto;
       }}
+      .bottom-nav {{
+        gap: 4px;
+        padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+      }}
+      .bottom-nav-button {{
+        min-height: 50px;
+        border-radius: 12px;
+      }}
+      .bottom-nav-label {{
+        font-size: 0.62rem;
+        letter-spacing: 0.04em;
+      }}
     }}
 </style>
 </head>
@@ -5732,15 +6437,23 @@ def home(request: Request) -> HTMLResponse:
     <div class="topbar-brand">
       <div class="brand-mark">{brand_mark_inner}</div>
       <div>
-        <div class="topbar-kicker">Pi Hub Dashboard</div>
+        <div class="topbar-kicker">Pi Tactical Hub</div>
         <div class="topbar-title">GO BAG Command Center</div>
       </div>
     </div>
     <div class="topbar-actions">
       <div class="readiness-pill">
-        <span class="readiness-pill-value">{readiness_percent}%</span>
+        <span class="readiness-pill-value" id="topbar-readiness-value">{readiness_percent}%</span>
         <span class="readiness-pill-label">Ready</span>
       </div>
+      <div class="readiness-pill secondary-pill {sync_tone}" id="topbar-sync-pill">
+        <span class="readiness-pill-value" id="topbar-sync-status">{escape(readiness['device_status'])}</span>
+        <span class="readiness-pill-label">Sync</span>
+      </div>
+      <button type="button" class="theme-toggle nav-toggle-button" data-nav-screen="settings" aria-label="Open settings" title="Open settings">
+        <span class="theme-toggle-icon" aria-hidden="true">&#9881;</span>
+        <span class="theme-toggle-label">Settings</span>
+      </button>
       <div class="view-controls" role="group" aria-label="Adjust display size">
         <button type="button" class="zoom-toggle" id="zoom-out" aria-label="Zoom out" title="Zoom out">-</button>
         <span class="zoom-indicator" id="zoom-indicator">100%</span>
@@ -5756,243 +6469,40 @@ def home(request: Request) -> HTMLResponse:
       </button>
     </div>
   </header>
-  <main>
+  <main class="app-shell">
     <div class="banner notice {'hidden' if not notice else ''}" id="page-notice">{escape(notice)}</div>
     <div class="banner error {'hidden' if not error else ''}" id="page-error">{escape(error)}</div>
 
-    <section class="overview-grid">
-      <section class="hero-shell">
-        <div class="hero-shell-inner">
-          <div class="hero-kicker">System readiness</div>
-          <div class="hero-score-row">
-            <div class="readiness-ring" style="--score-color: {readiness_color}; --readiness-angle: {round(readiness_percent * 3.6)}deg;">
-              <div class="readiness-score">{readiness_percent}<span>%</span></div>
-            </div>
-            <div class="hero-text">
-              <h1 id="hero-bag-name">{escape(bag.name)}</h1>
-              <p class="hero-note" id="hero-next-step">{escape(view_model['next_step'])}</p>
-              <div class="hero-tags" id="hero-tags">{view_model['hero_tags_html']}</div>
-            </div>
-          </div>
-          <div class="hero-progress">
-            <div class="progress-meta">
-              <span>Checklist coverage</span>
-              <strong>{view_model['checked_count']}/{readiness['checklist_total']} categories covered</strong>
-            </div>
-            <div class="progress-bar"><span style="width: {readiness_percent}%; --score-color: {readiness_color};"></span></div>
-          </div>
-          <section class="summary-grid" aria-label="Status" id="summary-grid">
-            {view_model['summary_html']}
-          </section>
-        </div>
-      </section>
+    <div class="screen-shell">
+      {dashboard_screen}
+      {inventory_screen}
+      {check_screen}
+      {sync_screen}
+      {settings_screen}
+    </div>
 
-      <section class="panel mission-panel">
-        <div class="panel-head">
-          <div>
-            <div class="panel-title">Operational shortcuts</div>
-            <div class="panel-note">Fast actions for pairing, inventory, and scanner control on a small landscape touchscreen.</div>
-          </div>
-          <div class="pill" id="bag-size-badge">{escape(bag_size_label(bag.size_liters))}</div>
-        </div>
-        <div class="quick-actions">
-          <button type="button" class="quick-link primary" data-open-scan="1">
-            <span>
-              <strong>Scan Item</strong>
-              <small>USB camera capture</small>
-            </span>
-            <span class="quick-link-icon" aria-hidden="true">QR</span>
-          </button>
-          <a class="quick-link" href="#pairing-panel">
-            <span>
-              <strong>Pair Phone</strong>
-              <small>Open QR handoff</small>
-            </span>
-            <span class="quick-link-icon" aria-hidden="true">&rarr;</span>
-          </a>
-          <a class="quick-link" href="#inventory-panel">
-            <span>
-              <strong>Inventory</strong>
-              <small>Add or edit batches</small>
-            </span>
-            <span class="quick-link-icon" aria-hidden="true">&rarr;</span>
-          </a>
-          <a class="quick-link" href="#checklist-panel">
-            <span>
-              <strong>Checklist</strong>
-              <small>Review category coverage</small>
-            </span>
-            <span class="quick-link-icon" aria-hidden="true">&rarr;</span>
-          </a>
-        </div>
-        <div class="section-divider"></div>
-        <div class="panel-subtitle">Missing categories</div>
-        <div class="tag-row">{view_model['missing_html']}</div>
-      </section>
-
-      <section class="panel paired-panel">
-        <div class="panel-head">
-          <div>
-            <div class="panel-title">Paired phones</div>
-            <div class="panel-note">Devices currently allowed to sync with this Raspberry Pi.</div>
-          </div>
-        </div>
-        <div id="paired-phones">{view_model['phone_rows_html']}</div>
-        <form method="post" action="/ui/revoke_tokens{admin_query}">
-          <button type="submit" class="secondary danger">Revoke all phone access</button>
-        </form>
-      </section>
-
-      <section class="panel alerts-panel">
-        <div class="panel-head">
-          <div>
-            <div class="panel-title">Readiness watchlist</div>
-            <div class="panel-note">Catch coverage gaps, expiry issues, and sync blockers before you leave.</div>
-          </div>
-        </div>
-        <div class="alert-columns">
-          <div class="subpanel">
-            <div class="panel-subtitle">Readiness</div>
-            <div id="alerts-readiness">{view_model['readiness_alert_rows']}</div>
-          </div>
-          <div class="subpanel">
-            <div class="panel-subtitle">Expiry</div>
-            <div id="alerts-expiry">{view_model['expiry_alert_rows']}</div>
-          </div>
-        </div>
-      </section>
-    </section>
-
-    <section class="content-grid">
-      <div class="content-column">
-        <section class="panel" id="bag-settings-panel">
-          <div class="panel-head">
-            <div>
-              <div class="panel-title">Bag Settings</div>
-              <div class="panel-note">This Raspberry Pi keeps one local GO BAG. The only bag-specific setting here is the bag size.</div>
-            </div>
-          </div>
-          <div class="list-row" style="margin-top: 0;">
-            <div>
-              <div class="row-title" id="bag-name-label">{escape(bag.name)}</div>
-              <div class="row-subtitle">Device: {escape(DEVICE_NAME)}</div>
-            </div>
-          </div>
-          <form method="post" action="/ui/bag/settings">
-            <div class="field-grid settings-grid">
-              <select name="bag_type" aria-label="Bag size">
-                {view_model['bag_size_options']}
-              </select>
-              <button type="submit">Save bag size</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="panel" id="pairing-panel">
-          <div class="panel-head">
-            <div>
-              <div class="panel-title">Pairing QR</div>
-              <div class="panel-note">Open the Android app, go to Pair, and scan this GO BAG QR code.</div>
-            </div>
-            <div class="pill warn" id="pair-expires">Expires {escape(format_time_ms(int(view_model['pair']['expires_at'])))}</div>
-          </div>
-          <div id="pairing-card">{view_model['pairing_card_html']}</div>
-          <form method="post" action="/ui/pair-code/new{admin_query}">
-            <button type="submit">Generate new pair code</button>
-          </form>
-        </section>
-
-        <section class="panel" id="checklist-panel">
-          <div class="panel-head">
-            <div>
-              <div class="panel-title">Checklist</div>
-              <div class="panel-note">These are the core categories every go-bag should cover.</div>
-            </div>
-            <div class="pill">{view_model['checked_count']}/{readiness['checklist_total']}</div>
-          </div>
-          {checklist_rows}
-        </section>
-      </div>
-
-      <div class="content-column content-column-wide">
-        <section class="panel inventory-panel" id="inventory-panel">
-          <div class="panel-head">
-            <div>
-              <div class="panel-title">Inventory Manager</div>
-              <div class="panel-note">Manual add and QR scan both merge by item name, unit, and category. Different expiration dates stay as separate batches under one grouped item.</div>
-            </div>
-            <div class="pill {'warn' if edit_item else ''}">{'Edit mode' if edit_item else 'Add mode'}</div>
-          </div>
-          <div class="inventory-manager-shell">
-            <section class="inventory-entry-panel">
-              <div class="inventory-form-kicker">{escape(inventory_form_kicker)}</div>
-              <div class="inventory-form-title">{escape(inventory_form_title)}</div>
-              <div class="inventory-form-description">{escape(inventory_form_description)}</div>
-              <form method="post" action="/ui/items/save">
-                <input type="hidden" name="bag_id" value="{escape(bag.bag_id)}">
-                <input type="hidden" name="item_id" value="{escape(edit_item.id if edit_item else '')}">
-                <div class="inventory-form-grid">
-                  <div class="field-grid">
-                    <input type="text" name="name" placeholder="Item name" value="{escape(edit_item.name if edit_item else '')}" required>
-                    <input type="number" step="0.01" min="0.01" name="quantity" placeholder="Quantity" value="{edit_item.quantity if edit_item else '1'}" required>
-                    <input type="text" name="unit" placeholder="Unit" value="{escape(edit_item.unit if edit_item else 'pcs')}" required>
-                  </div>
-                  <div class="field-grid">
-                    <select name="category_id" required>
-                      {category_options}
-                    </select>
-                    <input type="date" name="expiry_date" value="{escape(edit_item.expiry_date if edit_item and edit_item.expiry_date else '')}">
-                    <label class="inventory-checkbox-row">
-                      <input type="checkbox" name="packed_status" {"checked" if edit_item and edit_item.packed_status else ""}>
-                      Mark batch as packed
-                    </label>
-                  </div>
-                  <textarea name="notes" placeholder="Notes">{escape(edit_item.notes if edit_item else '')}</textarea>
-                </div>
-                <div class="button-row">
-                  <button type="submit">{escape(inventory_submit_label)}</button>
-                  <button type="button" class="secondary" data-open-scan="1">Scan with USB camera</button>
-                </div>
-              </form>
-            </section>
-
-            <aside class="inventory-command-panel">
-              <div class="inventory-note-card">
-                <strong>Scanner status</strong>
-                <p id="inventory-live-note">{escape(view_model['inventory_notice'])}</p>
-              </div>
-              <div class="inventory-note-card">
-                <strong>Grouping rule</strong>
-                <p>Batches merge by item name, unit, and category. Expiration dates stay separate so replacements stay precise.</p>
-              </div>
-              <div class="inventory-note-card">
-                <strong>Fast action</strong>
-                <p>Use the USB camera to capture QR labels without leaving this dashboard.</p>
-                <div class="button-row compact">
-                  <button type="button" class="secondary" data-open-scan="1">Open scanner</button>
-                </div>
-              </div>
-            </aside>
-          </div>
-
-          <section class="inventory-groups-shell">
-            <div class="inventory-groups-head">
-              <div>
-                <div class="inventory-groups-kicker">Grouped inventory</div>
-                <div class="inventory-groups-title">Supply batches</div>
-                <div class="inventory-groups-caption">Each grouped card keeps separate batches visible for expiry review, packing status, edit, and delete actions.</div>
-              </div>
-              <div class="inventory-groups-meta">
-                <span class="micro-chip">Local Pi store</span>
-                <span class="micro-chip">Grouped by item</span>
-                <span class="micro-chip">Edit in place</span>
-              </div>
-            </div>
-            <div id="inventory-groups">{view_model['inventory_groups_html']}</div>
-          </section>
-        </section>
-      </div>
-    </section>
+    <nav class="bottom-nav" aria-label="Primary">
+      <button type="button" class="bottom-nav-button active" data-nav-screen="dashboard">
+        <span class="bottom-nav-icon" aria-hidden="true">&#8962;</span>
+        <span class="bottom-nav-label">Dashboard</span>
+      </button>
+      <button type="button" class="bottom-nav-button" data-nav-screen="inventory">
+        <span class="bottom-nav-icon" aria-hidden="true">&#9776;</span>
+        <span class="bottom-nav-label">Inventory</span>
+      </button>
+      <button type="button" class="bottom-nav-button" data-nav-screen="check">
+        <span class="bottom-nav-icon" aria-hidden="true">&#10003;</span>
+        <span class="bottom-nav-label">Check</span>
+      </button>
+      <button type="button" class="bottom-nav-button" data-nav-screen="sync">
+        <span class="bottom-nav-icon" aria-hidden="true">&#8645;</span>
+        <span class="bottom-nav-label">Sync</span>
+      </button>
+      <button type="button" class="bottom-nav-button" data-nav-screen="settings">
+        <span class="bottom-nav-icon" aria-hidden="true">&#9881;</span>
+        <span class="bottom-nav-label">Settings</span>
+      </button>
+    </nav>
 
     <div class="scan-modal hidden" id="scan-modal" aria-hidden="true">
       <section class="scan-dialog" aria-label="USB QR scanner">
@@ -6122,11 +6632,21 @@ def home(request: Request) -> HTMLResponse:
       const scanStatusTitle = document.getElementById("scan-status-title");
       const scanStatusNote = document.getElementById("scan-status-note");
       const touchKeyboard = document.getElementById("touch-keyboard");
-      const scrollStateKey = "gobag-scroll-state";
+      const uiStateStorageKey = "gobag-pi-ui-state";
       const keyboardEligibleSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="date"]):not([type="file"]):not([type="radio"]):not([type="range"]):not([disabled]), textarea:not([disabled])';
+      const screenElements = Array.from(document.querySelectorAll(".app-screen"));
+      const bottomNavButtons = Array.from(document.querySelectorAll(".bottom-nav-button"));
+      const inventorySearch = document.getElementById("inventory-search");
+      const inventoryFilterBar = document.getElementById("inventory-filter-bar");
+      const inventoryEmpty = document.getElementById("inventory-empty");
       let keyboardTarget = null;
       let keyboardShift = false;
       let shutdownPending = false;
+      let activeScreen = "dashboard";
+      let screenScrollPositions = {{}};
+      let inventoryCategoryFilter = "all";
+      let inventorySearchQuery = "";
+      let pendingInventoryFocusItemId = "";
 
       function currentTheme() {{
         return documentRoot.dataset.theme === "dark" ? "dark" : "light";
@@ -6157,13 +6677,26 @@ def home(request: Request) -> HTMLResponse:
         }}
       }}
 
-      function saveScrollState() {{
+      function safeSelectorValue(rawValue) {{
+        const value = String(rawValue || "");
+        if (window.CSS && typeof window.CSS.escape === "function") {{
+          return window.CSS.escape(value);
+        }}
+        return value.replace(/["\\\\]/g, "\\\\$&");
+      }}
+
+      function captureCurrentScreenScroll() {{
+        screenScrollPositions[activeScreen] = Math.max(window.scrollY || 0, 0);
+      }}
+
+      function persistUiState() {{
         try {{
           sessionStorage.setItem(
-            scrollStateKey,
+            uiStateStorageKey,
             JSON.stringify({{
               path: window.location.pathname,
-              y: Math.max(window.scrollY || 0, 0),
+              active_screen: activeScreen,
+              scroll_by_screen: screenScrollPositions,
               ts: Date.now(),
             }}),
           );
@@ -6171,24 +6704,121 @@ def home(request: Request) -> HTMLResponse:
         }}
       }}
 
-      function restoreScrollState() {{
+      function restoreScreenScroll(screenName) {{
+        const top = Math.max(Number(screenScrollPositions[screenName] || 0), 0);
+        const applyScroll = () => {{
+          window.scrollTo({{ top, left: 0, behavior: "auto" }});
+        }};
+        window.requestAnimationFrame(applyScroll);
+        window.setTimeout(applyScroll, 120);
+      }}
+
+      function updateBottomNavState() {{
+        bottomNavButtons.forEach((button) => {{
+          const isActive = button.getAttribute("data-nav-screen") === activeScreen;
+          button.classList.toggle("active", isActive);
+          button.setAttribute("aria-current", isActive ? "page" : "false");
+        }});
+      }}
+
+      function applyInventoryFilters() {{
+        const cards = Array.from(document.querySelectorAll("#inventory-groups .inventory-group-card"));
+        let visibleCount = 0;
+        cards.forEach((card) => {{
+          const category = String(card.getAttribute("data-category") || "");
+          const haystack = String(card.getAttribute("data-search") || "");
+          const matchesCategory = inventoryCategoryFilter === "all" || category === inventoryCategoryFilter;
+          const matchesQuery = !inventorySearchQuery || haystack.includes(inventorySearchQuery);
+          const visible = matchesCategory && matchesQuery;
+          card.classList.toggle("hidden", !visible);
+          if (visible) {{
+            visibleCount += 1;
+          }}
+        }});
+        document.querySelectorAll("[data-category-filter]").forEach((button) => {{
+          button.classList.toggle("active", (button.getAttribute("data-category-filter") || "all") === inventoryCategoryFilter);
+        }});
+        if (inventoryEmpty) {{
+          inventoryEmpty.classList.toggle("hidden", visibleCount !== 0);
+        }}
+      }}
+
+      function focusInventoryItem(itemId) {{
+        const targetId = String(itemId || "").trim();
+        if (!targetId) {{
+          return false;
+        }}
+        const card = document.querySelector(`.inventory-batch-card[data-item-id="${{safeSelectorValue(targetId)}}"]`);
+        if (!(card instanceof HTMLElement)) {{
+          return false;
+        }}
+        const group = card.closest(".inventory-group-card");
+        if (group instanceof HTMLDetailsElement) {{
+          group.open = true;
+        }}
+        document.querySelectorAll(".inventory-batch-card.focused").forEach((node) => {{
+          node.classList.remove("focused");
+        }});
+        card.classList.add("focused");
+        card.scrollIntoView({{ block: "center", behavior: "smooth" }});
+        window.setTimeout(() => {{
+          card.classList.remove("focused");
+        }}, 2200);
+        pendingInventoryFocusItemId = "";
+        return true;
+      }}
+
+      function switchScreen(screenName, options = {{}}) {{
+        const nextScreen = String(screenName || "").trim() || "dashboard";
+        const targetScreen = screenElements.find((screen) => screen.getAttribute("data-screen") === nextScreen);
+        if (!targetScreen) {{
+          return;
+        }}
+        captureCurrentScreenScroll();
+        screenElements.forEach((screen) => {{
+          const isActive = screen === targetScreen;
+          screen.classList.toggle("is-active", isActive);
+          screen.setAttribute("aria-hidden", isActive ? "false" : "true");
+        }});
+        activeScreen = nextScreen;
+        updateBottomNavState();
+        if (typeof options.focusItemId === "string" && options.focusItemId.trim()) {{
+          pendingInventoryFocusItemId = options.focusItemId.trim();
+          inventoryCategoryFilter = "all";
+          inventorySearchQuery = "";
+          if (inventorySearch) {{
+            inventorySearch.value = "";
+          }}
+        }}
+        if (options.restoreScroll === false) {{
+          window.scrollTo({{ top: 0, left: 0, behavior: "auto" }});
+        }} else {{
+          restoreScreenScroll(activeScreen);
+        }}
+        if (activeScreen === "inventory") {{
+          applyInventoryFilters();
+          if (pendingInventoryFocusItemId) {{
+            window.setTimeout(() => {{
+              focusInventoryItem(pendingInventoryFocusItemId);
+            }}, 120);
+          }}
+        }}
+        persistUiState();
+      }}
+
+      function initializeScreenState() {{
         try {{
-          const rawState = sessionStorage.getItem(scrollStateKey);
+          const rawState = sessionStorage.getItem(uiStateStorageKey);
           if (!rawState) {{
+            updateBottomNavState();
             return;
           }}
-          sessionStorage.removeItem(scrollStateKey);
           const state = JSON.parse(rawState);
           if (!state || state.path !== window.location.pathname) {{
             return;
           }}
-          const top = Math.max(Number(state.y || 0), 0);
-          const applyScroll = () => {{
-            window.scrollTo({{ top, left: 0, behavior: "auto" }});
-          }};
-          window.requestAnimationFrame(applyScroll);
-          window.setTimeout(applyScroll, 120);
-          window.setTimeout(applyScroll, 260);
+          screenScrollPositions = typeof state.scroll_by_screen === "object" && state.scroll_by_screen ? state.scroll_by_screen : {{}};
+          switchScreen(String(state.active_screen || "dashboard"), {{ restoreScroll: true }});
         }} catch (_error) {{
         }}
       }}
@@ -6208,6 +6838,16 @@ def home(request: Request) -> HTMLResponse:
 
       function currentUiScale() {{
         return documentRoot.dataset.uiScale === "fit" ? "fit" : "standard";
+      }}
+
+      function readinessColorForPercent(percent) {{
+        if (percent >= 90) {{
+          return "var(--success)";
+        }}
+        if (percent >= 51) {{
+          return "var(--warn)";
+        }}
+        return "var(--danger)";
       }}
 
       function updateZoomControls() {{
@@ -6683,6 +7323,10 @@ def home(request: Request) -> HTMLResponse:
           const summaryGrid = document.getElementById("summary-grid");
           const alertsReadiness = document.getElementById("alerts-readiness");
           const alertsExpiry = document.getElementById("alerts-expiry");
+          const checkAlertsReadiness = document.getElementById("check-alerts-readiness");
+          const checkAlertsExpiry = document.getElementById("check-alerts-expiry");
+          const checklistRows = document.getElementById("checklist-rows");
+          const missingTags = document.getElementById("missing-tags");
           const pairExpires = document.getElementById("pair-expires");
           const pairingCard = document.getElementById("pairing-card");
           const inventoryLiveNote = document.getElementById("inventory-live-note");
@@ -6691,11 +7335,33 @@ def home(request: Request) -> HTMLResponse:
           const heroBagName = document.getElementById("hero-bag-name");
           const bagNameLabel = document.getElementById("bag-name-label");
           const bagSizeBadge = document.getElementById("bag-size-badge");
+          const topbarReadinessValue = document.getElementById("topbar-readiness-value");
+          const topbarSyncPill = document.getElementById("topbar-sync-pill");
+          const topbarSyncStatus = document.getElementById("topbar-sync-status");
+          const dashboardReadinessRing = document.getElementById("dashboard-readiness-ring");
+          const dashboardReadinessScore = document.getElementById("dashboard-readiness-score");
+          const syncStatusLabel = document.getElementById("sync-status-label");
+          const syncStatusDetail = document.getElementById("sync-status-detail");
+          const pairedPhoneCount = document.getElementById("paired-phone-count");
+          const syncPhoneCount = document.getElementById("sync-phone-count");
+          const expiredCount = document.getElementById("expired-count");
+          const expiringCount = document.getElementById("expiring-count");
+          const missingCount = document.getElementById("missing-count");
+          const inventoryGroupCount = document.getElementById("inventory-group-count");
+          const batchCount = document.getElementById("batch-count");
+          const checkReadinessPercent = document.getElementById("check-readiness-percent");
+          const coverageLabel = document.getElementById("coverage-label");
+          const coverageProgress = document.getElementById("coverage-progress");
+          const checkCoverageValue = document.getElementById("check-coverage-value");
           if (heroNextStep) heroNextStep.textContent = state.next_step || "";
           if (heroTags) heroTags.innerHTML = state.hero_tags_html || "";
           if (summaryGrid) summaryGrid.innerHTML = state.summary_html || "";
           if (alertsReadiness) alertsReadiness.innerHTML = state.readiness_alert_rows || "";
           if (alertsExpiry) alertsExpiry.innerHTML = state.expiry_alert_rows || "";
+          if (checkAlertsReadiness) checkAlertsReadiness.innerHTML = state.readiness_alert_rows || "";
+          if (checkAlertsExpiry) checkAlertsExpiry.innerHTML = state.expiry_alert_rows || "";
+          if (checklistRows) checklistRows.innerHTML = state.checklist_rows_html || "";
+          if (missingTags) missingTags.innerHTML = state.missing_html || "";
           if (pairExpires) pairExpires.textContent = `Expires ${{state.pair_expires_label || ""}}`;
           if (pairingCard) pairingCard.innerHTML = state.pairing_card_html || "";
           if (inventoryLiveNote) inventoryLiveNote.textContent = state.inventory_notice || "";
@@ -6704,6 +7370,42 @@ def home(request: Request) -> HTMLResponse:
           if (heroBagName) heroBagName.textContent = state.bag_name || "";
           if (bagNameLabel) bagNameLabel.textContent = state.bag_name || "";
           if (bagSizeBadge) bagSizeBadge.textContent = state.bag_size_label || "";
+          if (topbarReadinessValue) topbarReadinessValue.textContent = `${{state.readiness_percent || 0}}%`;
+          if (dashboardReadinessScore) {{
+            dashboardReadinessScore.innerHTML = `${{state.readiness_percent || 0}}<span>%</span>`;
+          }}
+          if (dashboardReadinessRing) {{
+            const scoreColor = readinessColorForPercent(Number(state.readiness_percent || 0));
+            dashboardReadinessRing.style.setProperty("--score-color", scoreColor);
+            dashboardReadinessRing.style.setProperty("--readiness-angle", `${{Math.round(Number(state.readiness_percent || 0) * 3.6)}}deg`);
+          }}
+          if (topbarSyncPill) {{
+            topbarSyncPill.classList.toggle("ok", (state.paired_phone_count || 0) > 0);
+            topbarSyncPill.classList.toggle("warn", !((state.paired_phone_count || 0) > 0));
+          }}
+          if (topbarSyncStatus) topbarSyncStatus.textContent = state.paired_phone_count > 0 ? "Paired" : "Waiting";
+          if (syncStatusLabel) syncStatusLabel.textContent = state.sync_status_label || "";
+          if (syncStatusDetail) syncStatusDetail.textContent = state.sync_status_label || "";
+          if (pairedPhoneCount) pairedPhoneCount.textContent = String(state.paired_phone_count || 0);
+          if (syncPhoneCount) syncPhoneCount.textContent = String(state.paired_phone_count || 0);
+          if (expiredCount) expiredCount.textContent = String(state.expired_count || 0);
+          if (expiringCount) expiringCount.textContent = String(state.expiring_count || 0);
+          if (missingCount) missingCount.textContent = String(state.missing_count || 0);
+          if (inventoryGroupCount) inventoryGroupCount.textContent = String(state.inventory_group_count || 0);
+          if (batchCount) batchCount.textContent = String(state.batch_count || 0);
+          if (checkReadinessPercent) checkReadinessPercent.textContent = String(state.readiness_percent || 0);
+          if (coverageLabel) coverageLabel.textContent = `${{state.checked_count || 0}}/${{state.checklist_total || 0}} categories covered`;
+          if (checkCoverageValue) checkCoverageValue.textContent = `${{state.checked_count || 0}}/${{state.checklist_total || 0}}`;
+          if (coverageProgress) {{
+            coverageProgress.style.width = `${{state.readiness_percent || 0}}%`;
+            coverageProgress.style.setProperty("--score-color", readinessColorForPercent(Number(state.readiness_percent || 0)));
+          }}
+          applyInventoryFilters();
+          if (pendingInventoryFocusItemId && activeScreen === "inventory") {{
+            window.setTimeout(() => {{
+              focusInventoryItem(pendingInventoryFocusItemId);
+            }}, 120);
+          }}
           if (keyboardTarget && !document.contains(keyboardTarget)) {{
             dismissTouchKeyboard();
           }}
@@ -7031,7 +7733,23 @@ def home(request: Request) -> HTMLResponse:
         if (!(form instanceof HTMLFormElement) || form === scanCaptureForm) {{
           return;
         }}
-        saveScrollState();
+        captureCurrentScreenScroll();
+        persistUiState();
+      }});
+
+      document.addEventListener("click", (event) => {{
+        const target = event.target instanceof HTMLElement ? event.target.closest("[data-nav-screen]") : null;
+        if (!(target instanceof HTMLElement)) {{
+          return;
+        }}
+        if (target.hasAttribute("disabled")) {{
+          return;
+        }}
+        event.preventDefault();
+        dismissTouchKeyboard();
+        switchScreen(target.getAttribute("data-nav-screen") || "dashboard", {{
+          focusItemId: target.getAttribute("data-focus-item") || "",
+        }});
       }});
 
       document.addEventListener("focusin", (event) => {{
@@ -7069,9 +7787,27 @@ def home(request: Request) -> HTMLResponse:
         }});
       }}
 
+      if (inventorySearch) {{
+        inventorySearch.addEventListener("input", () => {{
+          inventorySearchQuery = String(inventorySearch.value || "").trim().toLowerCase();
+          applyInventoryFilters();
+        }});
+      }}
+      if (inventoryFilterBar) {{
+        inventoryFilterBar.addEventListener("click", (event) => {{
+          const button = event.target instanceof HTMLElement ? event.target.closest("[data-category-filter]") : null;
+          if (!(button instanceof HTMLElement)) {{
+            return;
+          }}
+          inventoryCategoryFilter = String(button.getAttribute("data-category-filter") || "all");
+          applyInventoryFilters();
+        }});
+      }}
+
       initializeTheme();
       initializeUiScale();
-      restoreScrollState();
+      initializeScreenState();
+      applyInventoryFilters();
       window.addEventListener("resize", syncTouchKeyboardOffset);
 
       window.addEventListener("keydown", (event) => {{
