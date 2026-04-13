@@ -4433,7 +4433,7 @@ def home(request: Request) -> HTMLResponse:
             <div class="list-row">
               <div>
                 <div class="row-title">Content zoom</div>
-                <div class="row-subtitle">Use the zoom tray in the top bar to jump between 75%, 90%, 100%, 110%, 125%, or Fit on the 3.5-inch touchscreen.</div>
+                <div class="row-subtitle">Use the top-bar zoom tray to jump between 0%, 20%, 40%, 60%, 80%, and 100% on the 3.5-inch touchscreen.</div>
               </div>
               <div class="pill">Header control</div>
             </div>
@@ -4464,13 +4464,11 @@ def home(request: Request) -> HTMLResponse:
           document.documentElement.dataset.theme = savedTheme;
         }}
         const savedUiScale = localStorage.getItem("gobag-pi-ui-scale");
-        const supportedUiScales = ["75", "90", "100", "110", "125", "fit"];
+        const supportedUiScales = ["0", "20", "40", "60", "80", "100"];
         if (supportedUiScales.includes(savedUiScale)) {{
           document.documentElement.dataset.uiScale = savedUiScale;
-        }} else if (window.matchMedia("(max-width: 520px), (max-height: 360px)").matches) {{
-          document.documentElement.dataset.uiScale = "fit";
         }} else {{
-          document.documentElement.dataset.uiScale = "100";
+          document.documentElement.dataset.uiScale = window.matchMedia("(max-width: 520px), (max-height: 360px)").matches ? "40" : "60";
         }}
       }} catch (_error) {{
       }}
@@ -4480,8 +4478,6 @@ def home(request: Request) -> HTMLResponse:
 {render_pi_dashboard_css_tokens()}
     * {{ box-sizing: border-box; }}
     html {{
-      height: 100%;
-      overflow: hidden;
       --touch-keyboard-offset: 0px;
       --ui-font-scale: 1;
       --ui-density-scale: 1;
@@ -4520,38 +4516,25 @@ def home(request: Request) -> HTMLResponse:
       --touch-keyboard-button-font-size: calc(0.92rem * var(--ui-font-scale));
       font-size: calc(16px * var(--ui-font-scale));
     }}
-    html[data-ui-scale="75"] {{
-      --ui-font-scale: 0.82;
+    html[data-ui-scale="0"] {{
+      --ui-font-scale: 0.78;
+      --ui-density-scale: 0.68;
+    }}
+    html[data-ui-scale="20"] {{
+      --ui-font-scale: 0.86;
       --ui-density-scale: 0.78;
     }}
-    html[data-ui-scale="90"] {{
-      --ui-font-scale: 0.92;
-      --ui-density-scale: 0.9;
+    html[data-ui-scale="40"] {{
+      --ui-font-scale: 0.94;
+      --ui-density-scale: 0.88;
     }}
-    html[data-ui-scale="110"] {{
+    html[data-ui-scale="80"] {{
       --ui-font-scale: 1.08;
-      --ui-density-scale: 1.05;
+      --ui-density-scale: 1.08;
     }}
-    html[data-ui-scale="125"] {{
+    html[data-ui-scale="100"] {{
       --ui-font-scale: 1.14;
-      --ui-density-scale: 1.1;
-    }}
-    html[data-ui-scale="fit"] {{
-      --ui-font-scale: 0.84;
-      --ui-density-scale: 0.72;
-      --page-padding: 10px 10px 24px;
-      --bottom-nav-height: 74px;
-      --overview-gap: 10px;
-      --hero-padding: 14px;
-      --panel-padding: 14px;
-      --stat-card-padding: 12px;
-      --stat-card-min-height: 86px;
-      --quick-link-height: 56px;
-      --quick-link-padding: 10px 12px;
-      --field-padding: 9px 10px;
-      --action-button-height: 46px;
-      --action-button-padding: 8px 10px;
-      --action-button-font-size: 0.9rem;
+      --ui-density-scale: 1.14;
     }}
     @media (max-width: 520px), (max-height: 360px) {{
       html {{
@@ -4575,10 +4558,6 @@ def home(request: Request) -> HTMLResponse:
       margin: 0;
       min-height: 100vh;
       min-height: 100dvh;
-      height: 100%;
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      overflow: hidden;
       font-family: "Inter", "Segoe UI", Tahoma, sans-serif;
       background:
         radial-gradient(circle at top right, rgba(255, 107, 0, 0.16), transparent 24%),
@@ -4595,8 +4574,6 @@ def home(request: Request) -> HTMLResponse:
       margin: 0 auto;
       padding: var(--page-padding);
       padding-bottom: calc(var(--bottom-nav-height) + 18px + var(--touch-keyboard-offset));
-      min-height: 0;
-      overflow: hidden;
     }}
     h1, h2, h3, p {{ margin: 0; }}
     .topbar {{
@@ -5545,26 +5522,18 @@ def home(request: Request) -> HTMLResponse:
     }}
     .app-shell {{
       position: relative;
-      display: flex;
-      flex-direction: column;
+      display: grid;
       gap: 12px;
-      height: 100%;
-      min-height: 0;
     }}
     .screen-shell {{
-      display: grid;
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow: hidden;
+      display: block;
     }}
     .app-screen {{
       display: none;
       animation: screen-fade 180ms ease;
-      min-height: 0;
     }}
     .app-screen.is-active {{
       display: block;
-      height: 100%;
     }}
     @keyframes screen-fade {{
       from {{
@@ -5580,11 +5549,6 @@ def home(request: Request) -> HTMLResponse:
       display: grid;
       gap: 14px;
       align-content: start;
-      height: 100%;
-      min-height: 0;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      padding-right: 2px;
     }}
     .dashboard-hero {{
       min-height: 0;
@@ -5826,7 +5790,7 @@ def home(request: Request) -> HTMLResponse:
     .hidden {{
       display: none !important;
     }}
-    body.keyboard-open .screen-stack {{
+    body.keyboard-open {{
       padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 12px);
       scroll-padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 24px);
     }}
@@ -6337,73 +6301,108 @@ def home(request: Request) -> HTMLResponse:
         font-size: 0.92rem;
       }}
     }}
-    html[data-ui-scale="fit"] .hero-shell-inner,
-    html[data-ui-scale="fit"] .hero-score-row,
-    html[data-ui-scale="fit"] .hero-progress,
-    html[data-ui-scale="fit"] .summary-grid,
-    html[data-ui-scale="fit"] .alert-columns,
-    html[data-ui-scale="fit"] .screen-stack,
-    html[data-ui-scale="fit"] .dashboard-grid,
-    html[data-ui-scale="fit"] .screen-meta-grid,
-    html[data-ui-scale="fit"] .sync-grid,
-    html[data-ui-scale="fit"] .settings-grid-compact,
-    html[data-ui-scale="fit"] .content-grid,
-    html[data-ui-scale="fit"] .content-column,
-    html[data-ui-scale="fit"] .inventory-panel,
-    html[data-ui-scale="fit"] .inventory-manager-shell {{
+    html[data-ui-scale="0"] .hero-shell-inner,
+    html[data-ui-scale="0"] .hero-score-row,
+    html[data-ui-scale="0"] .hero-progress,
+    html[data-ui-scale="0"] .summary-grid,
+    html[data-ui-scale="0"] .alert-columns,
+    html[data-ui-scale="0"] .screen-stack,
+    html[data-ui-scale="0"] .dashboard-grid,
+    html[data-ui-scale="0"] .screen-meta-grid,
+    html[data-ui-scale="0"] .sync-grid,
+    html[data-ui-scale="0"] .settings-grid-compact,
+    html[data-ui-scale="0"] .content-grid,
+    html[data-ui-scale="0"] .content-column,
+    html[data-ui-scale="0"] .inventory-panel,
+    html[data-ui-scale="0"] .inventory-manager-shell,
+    html[data-ui-scale="20"] .hero-shell-inner,
+    html[data-ui-scale="20"] .hero-score-row,
+    html[data-ui-scale="20"] .hero-progress,
+    html[data-ui-scale="20"] .summary-grid,
+    html[data-ui-scale="20"] .alert-columns,
+    html[data-ui-scale="20"] .screen-stack,
+    html[data-ui-scale="20"] .dashboard-grid,
+    html[data-ui-scale="20"] .screen-meta-grid,
+    html[data-ui-scale="20"] .sync-grid,
+    html[data-ui-scale="20"] .settings-grid-compact,
+    html[data-ui-scale="20"] .content-grid,
+    html[data-ui-scale="20"] .content-column,
+    html[data-ui-scale="20"] .inventory-panel,
+    html[data-ui-scale="20"] .inventory-manager-shell {{
       gap: 10px;
     }}
-    html[data-ui-scale="fit"] .readiness-ring {{
+    html[data-ui-scale="0"] .readiness-ring,
+    html[data-ui-scale="20"] .readiness-ring {{
       width: min(100%, 128px);
       box-shadow: inset 0 0 0 7px var(--accent-soft);
     }}
-    html[data-ui-scale="fit"] .readiness-score {{
+    html[data-ui-scale="0"] .readiness-score,
+    html[data-ui-scale="20"] .readiness-score {{
       font-size: clamp(2rem, 7vw, 2.8rem);
     }}
-    html[data-ui-scale="fit"] .hero-text h1 {{
+    html[data-ui-scale="0"] .hero-text h1,
+    html[data-ui-scale="20"] .hero-text h1 {{
       font-size: clamp(1.2rem, 4vw, 1.65rem);
     }}
-    html[data-ui-scale="fit"] .hero-note,
-    html[data-ui-scale="fit"] .stat-note,
-    html[data-ui-scale="fit"] .row-subtitle,
-    html[data-ui-scale="fit"] .batch-card-subtitle,
-    html[data-ui-scale="fit"] .inventory-form-description,
-    html[data-ui-scale="fit"] .inventory-groups-caption {{
+    html[data-ui-scale="0"] .hero-note,
+    html[data-ui-scale="0"] .stat-note,
+    html[data-ui-scale="0"] .row-subtitle,
+    html[data-ui-scale="0"] .batch-card-subtitle,
+    html[data-ui-scale="0"] .inventory-form-description,
+    html[data-ui-scale="0"] .inventory-groups-caption,
+    html[data-ui-scale="20"] .hero-note,
+    html[data-ui-scale="20"] .stat-note,
+    html[data-ui-scale="20"] .row-subtitle,
+    html[data-ui-scale="20"] .batch-card-subtitle,
+    html[data-ui-scale="20"] .inventory-form-description,
+    html[data-ui-scale="20"] .inventory-groups-caption {{
       font-size: 0.86rem;
       line-height: 1.38;
     }}
-    html[data-ui-scale="fit"] .progress-meta,
-    html[data-ui-scale="fit"] .panel-note {{
+    html[data-ui-scale="0"] .progress-meta,
+    html[data-ui-scale="0"] .panel-note,
+    html[data-ui-scale="20"] .progress-meta,
+    html[data-ui-scale="20"] .panel-note {{
       font-size: 0.84rem;
     }}
-    html[data-ui-scale="fit"] .quick-link strong {{
+    html[data-ui-scale="0"] .quick-link strong,
+    html[data-ui-scale="20"] .quick-link strong {{
       font-size: 0.88rem;
     }}
-    html[data-ui-scale="fit"] .quick-link small {{
+    html[data-ui-scale="0"] .quick-link small,
+    html[data-ui-scale="20"] .quick-link small {{
       display: none;
     }}
-    html[data-ui-scale="fit"] .bottom-nav {{
+    html[data-ui-scale="0"] .bottom-nav,
+    html[data-ui-scale="20"] .bottom-nav {{
       gap: 6px;
       padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
     }}
-    html[data-ui-scale="fit"] .bottom-nav-button {{
+    html[data-ui-scale="0"] .bottom-nav-button,
+    html[data-ui-scale="20"] .bottom-nav-button {{
       min-height: 54px;
       padding: 6px 4px;
     }}
-    html[data-ui-scale="fit"] .bottom-nav-label {{
+    html[data-ui-scale="0"] .bottom-nav-label,
+    html[data-ui-scale="20"] .bottom-nav-label {{
       font-size: 0.66rem;
     }}
-    html[data-ui-scale="fit"] .tag,
-    html[data-ui-scale="fit"] .pill,
-    html[data-ui-scale="fit"] .micro-chip {{
+    html[data-ui-scale="0"] .tag,
+    html[data-ui-scale="0"] .pill,
+    html[data-ui-scale="0"] .micro-chip,
+    html[data-ui-scale="20"] .tag,
+    html[data-ui-scale="20"] .pill,
+    html[data-ui-scale="20"] .micro-chip {{
       min-height: 30px;
       padding: 5px 10px;
       font-size: 0.72rem;
     }}
-    html[data-ui-scale="fit"] textarea {{
+    html[data-ui-scale="0"] textarea,
+    html[data-ui-scale="20"] textarea {{
       min-height: 72px;
     }}
-    html[data-ui-scale="fit"] .banner {{
+    html[data-ui-scale="0"] .banner,
+    html[data-ui-scale="20"] .banner {{
       padding: 10px 12px;
       margin-bottom: 10px;
     }}
@@ -6519,10 +6518,14 @@ def home(request: Request) -> HTMLResponse:
         width: 100%;
       }}
       .zoom-presets {{
-        justify-content: space-between;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        width: 100%;
       }}
       .zoom-toggle,
       .zoom-preset {{
+        width: 100%;
+        min-width: 0;
         min-height: 30px;
         padding: 0 8px;
       }}
@@ -6558,16 +6561,16 @@ def home(request: Request) -> HTMLResponse:
       <div class="view-controls" role="group" aria-label="Adjust display size">
         <div class="view-controls-head">
           <span class="view-controls-label">Zoom</span>
-          <span class="zoom-indicator" id="zoom-indicator">100%</span>
+          <span class="zoom-indicator" id="zoom-indicator">60%</span>
         </div>
         <div class="zoom-presets" role="group" aria-label="Zoom levels">
           <button type="button" class="zoom-toggle" id="zoom-out" aria-label="Zoom out" title="Zoom out">-</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="75" aria-label="Set zoom to 75%">75%</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="90" aria-label="Set zoom to 90%">90%</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="0" aria-label="Set zoom to 0%">0%</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="20" aria-label="Set zoom to 20%">20%</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="40" aria-label="Set zoom to 40%">40%</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="60" aria-label="Set zoom to 60%">60%</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="80" aria-label="Set zoom to 80%">80%</button>
           <button type="button" class="zoom-preset" data-ui-scale-option="100" aria-label="Set zoom to 100%">100%</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="110" aria-label="Set zoom to 110%">110%</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="125" aria-label="Set zoom to 125%">125%</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="fit" aria-label="Fit content to the touchscreen">Fit</button>
           <button type="button" class="zoom-toggle" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
         </div>
       </div>
@@ -6727,14 +6730,14 @@ def home(request: Request) -> HTMLResponse:
       const zoomInButton = document.getElementById("zoom-in");
       const zoomIndicator = document.getElementById("zoom-indicator");
       const zoomPresetButtons = Array.from(document.querySelectorAll("[data-ui-scale-option]"));
-      const zoomScaleOptions = ["75", "90", "100", "110", "125", "fit"];
+      const zoomScaleOptions = ["0", "20", "40", "60", "80", "100"];
       const zoomScaleLabels = {{
-        "75": "75%",
-        "90": "90%",
+        "0": "0%",
+        "20": "20%",
+        "40": "40%",
+        "60": "60%",
+        "80": "80%",
         "100": "100%",
-        "110": "110%",
-        "125": "125%",
-        fit: "Fit",
       }};
       const powerButton = document.getElementById("power-button");
       const shutdownModal = document.getElementById("shutdown-modal");
@@ -6807,23 +6810,8 @@ def home(request: Request) -> HTMLResponse:
         return value.replace(/["\\\\]/g, "\\\\$&");
       }}
 
-      function screenElementFor(screenName) {{
-        const normalized = String(screenName || "").trim();
-        return screenElements.find((screen) => screen.getAttribute("data-screen") === normalized) || null;
-      }}
-
-      function screenScrollerFor(screenName) {{
-        const screen = screenElementFor(screenName);
-        if (!(screen instanceof HTMLElement)) {{
-          return null;
-        }}
-        const scroller = screen.querySelector(".screen-stack");
-        return scroller instanceof HTMLElement ? scroller : null;
-      }}
-
       function captureCurrentScreenScroll() {{
-        const scroller = screenScrollerFor(activeScreen);
-        screenScrollPositions[activeScreen] = Math.max(scroller ? scroller.scrollTop : 0, 0);
+        screenScrollPositions[activeScreen] = Math.max(window.scrollY || 0, 0);
       }}
 
       function persistUiState() {{
@@ -6842,13 +6830,9 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function restoreScreenScroll(screenName) {{
-        const scroller = screenScrollerFor(screenName);
-        if (!scroller) {{
-          return;
-        }}
         const top = Math.max(Number(screenScrollPositions[screenName] || 0), 0);
         const applyScroll = () => {{
-          scroller.scrollTop = top;
+          window.scrollTo({{ top, left: 0, behavior: "auto" }});
         }};
         window.requestAnimationFrame(applyScroll);
         window.setTimeout(applyScroll, 120);
@@ -6932,10 +6916,7 @@ def home(request: Request) -> HTMLResponse:
           }}
         }}
         if (options.restoreScroll === false) {{
-          const scroller = screenScrollerFor(activeScreen);
-          if (scroller) {{
-            scroller.scrollTop = 0;
-          }}
+          window.scrollTo({{ top: 0, left: 0, behavior: "auto" }});
         }} else {{
           restoreScreenScroll(activeScreen);
         }}
@@ -6979,7 +6960,7 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function defaultUiScale() {{
-        return window.matchMedia("(max-width: 520px), (max-height: 360px)").matches ? "fit" : "100";
+        return window.matchMedia("(max-width: 520px), (max-height: 360px)").matches ? "40" : "60";
       }}
 
       function currentUiScale() {{
