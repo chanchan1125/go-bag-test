@@ -4482,19 +4482,19 @@ def home(request: Request) -> HTMLResponse:
       --ui-font-scale: 1;
       --ui-density-scale: 1;
       --page-padding:
-        calc(18px * var(--ui-density-scale))
-        calc(16px * var(--ui-density-scale))
-        calc(40px * var(--ui-density-scale));
+        calc(14px * var(--ui-density-scale))
+        calc(12px * var(--ui-density-scale))
+        calc(34px * var(--ui-density-scale));
       --bottom-nav-height: calc(82px * var(--ui-density-scale));
-      --topbar-padding: calc(14px * var(--ui-density-scale)) calc(16px * var(--ui-density-scale));
-      --topbar-gap: calc(16px * var(--ui-density-scale));
-      --brand-gap: calc(14px * var(--ui-density-scale));
-      --brand-mark-size: calc(52px * var(--ui-density-scale));
-      --brand-mark-radius: calc(10px * var(--ui-density-scale));
+      --topbar-padding: calc(8px * var(--ui-density-scale)) calc(10px * var(--ui-density-scale));
+      --topbar-gap: calc(10px * var(--ui-density-scale));
+      --brand-gap: calc(8px * var(--ui-density-scale));
+      --brand-mark-size: calc(34px * var(--ui-density-scale));
+      --brand-mark-radius: calc(8px * var(--ui-density-scale));
       --brand-mark-font-size: calc(1rem * var(--ui-font-scale));
-      --header-chip-height: calc(64px * var(--ui-density-scale));
-      --header-chip-padding: 0 calc(18px * var(--ui-density-scale));
-      --header-chip-gap: calc(10px * var(--ui-density-scale));
+      --header-chip-height: calc(38px * var(--ui-density-scale));
+      --header-chip-padding: 0 calc(10px * var(--ui-density-scale));
+      --header-chip-gap: calc(6px * var(--ui-density-scale));
       --overview-gap: calc(16px * var(--ui-density-scale));
       --hero-padding: calc(22px * var(--ui-density-scale));
       --panel-padding: calc(20px * var(--ui-density-scale));
@@ -4538,15 +4538,15 @@ def home(request: Request) -> HTMLResponse:
     }}
     @media (max-width: 520px), (max-height: 360px) {{
       html {{
-        --topbar-padding: 8px 10px;
-        --topbar-gap: 10px;
-        --brand-gap: 10px;
-        --brand-mark-size: 38px;
+        --topbar-padding: 5px 8px;
+        --topbar-gap: 8px;
+        --brand-gap: 7px;
+        --brand-mark-size: 28px;
         --brand-mark-radius: 8px;
-        --brand-mark-font-size: 0.84rem;
-        --header-chip-height: 42px;
-        --header-chip-padding: 0 12px;
-        --header-chip-gap: 8px;
+        --brand-mark-font-size: 0.78rem;
+        --header-chip-height: 30px;
+        --header-chip-padding: 0 8px;
+        --header-chip-gap: 5px;
         --touch-keyboard-padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
         --touch-keyboard-gap: 4px;
         --touch-keyboard-button-height: 29px;
@@ -4583,18 +4583,20 @@ def home(request: Request) -> HTMLResponse:
       display: flex;
       justify-content: space-between;
       align-items: center;
+      flex-wrap: nowrap;
       gap: var(--topbar-gap);
       padding: var(--topbar-padding);
       border-bottom: 1px solid var(--line);
       background: var(--topbar);
       backdrop-filter: blur(12px);
-      box-shadow: 0 10px 22px var(--shadow);
+      box-shadow: 0 6px 14px var(--shadow);
     }}
     .topbar-brand {{
       display: flex;
       align-items: center;
       gap: var(--brand-gap);
       min-width: 0;
+      flex: 1 1 auto;
     }}
     .brand-mark {{
       width: var(--brand-mark-size);
@@ -4631,25 +4633,29 @@ def home(request: Request) -> HTMLResponse:
     }}
     .topbar-title {{
       font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: clamp(1.1rem, 2vw, 1.45rem);
+      font-size: clamp(0.96rem, 1.8vw, 1.1rem);
       font-weight: 800;
-      letter-spacing: -0.03em;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      white-space: nowrap;
     }}
     .topbar-actions {{
       display: flex;
       align-items: center;
       justify-content: flex-end;
-      flex-wrap: wrap;
-      gap: 8px;
+      flex-wrap: nowrap;
+      gap: 6px;
+      flex: 0 0 auto;
+      min-width: 0;
     }}
     .readiness-pill,
     .theme-toggle,
     .view-controls {{
       min-height: var(--header-chip-height);
-      border-radius: 12px;
+      border-radius: 10px;
       border: 1px solid var(--line);
       background: var(--panel);
-      box-shadow: 0 8px 18px var(--shadow);
+      box-shadow: 0 4px 10px var(--shadow);
     }}
     .readiness-pill {{
       display: inline-flex;
@@ -4674,23 +4680,23 @@ def home(request: Request) -> HTMLResponse:
     .theme-toggle {{
       display: inline-flex;
       align-items: center;
-      gap: var(--header-chip-gap);
+      justify-content: center;
       padding: var(--header-chip-padding);
-      width: auto;
+      width: calc(var(--header-chip-height) + 2px);
       color: var(--ink);
     }}
     .power-button {{
       display: inline-flex;
       align-items: center;
-      gap: var(--header-chip-gap);
+      justify-content: center;
       min-height: var(--header-chip-height);
       padding: var(--header-chip-padding);
-      width: auto;
-      border-radius: 12px;
+      width: calc(var(--header-chip-height) + 2px);
+      border-radius: 10px;
       border: 1px solid rgba(255, 180, 171, 0.2);
       background: linear-gradient(180deg, rgba(128, 28, 36, 0.96), rgba(94, 22, 28, 0.96));
       color: #fff4f2;
-      box-shadow: 0 8px 18px rgba(83, 18, 23, 0.24);
+      box-shadow: 0 4px 10px rgba(83, 18, 23, 0.24);
     }}
     .power-button:disabled {{
       opacity: 0.55;
@@ -4708,85 +4714,52 @@ def home(request: Request) -> HTMLResponse:
       font-weight: 800;
     }}
     .view-controls {{
-      display: grid;
-      gap: 6px;
-      padding: 8px 10px 10px;
-      color: var(--ink);
-    }}
-    .view-controls-head {{
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 10px;
+      gap: 0;
+      padding: 0 4px;
+      color: var(--ink);
     }}
     .view-controls-label {{
-      font-size: 0.68rem;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      font-weight: 800;
-      color: var(--muted);
-      white-space: nowrap;
-    }}
-    .zoom-presets {{
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 6px;
+      display: none;
     }}
     .zoom-toggle {{
-      min-width: 36px;
-      min-height: 34px;
-      border-radius: 10px;
-      border: 1px solid var(--line);
-      background: var(--panel-strong);
+      width: calc(var(--header-chip-height) - 6px);
+      min-width: calc(var(--header-chip-height) - 6px);
+      min-height: calc(var(--header-chip-height) - 6px);
+      border-radius: 8px;
+      border: 0;
+      background: transparent;
       color: var(--ink);
       font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: 1rem;
+      font-size: 1.02rem;
       font-weight: 800;
       line-height: 1;
-      padding: 0 10px;
+      padding: 0;
       cursor: pointer;
-    }}
-    .zoom-preset {{
-      min-width: 48px;
-      min-height: 34px;
-      border-radius: 10px;
-      border: 1px solid var(--line);
-      background: var(--panel-strong);
-      color: var(--ink);
-      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: 0.78rem;
-      font-weight: 800;
-      line-height: 1;
-      padding: 0 10px;
-      cursor: pointer;
-    }}
-    .zoom-preset.active {{
-      background: var(--accent-soft);
-      color: var(--accent);
-      border-color: transparent;
-      box-shadow: 0 8px 16px rgba(255, 107, 0, 0.14);
     }}
     .zoom-toggle:disabled {{
       opacity: 0.45;
       cursor: default;
     }}
     .zoom-indicator {{
-      min-width: 48px;
-      text-align: right;
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--muted);
+      min-width: 50px;
+      text-align: center;
+      font-size: 0.76rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      color: var(--ink);
       white-space: nowrap;
     }}
     .theme-toggle-icon {{
-      font-size: 1.2rem;
+      font-size: 1rem;
       line-height: 1;
     }}
     .theme-toggle-label {{
-      white-space: nowrap;
+      display: none;
+    }}
+    .power-button-label {{
+      display: none;
     }}
     .overview-grid {{
       display: grid;
@@ -6470,17 +6443,17 @@ def home(request: Request) -> HTMLResponse:
     }}
     @media (max-width: 719px) {{
       .topbar {{
-        align-items: flex-start;
+        align-items: center;
       }}
       .topbar-actions {{
-        width: 100%;
-        justify-content: stretch;
+        width: auto;
+        justify-content: flex-end;
       }}
       .readiness-pill,
       .theme-toggle,
       .view-controls,
       .power-button {{
-        flex: 1 1 0;
+        flex: 0 0 auto;
         justify-content: center;
       }}
       .quick-actions {{
@@ -6497,37 +6470,16 @@ def home(request: Request) -> HTMLResponse:
     }}
     @media (max-width: 520px), (max-height: 360px) {{
       .topbar {{
-        flex-wrap: wrap;
-        align-items: flex-start;
-      }}
-      .topbar-brand,
-      .topbar-actions {{
-        width: 100%;
+        align-items: center;
       }}
       .topbar-actions {{
-        flex-wrap: wrap;
-        justify-content: flex-start;
+        gap: 4px;
       }}
       .readiness-pill,
       .theme-toggle,
       .view-controls,
       .power-button {{
         flex: 0 0 auto;
-      }}
-      .view-controls {{
-        width: 100%;
-      }}
-      .zoom-presets {{
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        width: 100%;
-      }}
-      .zoom-toggle,
-      .zoom-preset {{
-        width: 100%;
-        min-width: 0;
-        min-height: 30px;
-        padding: 0 8px;
       }}
       .bottom-nav {{
         gap: 4px;
@@ -6549,30 +6501,14 @@ def home(request: Request) -> HTMLResponse:
     <div class="topbar-brand">
       <div class="brand-mark">{brand_mark_inner}</div>
       <div>
-        <div class="topbar-kicker">Pi Tactical Hub</div>
-        <div class="topbar-title">GO BAG Command Center</div>
+        <div class="topbar-title">GO BAG</div>
       </div>
     </div>
     <div class="topbar-actions">
-      <div class="readiness-pill secondary-pill {sync_tone}" id="topbar-sync-pill">
-        <span class="readiness-pill-value" id="topbar-sync-status">{escape(readiness['device_status'])}</span>
-        <span class="readiness-pill-label">Sync</span>
-      </div>
       <div class="view-controls" role="group" aria-label="Adjust display size">
-        <div class="view-controls-head">
-          <span class="view-controls-label">Zoom</span>
-          <span class="zoom-indicator" id="zoom-indicator">60%</span>
-        </div>
-        <div class="zoom-presets" role="group" aria-label="Zoom levels">
-          <button type="button" class="zoom-toggle" id="zoom-out" aria-label="Zoom out" title="Zoom out">-</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="0" aria-label="Set zoom to 0%">0%</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="20" aria-label="Set zoom to 20%">20%</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="40" aria-label="Set zoom to 40%">40%</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="60" aria-label="Set zoom to 60%">60%</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="80" aria-label="Set zoom to 80%">80%</button>
-          <button type="button" class="zoom-preset" data-ui-scale-option="100" aria-label="Set zoom to 100%">100%</button>
-          <button type="button" class="zoom-toggle" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
-        </div>
+        <button type="button" class="zoom-toggle" id="zoom-out" aria-label="Zoom out" title="Zoom out">&lt;</button>
+        <span class="zoom-indicator" id="zoom-indicator">80%</span>
+        <button type="button" class="zoom-toggle" id="zoom-in" aria-label="Zoom in" title="Zoom in">&gt;</button>
       </div>
       <button type="button" class="power-button" id="power-button" aria-label="Shut down Raspberry Pi" title="Shut down Raspberry Pi">
         <span class="power-button-icon" aria-hidden="true">&#x23FB;</span>
@@ -6729,7 +6665,6 @@ def home(request: Request) -> HTMLResponse:
       const zoomOutButton = document.getElementById("zoom-out");
       const zoomInButton = document.getElementById("zoom-in");
       const zoomIndicator = document.getElementById("zoom-indicator");
-      const zoomPresetButtons = Array.from(document.querySelectorAll("[data-ui-scale-option]"));
       const zoomScaleOptions = ["0", "20", "40", "60", "80", "100"];
       const zoomScaleLabels = {{
         "0": "0%",
@@ -6960,7 +6895,7 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function defaultUiScale() {{
-        return window.matchMedia("(max-width: 520px), (max-height: 360px)").matches ? "40" : "60";
+        return window.matchMedia("(max-width: 520px), (max-height: 360px)").matches ? "80" : "60";
       }}
 
       function currentUiScale() {{
@@ -6997,11 +6932,6 @@ def home(request: Request) -> HTMLResponse:
         if (zoomIndicator) {{
           zoomIndicator.textContent = zoomScaleLabels[currentScale] || "100%";
         }}
-        zoomPresetButtons.forEach((button) => {{
-          const isActive = button.getAttribute("data-ui-scale-option") === currentScale;
-          button.classList.toggle("active", isActive);
-          button.setAttribute("aria-pressed", isActive ? "true" : "false");
-        }});
       }}
 
       function syncTouchKeyboardOffset() {{
@@ -7477,8 +7407,6 @@ def home(request: Request) -> HTMLResponse:
           const heroBagName = document.getElementById("hero-bag-name");
           const bagNameLabel = document.getElementById("bag-name-label");
           const bagSizeBadge = document.getElementById("bag-size-badge");
-          const topbarSyncPill = document.getElementById("topbar-sync-pill");
-          const topbarSyncStatus = document.getElementById("topbar-sync-status");
           const dashboardReadinessRing = document.getElementById("dashboard-readiness-ring");
           const dashboardReadinessScore = document.getElementById("dashboard-readiness-score");
           const syncStatusLabel = document.getElementById("sync-status-label");
@@ -7519,11 +7447,6 @@ def home(request: Request) -> HTMLResponse:
             dashboardReadinessRing.style.setProperty("--score-color", scoreColor);
             dashboardReadinessRing.style.setProperty("--readiness-angle", `${{Math.round(Number(state.readiness_percent || 0) * 3.6)}}deg`);
           }}
-          if (topbarSyncPill) {{
-            topbarSyncPill.classList.toggle("ok", (state.paired_phone_count || 0) > 0);
-            topbarSyncPill.classList.toggle("warn", !((state.paired_phone_count || 0) > 0));
-          }}
-          if (topbarSyncStatus) topbarSyncStatus.textContent = state.paired_phone_count > 0 ? "Paired" : "Waiting";
           if (syncStatusLabel) syncStatusLabel.textContent = state.sync_status_label || "";
           if (syncStatusDetail) syncStatusDetail.textContent = state.sync_status_label || "";
           if (pairedPhoneCount) pairedPhoneCount.textContent = String(state.paired_phone_count || 0);
@@ -7840,11 +7763,6 @@ def home(request: Request) -> HTMLResponse:
           stepUiScale(1);
         }});
       }}
-      zoomPresetButtons.forEach((button) => {{
-        button.addEventListener("click", () => {{
-          applyUiScale(button.getAttribute("data-ui-scale-option") || "100");
-        }});
-      }});
       if (powerButton) {{
         powerButton.addEventListener("click", openShutdownModal);
       }}
