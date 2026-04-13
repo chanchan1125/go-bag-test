@@ -397,6 +397,12 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn('id="zoom-indicator"', body)
         self.assertIn('id="power-button"', body)
         self.assertIn('id="theme-toggle"', body)
+        self.assertIn('id="wifi-button"', body)
+        self.assertIn('id="wifi-modal"', body)
+        self.assertIn('id="wifi-network-list"', body)
+        self.assertIn('id="wifi-password-input"', body)
+        self.assertIn('id="wifi-password-toggle"', body)
+        self.assertIn('data-keyboard-submit-target="wifi-connect-submit"', body)
         self.assertIn("window.scrollTo({ top, left: 0, behavior: \"auto\" })", body)
         self.assertIn("data-keyboard-action=\"done\"", body)
         self.assertIn(".hero-shell {", body)
@@ -419,6 +425,60 @@ class PiServerApiTests(unittest.TestCase):
         self.assertNotIn("Align the QR code inside the camera view.", body)
         self.assertNotIn("Scan now", body)
         self.assertNotIn("Refresh preview", body)
+
+    def test_wifi_status_and_connect_endpoints_return_structured_payloads(self):
+        status_payload = {
+            "ok": True,
+            "available": True,
+            "status": "connected",
+            "connected": True,
+            "radio_enabled": True,
+            "ssid": "FieldNet",
+            "signal": 78,
+            "device": "wlan0",
+            "message": "Connected to FieldNet.",
+        }
+        networks_payload = {
+            **status_payload,
+            "networks": [
+                {
+                    "ssid": "FieldNet",
+                    "active": True,
+                    "signal": 78,
+                    "security": "WPA2",
+                    "requires_password": True,
+                },
+                {
+                    "ssid": "OpenTent",
+                    "active": False,
+                    "signal": 52,
+                    "security": "Open",
+                    "requires_password": False,
+                },
+            ],
+        }
+        connect_payload = {
+            **networks_payload,
+            "message": "Connected to FieldNet.",
+        }
+
+        with mock.patch.object(self.module, "wifi_status_payload", return_value=status_payload):
+            status = self.client.get("/ui/wifi/status")
+        self.assertEqual(status.status_code, 200)
+        self.assertTrue(status.json()["connected"])
+        self.assertEqual(status.json()["ssid"], "FieldNet")
+
+        with mock.patch.object(self.module, "wifi_networks_payload", return_value=networks_payload):
+            networks = self.client.get("/ui/wifi/networks")
+        self.assertEqual(networks.status_code, 200)
+        self.assertEqual(len(networks.json()["networks"]), 2)
+        self.assertTrue(networks.json()["networks"][0]["active"])
+
+        with mock.patch.object(self.module, "connect_wifi_network", return_value=connect_payload):
+            connect = self.client.post("/ui/wifi/connect", data={"ssid": "FieldNet", "password": "camp-secret"})
+        self.assertEqual(connect.status_code, 200)
+        self.assertEqual(connect.json()["message"], "Connected to FieldNet.")
+        self.assertEqual(connect.json()["networks"][1]["ssid"], "OpenTent")
 
     def test_usb_camera_session_endpoints_return_structured_state(self):
         bag_id = self.client.get("/bags").json()[0]["id"]
