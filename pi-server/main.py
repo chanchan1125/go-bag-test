@@ -4155,34 +4155,11 @@ def home(request: Request) -> HTMLResponse:
           <section class="panel mission-panel">
             <div class="panel-head">
               <div>
-                <div class="panel-title">Quick actions</div>
-                <div class="panel-note">Fast access to the core monitoring tools on this Pi touchscreen.</div>
+                <div class="panel-title">Missing categories</div>
+                <div class="panel-note">These core checklist categories still need attention before the bag is mission-ready.</div>
               </div>
               <div class="pill {readiness_tone}" id="bag-size-badge">{escape(bag_size_label(bag.size_liters))}</div>
             </div>
-            <div class="quick-action-grid">
-              <button type="button" class="quick-link primary" data-open-scan="1">
-                <span><strong>Scan Item</strong><small>USB QR camera</small></span>
-                <span class="quick-link-icon" aria-hidden="true">QR</span>
-              </button>
-              <button type="button" class="quick-link" data-nav-screen="check">
-                <span><strong>Check Mode</strong><small>Checklist coverage</small></span>
-                <span class="quick-link-icon" aria-hidden="true">&#10003;</span>
-              </button>
-              <button type="button" class="quick-link" data-nav-screen="sync">
-                <span><strong>Sync Status</strong><small>Phone link + pairing</small></span>
-                <span class="quick-link-icon" aria-hidden="true">&#8645;</span>
-              </button>
-              <button type="button" class="quick-link" data-nav-screen="inventory">
-                <span><strong>View Inventory</strong><small>Read-only grouped list</small></span>
-                <span class="quick-link-icon" aria-hidden="true">&#9776;</span>
-              </button>
-              <button type="button" class="quick-link" data-nav-screen="settings">
-                <span><strong>Settings</strong><small>Display + device info</small></span>
-                <span class="quick-link-icon" aria-hidden="true">&#9881;</span>
-              </button>
-            </div>
-            <div class="section-divider"></div>
             <div class="panel-subtitle">Missing categories</div>
             <div class="tag-row" id="missing-tags">{view_model['missing_html']}</div>
           </section>
@@ -4393,7 +4370,7 @@ def home(request: Request) -> HTMLResponse:
           <div class="panel-head">
             <div>
               <div class="panel-title" id="settings-title">Settings</div>
-              <div class="panel-note">Display tuning, device details, and safe power controls for this embedded touchscreen.</div>
+              <div class="panel-note">Device details and bag profile for this embedded touchscreen.</div>
             </div>
           </div>
           <div class="settings-grid-compact">
@@ -4411,38 +4388,6 @@ def home(request: Request) -> HTMLResponse:
               <div class="panel-subtitle">Bag profile</div>
               <div class="status-card-value">{escape(bag_size_label(bag.size_liters))}</div>
               <div class="status-card-note">{escape(bag.name)} is displayed here read-only</div>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <div>
-              <div class="panel-title">Display controls</div>
-              <div class="panel-note">Theme, zoom, and system power stay available in the header for quick touch access.</div>
-            </div>
-          </div>
-          <div class="settings-list">
-            <div class="list-row">
-              <div>
-                <div class="row-title">Theme mode</div>
-                <div class="row-subtitle">Use the sun and moon button in the top bar to switch between light and dark.</div>
-              </div>
-              <div class="pill">Header control</div>
-            </div>
-            <div class="list-row">
-              <div>
-                <div class="row-title">Content zoom</div>
-                <div class="row-subtitle">Use the top-bar zoom tray to jump between 0%, 20%, 40%, 60%, 80%, and 100% on the 3.5-inch touchscreen.</div>
-              </div>
-              <div class="pill">Header control</div>
-            </div>
-            <div class="list-row">
-              <div>
-                <div class="row-title">Power off</div>
-                <div class="row-subtitle">The power button safely shuts down the Pi after confirmation.</div>
-              </div>
-              <div class="pill danger">Protected</div>
             </div>
           </div>
         </section>
@@ -4500,8 +4445,6 @@ def home(request: Request) -> HTMLResponse:
       --panel-padding: calc(20px * var(--ui-density-scale));
       --stat-card-padding: calc(16px * var(--ui-density-scale));
       --stat-card-min-height: calc(112px * var(--ui-density-scale));
-      --quick-link-height: calc(72px * var(--ui-density-scale));
-      --quick-link-padding: calc(14px * var(--ui-density-scale)) calc(16px * var(--ui-density-scale));
       --field-padding: calc(12px * var(--ui-density-scale)) calc(14px * var(--ui-density-scale));
       --action-button-height: calc(64px * var(--ui-density-scale));
       --action-button-padding: calc(12px * var(--ui-density-scale)) calc(14px * var(--ui-density-scale));
@@ -4972,59 +4915,6 @@ def home(request: Request) -> HTMLResponse:
       margin-top: 4px;
       line-height: 1.45;
     }}
-    .section-divider {{
-      height: 1px;
-      margin: 16px 0;
-      background: var(--line);
-    }}
-    .quick-actions {{
-      display: grid;
-      gap: 12px;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }}
-    .quick-link {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      min-height: var(--quick-link-height);
-      width: 100%;
-      padding: var(--quick-link-padding);
-      text-decoration: none;
-      border-radius: 10px;
-      border: 1px solid var(--line);
-      background: var(--panel-muted);
-      color: var(--ink);
-      cursor: pointer;
-      box-shadow: 0 6px 14px var(--shadow);
-      transition: transform 150ms ease, filter 150ms ease, background 150ms ease, border-color 150ms ease;
-    }}
-    .quick-link.primary {{
-      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-      border-color: transparent;
-      color: #ffffff;
-    }}
-    .quick-link strong {{
-      display: block;
-      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: 1rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: -0.02em;
-    }}
-    .quick-link small {{
-      display: block;
-      margin-top: 4px;
-      font-size: 0.72rem;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      opacity: 0.78;
-    }}
-    .quick-link-icon {{
-      font-size: 1.35rem;
-      font-weight: 700;
-      line-height: 1;
-    }}
     .alert-columns {{
       display: grid;
       gap: 12px;
@@ -5460,7 +5350,7 @@ def home(request: Request) -> HTMLResponse:
       margin-top: 12px;
       margin-bottom: 12px;
     }}
-    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button):not(.bottom-nav-button):not(.filter-pill):not(.alert-row) {{
+    button:not(.theme-toggle):not(.zoom-toggle):not(.power-button):not(.bottom-nav-button):not(.filter-pill):not(.alert-row) {{
       width: 100%;
       min-height: var(--action-button-height);
       border: 1px solid transparent;
@@ -5473,10 +5363,10 @@ def home(request: Request) -> HTMLResponse:
       padding: var(--action-button-padding);
       transition: transform 150ms ease, filter 150ms ease, background 150ms ease, border-color 150ms ease;
     }}
-    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button):not(.bottom-nav-button):not(.filter-pill):not(.alert-row):hover {{
+    button:not(.theme-toggle):not(.zoom-toggle):not(.power-button):not(.bottom-nav-button):not(.filter-pill):not(.alert-row):hover {{
       filter: brightness(0.96);
     }}
-    button:not(.quick-link):not(.theme-toggle):not(.zoom-toggle):not(.power-button):not(.bottom-nav-button):not(.filter-pill):not(.alert-row):active {{
+    button:not(.theme-toggle):not(.zoom-toggle):not(.power-button):not(.bottom-nav-button):not(.filter-pill):not(.alert-row):active {{
       transform: translateY(1px);
     }}
     button.secondary {{
@@ -5533,11 +5423,6 @@ def home(request: Request) -> HTMLResponse:
     .status-cluster-grid {{
       display: grid;
       gap: 12px;
-    }}
-    .quick-action-grid {{
-      display: grid;
-      gap: 12px;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
     }}
     .status-card-value {{
       margin-top: 8px;
@@ -5706,10 +5591,6 @@ def home(request: Request) -> HTMLResponse:
     .alert-row.critical {{
       background: var(--danger-soft);
       border-color: transparent;
-    }}
-    .settings-list {{
-      display: grid;
-      gap: 10px;
     }}
     .settings-url {{
       font-size: 1rem;
@@ -6338,14 +6219,6 @@ def home(request: Request) -> HTMLResponse:
     html[data-ui-scale="20"] .panel-note {{
       font-size: 0.84rem;
     }}
-    html[data-ui-scale="0"] .quick-link strong,
-    html[data-ui-scale="20"] .quick-link strong {{
-      font-size: 0.88rem;
-    }}
-    html[data-ui-scale="0"] .quick-link small,
-    html[data-ui-scale="20"] .quick-link small {{
-      display: none;
-    }}
     html[data-ui-scale="0"] .bottom-nav,
     html[data-ui-scale="20"] .bottom-nav {{
       gap: 6px;
@@ -6456,10 +6329,6 @@ def home(request: Request) -> HTMLResponse:
         flex: 0 0 auto;
         justify-content: center;
       }}
-      .quick-actions {{
-        grid-template-columns: 1fr;
-      }}
-      .quick-action-grid,
       .status-cluster-grid,
       .screen-meta-grid,
       .sync-grid,

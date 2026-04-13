@@ -407,6 +407,8 @@ class PiServerApiTests(unittest.TestCase):
         self.assertNotIn('"pair_code"', body)
         self.assertNotIn('data-ui-scale-option=', body)
         self.assertNotIn("GO BAG Command Center", body)
+        self.assertNotIn("Quick actions", body)
+        self.assertNotIn("Display controls", body)
         self.assertNotIn('id="topbar-readiness-value"', body)
         self.assertNotIn('id="topbar-sync-pill"', body)
         self.assertNotIn('aria-label="Open settings"', body)
