@@ -4433,7 +4433,7 @@ def home(request: Request) -> HTMLResponse:
             <div class="list-row">
               <div>
                 <div class="row-title">Content zoom</div>
-                <div class="row-subtitle">Use the minus and plus buttons in the top bar to fit more panels on the 3.5-inch display.</div>
+                <div class="row-subtitle">Use the zoom tray in the top bar to jump between 75%, 90%, 100%, 110%, 125%, or Fit on the 3.5-inch touchscreen.</div>
               </div>
               <div class="pill">Header control</div>
             </div>
@@ -4464,10 +4464,13 @@ def home(request: Request) -> HTMLResponse:
           document.documentElement.dataset.theme = savedTheme;
         }}
         const savedUiScale = localStorage.getItem("gobag-pi-ui-scale");
-        if (savedUiScale === "fit" || savedUiScale === "standard") {{
+        const supportedUiScales = ["75", "90", "100", "110", "125", "fit"];
+        if (supportedUiScales.includes(savedUiScale)) {{
           document.documentElement.dataset.uiScale = savedUiScale;
         }} else if (window.matchMedia("(max-width: 520px), (max-height: 360px)").matches) {{
           document.documentElement.dataset.uiScale = "fit";
+        }} else {{
+          document.documentElement.dataset.uiScale = "100";
         }}
       }} catch (_error) {{
       }}
@@ -4477,37 +4480,65 @@ def home(request: Request) -> HTMLResponse:
 {render_pi_dashboard_css_tokens()}
     * {{ box-sizing: border-box; }}
     html {{
-      scroll-behavior: smooth;
+      height: 100%;
+      overflow: hidden;
       --touch-keyboard-offset: 0px;
-      --page-padding: 18px 16px 40px;
-      --bottom-nav-height: 82px;
-      --topbar-padding: 14px 16px;
-      --topbar-gap: 16px;
-      --brand-gap: 14px;
-      --brand-mark-size: 52px;
-      --brand-mark-radius: 10px;
-      --brand-mark-font-size: 1rem;
-      --header-chip-height: 64px;
-      --header-chip-padding: 0 18px;
-      --header-chip-gap: 10px;
-      --overview-gap: 16px;
-      --hero-padding: 22px;
-      --panel-padding: 20px;
-      --stat-card-padding: 16px;
-      --stat-card-min-height: 112px;
-      --quick-link-height: 72px;
-      --quick-link-padding: 14px 16px;
-      --field-padding: 12px 14px;
-      --action-button-height: 64px;
-      --action-button-padding: 12px 14px;
-      --action-button-font-size: 1rem;
-      --touch-keyboard-padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px));
-      --touch-keyboard-gap: 6px;
-      --touch-keyboard-button-height: 40px;
-      --touch-keyboard-button-padding: 8px 6px;
-      --touch-keyboard-button-font-size: 0.92rem;
+      --ui-font-scale: 1;
+      --ui-density-scale: 1;
+      --page-padding:
+        calc(18px * var(--ui-density-scale))
+        calc(16px * var(--ui-density-scale))
+        calc(40px * var(--ui-density-scale));
+      --bottom-nav-height: calc(82px * var(--ui-density-scale));
+      --topbar-padding: calc(14px * var(--ui-density-scale)) calc(16px * var(--ui-density-scale));
+      --topbar-gap: calc(16px * var(--ui-density-scale));
+      --brand-gap: calc(14px * var(--ui-density-scale));
+      --brand-mark-size: calc(52px * var(--ui-density-scale));
+      --brand-mark-radius: calc(10px * var(--ui-density-scale));
+      --brand-mark-font-size: calc(1rem * var(--ui-font-scale));
+      --header-chip-height: calc(64px * var(--ui-density-scale));
+      --header-chip-padding: 0 calc(18px * var(--ui-density-scale));
+      --header-chip-gap: calc(10px * var(--ui-density-scale));
+      --overview-gap: calc(16px * var(--ui-density-scale));
+      --hero-padding: calc(22px * var(--ui-density-scale));
+      --panel-padding: calc(20px * var(--ui-density-scale));
+      --stat-card-padding: calc(16px * var(--ui-density-scale));
+      --stat-card-min-height: calc(112px * var(--ui-density-scale));
+      --quick-link-height: calc(72px * var(--ui-density-scale));
+      --quick-link-padding: calc(14px * var(--ui-density-scale)) calc(16px * var(--ui-density-scale));
+      --field-padding: calc(12px * var(--ui-density-scale)) calc(14px * var(--ui-density-scale));
+      --action-button-height: calc(64px * var(--ui-density-scale));
+      --action-button-padding: calc(12px * var(--ui-density-scale)) calc(14px * var(--ui-density-scale));
+      --action-button-font-size: calc(1rem * var(--ui-font-scale));
+      --touch-keyboard-padding:
+        calc(10px * var(--ui-density-scale))
+        calc(8px * var(--ui-density-scale))
+        calc((10px * var(--ui-density-scale)) + env(safe-area-inset-bottom, 0px));
+      --touch-keyboard-gap: calc(6px * var(--ui-density-scale));
+      --touch-keyboard-button-height: calc(40px * var(--ui-density-scale));
+      --touch-keyboard-button-padding: calc(8px * var(--ui-density-scale)) calc(6px * var(--ui-density-scale));
+      --touch-keyboard-button-font-size: calc(0.92rem * var(--ui-font-scale));
+      font-size: calc(16px * var(--ui-font-scale));
+    }}
+    html[data-ui-scale="75"] {{
+      --ui-font-scale: 0.82;
+      --ui-density-scale: 0.78;
+    }}
+    html[data-ui-scale="90"] {{
+      --ui-font-scale: 0.92;
+      --ui-density-scale: 0.9;
+    }}
+    html[data-ui-scale="110"] {{
+      --ui-font-scale: 1.08;
+      --ui-density-scale: 1.05;
+    }}
+    html[data-ui-scale="125"] {{
+      --ui-font-scale: 1.14;
+      --ui-density-scale: 1.1;
     }}
     html[data-ui-scale="fit"] {{
+      --ui-font-scale: 0.84;
+      --ui-density-scale: 0.72;
       --page-padding: 10px 10px 24px;
       --bottom-nav-height: 74px;
       --overview-gap: 10px;
@@ -4543,6 +4574,11 @@ def home(request: Request) -> HTMLResponse:
     body {{
       margin: 0;
       min-height: 100vh;
+      min-height: 100dvh;
+      height: 100%;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
       font-family: "Inter", "Segoe UI", Tahoma, sans-serif;
       background:
         radial-gradient(circle at top right, rgba(255, 107, 0, 0.16), transparent 24%),
@@ -4554,10 +4590,13 @@ def home(request: Request) -> HTMLResponse:
       color: inherit;
     }}
     main {{
+      width: min(1320px, 100%);
       max-width: 1320px;
       margin: 0 auto;
       padding: var(--page-padding);
       padding-bottom: calc(var(--bottom-nav-height) + 18px + var(--touch-keyboard-offset));
+      min-height: 0;
+      overflow: hidden;
     }}
     h1, h2, h3, p {{ margin: 0; }}
     .topbar {{
@@ -4692,16 +4731,34 @@ def home(request: Request) -> HTMLResponse:
       font-weight: 800;
     }}
     .view-controls {{
-      display: inline-flex;
-      align-items: center;
+      display: grid;
       gap: 6px;
-      padding: 0 8px;
+      padding: 8px 10px 10px;
       color: var(--ink);
     }}
+    .view-controls-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }}
+    .view-controls-label {{
+      font-size: 0.68rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 800;
+      color: var(--muted);
+      white-space: nowrap;
+    }}
+    .zoom-presets {{
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }}
     .zoom-toggle {{
-      width: calc(var(--header-chip-height) - 10px);
-      min-width: calc(var(--header-chip-height) - 10px);
-      min-height: calc(var(--header-chip-height) - 10px);
+      min-width: 36px;
+      min-height: 34px;
       border-radius: 10px;
       border: 1px solid var(--line);
       background: var(--panel-strong);
@@ -4710,16 +4767,36 @@ def home(request: Request) -> HTMLResponse:
       font-size: 1rem;
       font-weight: 800;
       line-height: 1;
-      padding: 0;
+      padding: 0 10px;
       cursor: pointer;
+    }}
+    .zoom-preset {{
+      min-width: 48px;
+      min-height: 34px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      color: var(--ink);
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 0.78rem;
+      font-weight: 800;
+      line-height: 1;
+      padding: 0 10px;
+      cursor: pointer;
+    }}
+    .zoom-preset.active {{
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: transparent;
+      box-shadow: 0 8px 16px rgba(255, 107, 0, 0.14);
     }}
     .zoom-toggle:disabled {{
       opacity: 0.45;
       cursor: default;
     }}
     .zoom-indicator {{
-      min-width: 40px;
-      text-align: center;
+      min-width: 48px;
+      text-align: right;
       font-size: 0.72rem;
       font-weight: 700;
       letter-spacing: 0.1em;
@@ -5468,16 +5545,26 @@ def home(request: Request) -> HTMLResponse:
     }}
     .app-shell {{
       position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: 100%;
+      min-height: 0;
     }}
     .screen-shell {{
       display: grid;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
     }}
     .app-screen {{
       display: none;
       animation: screen-fade 180ms ease;
+      min-height: 0;
     }}
     .app-screen.is-active {{
       display: block;
+      height: 100%;
     }}
     @keyframes screen-fade {{
       from {{
@@ -5492,6 +5579,12 @@ def home(request: Request) -> HTMLResponse:
     .screen-stack {{
       display: grid;
       gap: 14px;
+      align-content: start;
+      height: 100%;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 2px;
     }}
     .dashboard-hero {{
       min-height: 0;
@@ -5733,7 +5826,7 @@ def home(request: Request) -> HTMLResponse:
     .hidden {{
       display: none !important;
     }}
-    body.keyboard-open {{
+    body.keyboard-open .screen-stack {{
       padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 12px);
       scroll-padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 24px);
     }}
@@ -6236,6 +6329,7 @@ def home(request: Request) -> HTMLResponse:
       }}
       .theme-toggle-label,
       .readiness-pill-label,
+      .view-controls-label,
       .power-button-label {{
         display: none;
       }}
@@ -6404,18 +6498,33 @@ def home(request: Request) -> HTMLResponse:
     }}
     @media (max-width: 520px), (max-height: 360px) {{
       .topbar {{
-        align-items: center;
+        flex-wrap: wrap;
+        align-items: flex-start;
+      }}
+      .topbar-brand,
+      .topbar-actions {{
+        width: 100%;
       }}
       .topbar-actions {{
-        width: auto;
-        flex-wrap: nowrap;
-        justify-content: flex-end;
+        flex-wrap: wrap;
+        justify-content: flex-start;
       }}
       .readiness-pill,
       .theme-toggle,
       .view-controls,
       .power-button {{
         flex: 0 0 auto;
+      }}
+      .view-controls {{
+        width: 100%;
+      }}
+      .zoom-presets {{
+        justify-content: space-between;
+      }}
+      .zoom-toggle,
+      .zoom-preset {{
+        min-height: 30px;
+        padding: 0 8px;
       }}
       .bottom-nav {{
         gap: 4px;
@@ -6442,22 +6551,25 @@ def home(request: Request) -> HTMLResponse:
       </div>
     </div>
     <div class="topbar-actions">
-      <div class="readiness-pill">
-        <span class="readiness-pill-value" id="topbar-readiness-value">{readiness_percent}%</span>
-        <span class="readiness-pill-label">Ready</span>
-      </div>
       <div class="readiness-pill secondary-pill {sync_tone}" id="topbar-sync-pill">
         <span class="readiness-pill-value" id="topbar-sync-status">{escape(readiness['device_status'])}</span>
         <span class="readiness-pill-label">Sync</span>
       </div>
-      <button type="button" class="theme-toggle nav-toggle-button" data-nav-screen="settings" aria-label="Open settings" title="Open settings">
-        <span class="theme-toggle-icon" aria-hidden="true">&#9881;</span>
-        <span class="theme-toggle-label">Settings</span>
-      </button>
       <div class="view-controls" role="group" aria-label="Adjust display size">
-        <button type="button" class="zoom-toggle" id="zoom-out" aria-label="Zoom out" title="Zoom out">-</button>
-        <span class="zoom-indicator" id="zoom-indicator">100%</span>
-        <button type="button" class="zoom-toggle" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+        <div class="view-controls-head">
+          <span class="view-controls-label">Zoom</span>
+          <span class="zoom-indicator" id="zoom-indicator">100%</span>
+        </div>
+        <div class="zoom-presets" role="group" aria-label="Zoom levels">
+          <button type="button" class="zoom-toggle" id="zoom-out" aria-label="Zoom out" title="Zoom out">-</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="75" aria-label="Set zoom to 75%">75%</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="90" aria-label="Set zoom to 90%">90%</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="100" aria-label="Set zoom to 100%">100%</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="110" aria-label="Set zoom to 110%">110%</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="125" aria-label="Set zoom to 125%">125%</button>
+          <button type="button" class="zoom-preset" data-ui-scale-option="fit" aria-label="Fit content to the touchscreen">Fit</button>
+          <button type="button" class="zoom-toggle" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+        </div>
       </div>
       <button type="button" class="power-button" id="power-button" aria-label="Shut down Raspberry Pi" title="Shut down Raspberry Pi">
         <span class="power-button-icon" aria-hidden="true">&#x23FB;</span>
@@ -6614,6 +6726,16 @@ def home(request: Request) -> HTMLResponse:
       const zoomOutButton = document.getElementById("zoom-out");
       const zoomInButton = document.getElementById("zoom-in");
       const zoomIndicator = document.getElementById("zoom-indicator");
+      const zoomPresetButtons = Array.from(document.querySelectorAll("[data-ui-scale-option]"));
+      const zoomScaleOptions = ["75", "90", "100", "110", "125", "fit"];
+      const zoomScaleLabels = {{
+        "75": "75%",
+        "90": "90%",
+        "100": "100%",
+        "110": "110%",
+        "125": "125%",
+        fit: "Fit",
+      }};
       const powerButton = document.getElementById("power-button");
       const shutdownModal = document.getElementById("shutdown-modal");
       const shutdownCancelButton = document.getElementById("shutdown-cancel-button");
@@ -6685,8 +6807,23 @@ def home(request: Request) -> HTMLResponse:
         return value.replace(/["\\\\]/g, "\\\\$&");
       }}
 
+      function screenElementFor(screenName) {{
+        const normalized = String(screenName || "").trim();
+        return screenElements.find((screen) => screen.getAttribute("data-screen") === normalized) || null;
+      }}
+
+      function screenScrollerFor(screenName) {{
+        const screen = screenElementFor(screenName);
+        if (!(screen instanceof HTMLElement)) {{
+          return null;
+        }}
+        const scroller = screen.querySelector(".screen-stack");
+        return scroller instanceof HTMLElement ? scroller : null;
+      }}
+
       function captureCurrentScreenScroll() {{
-        screenScrollPositions[activeScreen] = Math.max(window.scrollY || 0, 0);
+        const scroller = screenScrollerFor(activeScreen);
+        screenScrollPositions[activeScreen] = Math.max(scroller ? scroller.scrollTop : 0, 0);
       }}
 
       function persistUiState() {{
@@ -6705,9 +6842,13 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function restoreScreenScroll(screenName) {{
+        const scroller = screenScrollerFor(screenName);
+        if (!scroller) {{
+          return;
+        }}
         const top = Math.max(Number(screenScrollPositions[screenName] || 0), 0);
         const applyScroll = () => {{
-          window.scrollTo({{ top, left: 0, behavior: "auto" }});
+          scroller.scrollTop = top;
         }};
         window.requestAnimationFrame(applyScroll);
         window.setTimeout(applyScroll, 120);
@@ -6791,7 +6932,10 @@ def home(request: Request) -> HTMLResponse:
           }}
         }}
         if (options.restoreScroll === false) {{
-          window.scrollTo({{ top: 0, left: 0, behavior: "auto" }});
+          const scroller = screenScrollerFor(activeScreen);
+          if (scroller) {{
+            scroller.scrollTop = 0;
+          }}
         }} else {{
           restoreScreenScroll(activeScreen);
         }}
@@ -6810,16 +6954,18 @@ def home(request: Request) -> HTMLResponse:
         try {{
           const rawState = sessionStorage.getItem(uiStateStorageKey);
           if (!rawState) {{
-            updateBottomNavState();
+            switchScreen(activeScreen, {{ restoreScroll: false }});
             return;
           }}
           const state = JSON.parse(rawState);
           if (!state || state.path !== window.location.pathname) {{
+            switchScreen(activeScreen, {{ restoreScroll: false }});
             return;
           }}
           screenScrollPositions = typeof state.scroll_by_screen === "object" && state.scroll_by_screen ? state.scroll_by_screen : {{}};
           switchScreen(String(state.active_screen || "dashboard"), {{ restoreScroll: true }});
         }} catch (_error) {{
+          switchScreen(activeScreen, {{ restoreScroll: false }});
         }}
       }}
 
@@ -6833,11 +6979,19 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function defaultUiScale() {{
-        return window.matchMedia("(max-width: 520px), (max-height: 360px)").matches ? "fit" : "standard";
+        return window.matchMedia("(max-width: 520px), (max-height: 360px)").matches ? "fit" : "100";
       }}
 
       function currentUiScale() {{
-        return documentRoot.dataset.uiScale === "fit" ? "fit" : "standard";
+        const scale = String(documentRoot.dataset.uiScale || "").trim().toLowerCase();
+        return zoomScaleOptions.includes(scale) ? scale : defaultUiScale();
+      }}
+
+      function stepUiScale(direction) {{
+        const currentIndex = zoomScaleOptions.indexOf(currentUiScale());
+        const safeIndex = currentIndex >= 0 ? currentIndex : zoomScaleOptions.indexOf(defaultUiScale());
+        const nextIndex = Math.min(Math.max(safeIndex + direction, 0), zoomScaleOptions.length - 1);
+        applyUiScale(zoomScaleOptions[nextIndex]);
       }}
 
       function readinessColorForPercent(percent) {{
@@ -6851,16 +7005,22 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function updateZoomControls() {{
-        const fitMode = currentUiScale() === "fit";
+        const currentScale = currentUiScale();
+        const currentIndex = zoomScaleOptions.indexOf(currentScale);
         if (zoomOutButton) {{
-          zoomOutButton.disabled = fitMode;
+          zoomOutButton.disabled = currentIndex <= 0;
         }}
         if (zoomInButton) {{
-          zoomInButton.disabled = !fitMode;
+          zoomInButton.disabled = currentIndex >= zoomScaleOptions.length - 1;
         }}
         if (zoomIndicator) {{
-          zoomIndicator.textContent = fitMode ? "Fit" : "100%";
+          zoomIndicator.textContent = zoomScaleLabels[currentScale] || "100%";
         }}
+        zoomPresetButtons.forEach((button) => {{
+          const isActive = button.getAttribute("data-ui-scale-option") === currentScale;
+          button.classList.toggle("active", isActive);
+          button.setAttribute("aria-pressed", isActive ? "true" : "false");
+        }});
       }}
 
       function syncTouchKeyboardOffset() {{
@@ -6872,7 +7032,8 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function applyUiScale(scale, persist = true) {{
-        const nextScale = scale === "fit" ? "fit" : "standard";
+        const normalizedScale = String(scale || "").trim().toLowerCase();
+        const nextScale = zoomScaleOptions.includes(normalizedScale) ? normalizedScale : defaultUiScale();
         documentRoot.dataset.uiScale = nextScale;
         if (persist) {{
           try {{
@@ -6890,7 +7051,7 @@ def home(request: Request) -> HTMLResponse:
           storedScale = localStorage.getItem(uiScaleStorageKey) || "";
         }} catch (_error) {{
         }}
-        applyUiScale(storedScale === "fit" || storedScale === "standard" ? storedScale : defaultUiScale(), false);
+        applyUiScale(zoomScaleOptions.includes(String(storedScale || "").trim().toLowerCase()) ? storedScale : defaultUiScale(), false);
       }}
 
       function setShutdownError(message = "") {{
@@ -7335,7 +7496,6 @@ def home(request: Request) -> HTMLResponse:
           const heroBagName = document.getElementById("hero-bag-name");
           const bagNameLabel = document.getElementById("bag-name-label");
           const bagSizeBadge = document.getElementById("bag-size-badge");
-          const topbarReadinessValue = document.getElementById("topbar-readiness-value");
           const topbarSyncPill = document.getElementById("topbar-sync-pill");
           const topbarSyncStatus = document.getElementById("topbar-sync-status");
           const dashboardReadinessRing = document.getElementById("dashboard-readiness-ring");
@@ -7370,7 +7530,6 @@ def home(request: Request) -> HTMLResponse:
           if (heroBagName) heroBagName.textContent = state.bag_name || "";
           if (bagNameLabel) bagNameLabel.textContent = state.bag_name || "";
           if (bagSizeBadge) bagSizeBadge.textContent = state.bag_size_label || "";
-          if (topbarReadinessValue) topbarReadinessValue.textContent = `${{state.readiness_percent || 0}}%`;
           if (dashboardReadinessScore) {{
             dashboardReadinessScore.innerHTML = `${{state.readiness_percent || 0}}<span>%</span>`;
           }}
@@ -7692,14 +7851,19 @@ def home(request: Request) -> HTMLResponse:
       }}
       if (zoomOutButton) {{
         zoomOutButton.addEventListener("click", () => {{
-          applyUiScale("fit");
+          stepUiScale(-1);
         }});
       }}
       if (zoomInButton) {{
         zoomInButton.addEventListener("click", () => {{
-          applyUiScale("standard");
+          stepUiScale(1);
         }});
       }}
+      zoomPresetButtons.forEach((button) => {{
+        button.addEventListener("click", () => {{
+          applyUiScale(button.getAttribute("data-ui-scale-option") || "100");
+        }});
+      }});
       if (powerButton) {{
         powerButton.addEventListener("click", openShutdownModal);
       }}
