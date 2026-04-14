@@ -1396,7 +1396,7 @@ def split_nmcli_terse_fields(raw_line: str) -> List[str]:
     return fields
 
 
-def run_wifi_command(args: List[str], timeout_s: float) -> subprocess.CompletedProcess[str]:
+def run_wifi_command_result(args: List[str], timeout_s: float) -> subprocess.CompletedProcess[str]:
     command = resolve_wifi_command()
     if not command:
         raise RuntimeError("Wi-Fi controls are unavailable because nmcli is not installed on this Raspberry Pi.")
@@ -1412,6 +1412,11 @@ def run_wifi_command(args: List[str], timeout_s: float) -> subprocess.CompletedP
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("Wi-Fi command timed out. Check the Raspberry Pi network service and try again.") from exc
+    return result
+
+
+def run_wifi_command(args: List[str], timeout_s: float) -> subprocess.CompletedProcess[str]:
+    result = run_wifi_command_result(args, timeout_s)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip() or "Wi-Fi command failed."
         raise RuntimeError(detail)
@@ -1603,9 +1608,70 @@ def wifi_networks_payload() -> dict:
     return payload
 
 
+def managed_wifi_connection_id(ssid: str) -> str:
+    return f"gobag-wifi-{uuid.uuid5(uuid.NAMESPACE_DNS, (ssid or '').strip()).hex[:12]}"
+
+
+def remove_managed_wifi_connection(profile_id: str) -> None:
+    if not profile_id:
+        return
+    result = run_wifi_command_result(["connection", "show", "id", profile_id], WIFI_STATUS_TIMEOUT_S)
+    if result.returncode != 0:
+        return
+    run_wifi_command(["connection", "delete", "id", profile_id], WIFI_STATUS_TIMEOUT_S)
+
+
+def connect_wifi_via_managed_profile(
+    *,
+    ssid: str,
+    password: str,
+    wifi_device_name: str,
+    requires_password: bool,
+) -> None:
+    profile_id = managed_wifi_connection_id(ssid)
+    remove_managed_wifi_connection(profile_id)
+    add_args = ["connection", "add", "type", "wifi", "con-name", profile_id, "ssid", ssid]
+    if wifi_device_name:
+        add_args.extend(["ifname", wifi_device_name])
+    run_wifi_command(add_args, WIFI_STATUS_TIMEOUT_S)
+
+    modify_args = [
+        "connection",
+        "modify",
+        profile_id,
+        "connection.autoconnect",
+        "yes",
+        "802-11-wireless.mode",
+        "infrastructure",
+        "ipv4.method",
+        "auto",
+        "ipv6.method",
+        "auto",
+    ]
+    if wifi_device_name:
+        modify_args.extend(["connection.interface-name", wifi_device_name])
+    if requires_password:
+        modify_args.extend(
+            [
+                "802-11-wireless-security.key-mgmt",
+                "wpa-psk",
+                "802-11-wireless-security.psk",
+                password,
+            ]
+        )
+    run_wifi_command(modify_args, WIFI_STATUS_TIMEOUT_S)
+
+    up_args = ["connection", "up", "id", profile_id]
+    if wifi_device_name:
+        up_args.extend(["ifname", wifi_device_name])
+    run_wifi_command(up_args, WIFI_CONNECT_TIMEOUT_S)
+
+
 def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_supplied: bool) -> str:
     normalized = " ".join((detail or "").split()) or "Wi-Fi connection failed."
     lowered = normalized.lower()
+    if "802-11-wireless-security.key-mgmt" in lowered or "key-mgmt: property is missing" in lowered:
+        return "Security settings missing. Could not connect to Wi-Fi."
     authentication_markers = (
         "wrong password",
         "incorrect password",
@@ -1643,20 +1709,23 @@ def connect_wifi_network(ssid: str, password: str = "") -> dict:
     target_network = next((network for network in known_networks if network["ssid"] == target_ssid), None)
     if target_network and target_network["requires_password"] and not (password or "").strip() and not target_network["active"]:
         raise HTTPException(status_code=400, detail=f"Password required for {target_ssid}.")
-    command = ["device", "wifi", "connect", target_ssid]
-    if (password or "").strip():
-        command.extend(["password", password])
+    target_requires_password = bool(target_network["requires_password"]) if target_network else bool((password or "").strip())
     try:
         wifi_device_name = current_wifi_device_name()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    if wifi_device_name:
-        command.extend(["ifname", wifi_device_name])
     try:
-        run_wifi_command(command, WIFI_CONNECT_TIMEOUT_S)
+        connect_wifi_via_managed_profile(
+            ssid=target_ssid,
+            password=password,
+            wifi_device_name=wifi_device_name,
+            requires_password=target_requires_password,
+        )
     except RuntimeError as exc:
+        raw_detail = " ".join((str(exc) or exc.__class__.__name__).split()) or "Wi-Fi connection failed."
+        logger.warning("Wi-Fi connect failed for %s: %s", target_ssid, raw_detail)
         detail = normalize_wifi_connect_error_message(
-            str(exc) or exc.__class__.__name__,
+            raw_detail,
             ssid=target_ssid,
             password_supplied=bool((password or "").strip()),
         )
@@ -7731,6 +7800,12 @@ def home(request: Request) -> HTMLResponse:
           return;
         }}
         const password = String(wifiPasswordInput && wifiPasswordInput.value ? wifiPasswordInput.value : "");
+        if (wifiPasswordInput) {{
+          try {{
+            wifiPasswordInput.blur();
+          }} catch (_error) {{
+          }}
+        }}
         if (keyboardTarget === wifiPasswordInput) {{
           dismissTouchKeyboard();
         }}

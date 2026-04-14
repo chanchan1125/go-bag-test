@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import os
 import shutil
+import subprocess
 import time
 import unittest
 import uuid
@@ -538,6 +539,10 @@ class PiServerApiTests(unittest.TestCase):
             self.module, "list_wifi_networks", return_value=network_payload
         ), mock.patch.object(self.module, "current_wifi_device_name", return_value="wlan0"), mock.patch.object(
             self.module,
+            "run_wifi_command_result",
+            return_value=subprocess.CompletedProcess(["nmcli"], 10, "", "Error: unknown connection"),
+        ), mock.patch.object(
+            self.module,
             "run_wifi_command",
             side_effect=RuntimeError("Error: Connection activation failed: Secrets were required, but not provided."),
         ):
@@ -546,6 +551,126 @@ class PiServerApiTests(unittest.TestCase):
 
         self.assertEqual(captured.exception.status_code, 400)
         self.assertEqual(captured.exception.detail, "Incorrect Wi-Fi password. Try again.")
+
+    def test_connect_wifi_network_creates_secured_profile_with_wpa_psk(self):
+        network_payload = [
+            {
+                "ssid": "FieldNet",
+                "active": False,
+                "signal": 78,
+                "security": "WPA2",
+                "requires_password": True,
+            }
+        ]
+        success_payload = {
+            "ok": True,
+            "available": True,
+            "status": "connected",
+            "connected": True,
+            "radio_enabled": True,
+            "ssid": "FieldNet",
+            "signal": 78,
+            "device": "wlan0",
+            "message": "Connected to FieldNet.",
+            "networks": network_payload,
+        }
+        command_calls = []
+
+        def fake_run(args, timeout_s):
+            command_calls.append(list(args))
+            return subprocess.CompletedProcess(["nmcli", *args], 0, "", "")
+
+        with mock.patch.object(self.module, "wifi_command_available", return_value=True), mock.patch.object(
+            self.module, "list_wifi_networks", return_value=network_payload
+        ), mock.patch.object(self.module, "current_wifi_device_name", return_value="wlan0"), mock.patch.object(
+            self.module,
+            "run_wifi_command_result",
+            return_value=subprocess.CompletedProcess(["nmcli"], 10, "", "Error: unknown connection"),
+        ), mock.patch.object(self.module, "run_wifi_command", side_effect=fake_run), mock.patch.object(
+            self.module, "wifi_networks_payload", return_value=success_payload
+        ):
+            payload = self.module.connect_wifi_network("FieldNet", "camp-secret")
+
+        profile_id = self.module.managed_wifi_connection_id("FieldNet")
+        self.assertEqual(payload["message"], "Connected to FieldNet.")
+        self.assertEqual(command_calls[0], ["connection", "add", "type", "wifi", "con-name", profile_id, "ssid", "FieldNet", "ifname", "wlan0"])
+        self.assertIn("802-11-wireless-security.key-mgmt", command_calls[1])
+        self.assertIn("wpa-psk", command_calls[1])
+        self.assertIn("802-11-wireless-security.psk", command_calls[1])
+        self.assertIn("camp-secret", command_calls[1])
+        self.assertEqual(command_calls[2], ["connection", "up", "id", profile_id, "ifname", "wlan0"])
+
+    def test_connect_wifi_network_creates_open_profile_without_security_fields(self):
+        network_payload = [
+            {
+                "ssid": "OpenTent",
+                "active": False,
+                "signal": 52,
+                "security": "Open",
+                "requires_password": False,
+            }
+        ]
+        success_payload = {
+            "ok": True,
+            "available": True,
+            "status": "connected",
+            "connected": True,
+            "radio_enabled": True,
+            "ssid": "OpenTent",
+            "signal": 52,
+            "device": "wlan0",
+            "message": "Connected to OpenTent.",
+            "networks": network_payload,
+        }
+        command_calls = []
+
+        def fake_run(args, timeout_s):
+            command_calls.append(list(args))
+            return subprocess.CompletedProcess(["nmcli", *args], 0, "", "")
+
+        with mock.patch.object(self.module, "wifi_command_available", return_value=True), mock.patch.object(
+            self.module, "list_wifi_networks", return_value=network_payload
+        ), mock.patch.object(self.module, "current_wifi_device_name", return_value="wlan0"), mock.patch.object(
+            self.module,
+            "run_wifi_command_result",
+            return_value=subprocess.CompletedProcess(["nmcli"], 10, "", "Error: unknown connection"),
+        ), mock.patch.object(self.module, "run_wifi_command", side_effect=fake_run), mock.patch.object(
+            self.module, "wifi_networks_payload", return_value=success_payload
+        ):
+            payload = self.module.connect_wifi_network("OpenTent", "")
+
+        self.assertEqual(payload["message"], "Connected to OpenTent.")
+        self.assertNotIn("802-11-wireless-security.key-mgmt", command_calls[1])
+        self.assertNotIn("802-11-wireless-security.psk", command_calls[1])
+
+    def test_connect_wifi_network_normalizes_missing_security_settings_errors(self):
+        network_payload = [
+            {
+                "ssid": "FieldNet",
+                "active": False,
+                "signal": 78,
+                "security": "WPA2",
+                "requires_password": True,
+            }
+        ]
+
+        def fake_run(args, timeout_s):
+            if args[:3] == ["connection", "up", "id"]:
+                raise RuntimeError("Error: 802-11-wireless-security.key-mgmt: property is missing")
+            return subprocess.CompletedProcess(["nmcli", *args], 0, "", "")
+
+        with mock.patch.object(self.module, "wifi_command_available", return_value=True), mock.patch.object(
+            self.module, "list_wifi_networks", return_value=network_payload
+        ), mock.patch.object(self.module, "current_wifi_device_name", return_value="wlan0"), mock.patch.object(
+            self.module,
+            "run_wifi_command_result",
+            return_value=subprocess.CompletedProcess(["nmcli"], 10, "", "Error: unknown connection"),
+        ), mock.patch.object(self.module, "run_wifi_command", side_effect=fake_run):
+            with self.assertRaises(self.module.HTTPException) as captured:
+                self.module.connect_wifi_network("FieldNet", "camp-secret")
+
+        self.assertEqual(captured.exception.status_code, 400)
+        self.assertEqual(captured.exception.detail, "Security settings missing. Could not connect to Wi-Fi.")
 
     def test_usb_camera_session_endpoints_return_structured_state(self):
         bag_id = self.client.get("/bags").json()[0]["id"]
