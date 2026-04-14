@@ -8147,6 +8147,7 @@ def home(request: Request) -> HTMLResponse:
     .wifi-modal[data-view="entry"] .wifi-dialog,
     .wifi-modal[data-view="connecting"] .wifi-dialog {{
       min-height: calc(100dvh - var(--bottom-nav-height) - 112px);
+      padding-top: 8px;
     }}
     .wifi-modal[data-view="entry"] .wifi-connect-shell,
     .wifi-modal[data-view="connecting"] .wifi-connect-shell {{

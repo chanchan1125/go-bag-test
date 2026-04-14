@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
+import html
 import os
 import sys
 import time
@@ -22,6 +24,7 @@ APP_DIR = Path(__file__).resolve().parents[1]
 APP_ROOT = APP_DIR.parent
 DEFAULT_TITLE = "GO BAG Inventory"
 DEFAULT_BACKGROUND = "#0F172A"
+APP_ICON_PATH = APP_DIR / "assets" / "Icon.png"
 
 
 class AppShellError(RuntimeError):
@@ -179,6 +182,228 @@ def load_config_from_default_location(environ: MutableMapping[str, str]) -> None
     parse_env_file(config_path, environ)
 
 
+def brand_icon_data_uri() -> str:
+    if not APP_ICON_PATH.exists():
+        return ""
+    encoded = base64.b64encode(APP_ICON_PATH.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def render_startup_screen_html(
+    settings: AppShellSettings,
+    *,
+    status_label: str,
+    detail_label: str,
+    error: bool = False,
+) -> str:
+    icon_uri = brand_icon_data_uri()
+    title = html.escape(settings.title or DEFAULT_TITLE)
+    status = html.escape(status_label)
+    detail = html.escape(detail_label)
+    tone_class = "error" if error else "loading"
+    indicator = "Backend unavailable" if error else "Starting local services"
+    icon_markup = (
+        f'<img src="{icon_uri}" alt="GO BAG logo">'
+        if icon_uri
+        else '<span class="brand-fallback" aria-hidden="true">GB</span>'
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #131314;
+      --panel: rgba(27, 27, 28, 0.96);
+      --panel-strong: rgba(42, 42, 43, 0.98);
+      --ink: #f8f4ea;
+      --muted: rgba(248, 244, 234, 0.72);
+      --accent: #ff6b00;
+      --accent-soft: rgba(255, 107, 0, 0.16);
+      --line: rgba(255, 255, 255, 0.08);
+      --success: #78dc77;
+      --danger: #ffb4ab;
+    }}
+    * {{
+      box-sizing: border-box;
+    }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top right, rgba(255, 107, 0, 0.18), transparent 26%),
+        radial-gradient(circle at bottom left, rgba(255, 107, 0, 0.1), transparent 32%),
+        var(--bg);
+      color: var(--ink);
+      font-family: "Inter", "Segoe UI", sans-serif;
+    }}
+    .startup-shell {{
+      width: min(100vw - 28px, 430px);
+      display: grid;
+      gap: 16px;
+      padding: 24px 20px 20px;
+      border-radius: 24px;
+      background: linear-gradient(180deg, var(--panel), var(--panel-strong));
+      box-shadow: 0 20px 46px rgba(0, 0, 0, 0.42);
+      border: 1px solid var(--line);
+    }}
+    .startup-brand {{
+      display: grid;
+      justify-items: center;
+      gap: 12px;
+      text-align: center;
+    }}
+    .brand-mark {{
+      width: 72px;
+      height: 72px;
+      display: grid;
+      place-items: center;
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(255, 107, 0, 0.18), rgba(255, 107, 0, 0.08));
+      box-shadow: 0 14px 28px rgba(255, 107, 0, 0.18);
+      overflow: hidden;
+    }}
+    .brand-mark img {{
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }}
+    .brand-fallback {{
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      font-size: 1.55rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      color: #ffffff;
+    }}
+    .startup-kicker {{
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }}
+    .startup-title {{
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      font-size: 1.52rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }}
+    .startup-note {{
+      max-width: 28ch;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.45;
+    }}
+    .startup-status {{
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(12, 14, 15, 0.5);
+      border: 1px solid var(--line);
+    }}
+    .startup-indicator {{
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: {"var(--danger)" if error else "var(--success)"};
+    }}
+    .startup-dot {{
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: {"var(--danger)" if error else "var(--success)"};
+      box-shadow: 0 0 16px {"rgba(255, 180, 171, 0.55)" if error else "rgba(120, 220, 119, 0.45)"};
+      animation: {"none" if error else "startup-pulse 1.2s ease-in-out infinite"};
+    }}
+    .startup-label {{
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      font-size: 1.08rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }}
+    .startup-detail {{
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }}
+    .startup-meta {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: rgba(248, 244, 234, 0.52);
+      font-size: 0.66rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }}
+    @keyframes startup-pulse {{
+      0%, 100% {{
+        transform: scale(1);
+        opacity: 0.42;
+      }}
+      50% {{
+        transform: scale(1.12);
+        opacity: 1;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <main class="startup-shell startup-{tone_class}" aria-live="polite">
+    <section class="startup-brand">
+      <div class="brand-mark">{icon_markup}</div>
+      <div class="startup-kicker">GO BAG Raspberry Pi Kiosk</div>
+      <div class="startup-title">{title}</div>
+      <div class="startup-note">Emergency inventory, readiness, and sync tools are loading for this touchscreen station.</div>
+    </section>
+    <section class="startup-status">
+      <div class="startup-indicator">
+        <span class="startup-dot" aria-hidden="true"></span>
+        <span>{html.escape(indicator)}</span>
+      </div>
+      <div class="startup-label">{status}</div>
+      <div class="startup-detail">{detail}</div>
+    </section>
+    <div class="startup-meta">
+      <span>Offline-ready inventory</span>
+      <span>Touch kiosk interface</span>
+    </div>
+  </main>
+</body>
+</html>
+"""
+
+
+def run_startup_sequence(window: object, settings: AppShellSettings) -> None:
+    try:
+        wait_for_backend(settings.health_url, settings.wait_timeout_s)
+    except AppShellError as exc:
+        if hasattr(window, "load_html"):
+            window.load_html(
+                render_startup_screen_html(
+                    settings,
+                    status_label="GO BAG backend still unavailable",
+                    detail_label=str(exc),
+                    error=True,
+                )
+            )
+        return
+    if hasattr(window, "load_url"):
+        window.load_url(settings.app_url)
+
+
 def launch_app_shell(settings: AppShellSettings) -> None:
     try:
         import webview
@@ -188,9 +413,13 @@ def launch_app_shell(settings: AppShellSettings) -> None:
         ) from exc
 
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
-    webview.create_window(
+    window = webview.create_window(
         settings.title,
-        settings.app_url,
+        html=render_startup_screen_html(
+            settings,
+            status_label="Preparing mission dashboard",
+            detail_label="Loading the local GO BAG backend and touchscreen inventory workspace.",
+        ),
         width=settings.width,
         height=settings.height,
         min_size=(320, 240),
@@ -202,7 +431,7 @@ def launch_app_shell(settings: AppShellSettings) -> None:
         background_color=settings.background_color,
         text_select=False,
     )
-    webview.start(gui=settings.gui, debug=False)
+    webview.start(run_startup_sequence, (window, settings), gui=settings.gui, debug=False)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -211,7 +440,6 @@ def main(argv: list[str] | None = None) -> int:
     settings = build_runtime_settings(args, os.environ)
     try:
         ensure_graphical_session()
-        wait_for_backend(settings.health_url, settings.wait_timeout_s)
         with single_instance_lock(settings.lock_path):
             launch_app_shell(settings)
     except ExistingAppShellInstance as exc:

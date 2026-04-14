@@ -166,6 +166,13 @@ if ! health_ok; then
   fi
 fi
 
+if [[ "${NO_UI}" -ne 1 && "${FORCE_BROWSER}" -ne 1 && "${UI_SHELL}" != "browser" ]]; then
+  if [[ "${AUTO_OPEN_UI}" != "0" || "${KIOSK_MODE}" -eq 1 || "${APP_MODE}" -eq 1 ]]; then
+    launch_with_app_shell
+    exit 0
+  fi
+fi
+
 for _ in $(seq 1 "${TIMEOUT_SECONDS}"); do
   if health_ok; then
     log "Backend is ready at ${APP_URL}"
