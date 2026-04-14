@@ -446,6 +446,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertNotIn("GO BAG Command Center", body)
         self.assertNotIn("Quick actions", body)
         self.assertNotIn("Display controls", body)
+        self.assertNotIn("Selected network", body)
         self.assertNotIn('id="wifi-cancel-button"', body)
         self.assertNotIn('id="wifi-rescan-button"', body)
         self.assertNotIn('id="wifi-selected-note"', body)

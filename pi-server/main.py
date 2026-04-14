@@ -8144,7 +8144,6 @@ def home(request: Request) -> HTMLResponse:
         <div class="wifi-entry-panel-host" id="wifi-entry-panel-host">
           <div class="wifi-entry-panel" id="wifi-entry-panel">
             <div class="wifi-selected-card">
-              <div class="panel-subtitle">Selected network</div>
               <div class="wifi-selected-name" id="wifi-selected-name">Choose a network</div>
             </div>
             <div class="wifi-password-shell hidden" id="wifi-password-shell">
