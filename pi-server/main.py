@@ -6543,7 +6543,7 @@ def home(request: Request) -> HTMLResponse:
       min-height: 0;
       max-height: calc(100dvh - var(--touch-keyboard-offset, 0px) - 4px);
       display: grid;
-      grid-template-rows: auto auto auto minmax(0, 1fr);
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
       gap: 5px;
       border-radius: 14px;
       border: 1px solid var(--line);
@@ -6632,6 +6632,9 @@ def home(request: Request) -> HTMLResponse:
       display: grid;
       gap: 4px;
       min-height: 0;
+      padding-top: 4px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
     }}
     .wifi-selected-card {{
       display: grid;
@@ -7155,6 +7158,15 @@ def home(request: Request) -> HTMLResponse:
           <button type="button" class="secondary wifi-close-button" id="wifi-close-button" aria-label="Close Wi-Fi panel" title="Close Wi-Fi panel">&#10005;</button>
         </div>
         <div class="wifi-status-message hidden" id="wifi-modal-message"></div>
+        <div class="wifi-network-section">
+          <div class="wifi-network-head">
+            <div class="panel-subtitle">Available networks</div>
+            <div class="micro-chip" id="wifi-status-chip">Checking</div>
+          </div>
+          <div class="wifi-network-list" id="wifi-network-list">
+            <div class="wifi-empty-state">Scanning nearby Wi-Fi networks...</div>
+          </div>
+        </div>
         <div class="wifi-entry-panel">
           <div class="wifi-selected-card">
             <div class="panel-subtitle">Selected network</div>
@@ -7178,15 +7190,6 @@ def home(request: Request) -> HTMLResponse:
           </div>
           <div class="wifi-actions">
             <button type="button" id="wifi-connect-submit">Connect</button>
-          </div>
-        </div>
-        <div class="wifi-network-section">
-          <div class="wifi-network-head">
-            <div class="panel-subtitle">Available networks</div>
-            <div class="micro-chip" id="wifi-status-chip">Checking</div>
-          </div>
-          <div class="wifi-network-list" id="wifi-network-list">
-            <div class="wifi-empty-state">Scanning nearby Wi-Fi networks...</div>
           </div>
         </div>
       </section>
