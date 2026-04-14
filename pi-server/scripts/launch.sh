@@ -60,6 +60,7 @@ APP_URL="${GOBAG_APP_URL:-${HEALTH_URL}}"
 BACKEND_LOG="${LOG_DIR}/launcher-backend.log"
 LAUNCHER_LOG="${LOG_DIR}/launcher.log"
 APP_SHELL_LOG="${LOG_DIR}/app-shell.log"
+STARTUP_SPLASH_HTML="${LOG_DIR}/browser-startup-splash.html"
 
 mkdir -p "${DATA_DIR}" "${LOG_DIR}"
 touch "${LAUNCHER_LOG}" "${APP_SHELL_LOG}"
@@ -97,6 +98,7 @@ launch_with_browser() {
   local browser_cmd="$1"
   local -a browser_parts=()
   local -a browser_flags=(--no-first-run --disable-session-crashed-bubble --no-default-browser-check)
+  local splash_url=""
   read -r -a browser_parts <<< "${browser_cmd}"
 
   if pgrep -f "${browser_parts[0]}.*${APP_URL}" >/dev/null 2>&1; then
@@ -104,20 +106,23 @@ launch_with_browser() {
     return 0
   fi
 
+  render_browser_startup_splash
+  splash_url="file://${STARTUP_SPLASH_HTML}"
+
   if [[ "${KIOSK_MODE}" -eq 1 ]]; then
-    nohup "${browser_parts[@]}" "${browser_flags[@]}" --kiosk "${APP_URL}" >>"${LAUNCHER_LOG}" 2>&1 &
-    log "Opened GO BAG in browser kiosk mode."
+    nohup "${browser_parts[@]}" "${browser_flags[@]}" --kiosk "${splash_url}" >>"${LAUNCHER_LOG}" 2>&1 &
+    log "Opened GO BAG in browser kiosk mode with the branded startup splash."
     return 0
   fi
 
   if [[ "${APP_MODE}" -eq 1 ]]; then
-    nohup "${browser_parts[@]}" "${browser_flags[@]}" --app="${APP_URL}" --start-maximized >>"${LAUNCHER_LOG}" 2>&1 &
-    log "Opened GO BAG in browser app mode."
+    nohup "${browser_parts[@]}" "${browser_flags[@]}" --app="${splash_url}" --start-maximized >>"${LAUNCHER_LOG}" 2>&1 &
+    log "Opened GO BAG in browser app mode with the branded startup splash."
     return 0
   fi
 
-  nohup "${browser_parts[@]}" "${APP_URL}" >>"${LAUNCHER_LOG}" 2>&1 &
-  log "Opened GO BAG using the configured browser command."
+  nohup "${browser_parts[@]}" "${splash_url}" >>"${LAUNCHER_LOG}" 2>&1 &
+  log "Opened GO BAG using the configured browser command with the branded startup splash."
 }
 
 launch_with_app_shell() {
@@ -143,6 +148,212 @@ launch_with_app_shell() {
     return 1
   fi
   log "Opened GO BAG in the native app shell."
+}
+
+render_browser_startup_splash() {
+  cat >"${STARTUP_SPLASH_HTML}" <<EOF
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GO BAG Inventory</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #131314;
+      --panel: rgba(27, 27, 28, 0.96);
+      --panel-strong: rgba(42, 42, 43, 0.98);
+      --ink: #f8f4ea;
+      --muted: rgba(248, 244, 234, 0.72);
+      --accent: #ff6b00;
+      --line: rgba(255, 255, 255, 0.08);
+      --success: #78dc77;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top right, rgba(255, 107, 0, 0.18), transparent 26%),
+        radial-gradient(circle at bottom left, rgba(255, 107, 0, 0.1), transparent 32%),
+        var(--bg);
+      color: var(--ink);
+      font-family: "Inter", "Segoe UI", sans-serif;
+    }
+    .startup-shell {
+      width: min(100vw - 28px, 430px);
+      display: grid;
+      gap: 16px;
+      padding: 24px 20px 20px;
+      border-radius: 24px;
+      background: linear-gradient(180deg, var(--panel), var(--panel-strong));
+      box-shadow: 0 20px 46px rgba(0, 0, 0, 0.42);
+      border: 1px solid var(--line);
+    }
+    .startup-brand {
+      display: grid;
+      justify-items: center;
+      gap: 12px;
+      text-align: center;
+    }
+    .brand-mark {
+      width: 72px;
+      height: 72px;
+      display: grid;
+      place-items: center;
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(255, 107, 0, 0.18), rgba(255, 107, 0, 0.08));
+      box-shadow: 0 14px 28px rgba(255, 107, 0, 0.18);
+      overflow: hidden;
+    }
+    .brand-mark img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .brand-fallback {
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      font-size: 1.55rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      color: #ffffff;
+    }
+    .startup-kicker {
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .startup-title {
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      font-size: 1.52rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }
+    .startup-note {
+      max-width: 28ch;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.45;
+    }
+    .startup-status {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(12, 14, 15, 0.5);
+      border: 1px solid var(--line);
+    }
+    .startup-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--success);
+    }
+    .startup-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--success);
+      box-shadow: 0 0 16px rgba(120, 220, 119, 0.45);
+      animation: startup-pulse 1.2s ease-in-out infinite;
+    }
+    .startup-label {
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      font-size: 1.08rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .startup-detail {
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }
+    .startup-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: rgba(248, 244, 234, 0.52);
+      font-size: 0.66rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    @keyframes startup-pulse {
+      0%, 100% {
+        transform: scale(1);
+        opacity: 0.42;
+      }
+      50% {
+        transform: scale(1.12);
+        opacity: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="startup-shell" aria-live="polite">
+    <section class="startup-brand">
+      <div class="brand-mark">
+        <img src="file://${APP_DIR}/assets/Icon.png" alt="GO BAG logo" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'brand-fallback', textContent: 'GB' }))">
+      </div>
+      <div class="startup-kicker">GO BAG Raspberry Pi Kiosk</div>
+      <div class="startup-title">GO BAG Inventory</div>
+      <div class="startup-note">Emergency inventory, readiness, and sync tools are loading for this touchscreen station.</div>
+    </section>
+    <section class="startup-status">
+      <div class="startup-indicator">
+        <span class="startup-dot" aria-hidden="true"></span>
+        <span>Starting local services</span>
+      </div>
+      <div class="startup-label" id="startup-status-label">Preparing mission dashboard</div>
+      <div class="startup-detail" id="startup-status-detail">Loading the local GO BAG backend and touchscreen inventory workspace.</div>
+    </section>
+    <div class="startup-meta">
+      <span>Offline-ready inventory</span>
+      <span>Touch kiosk interface</span>
+    </div>
+  </main>
+  <script>
+    (function () {
+      const healthUrl = "${HEALTH_URL}/health";
+      const appUrl = "${APP_URL}";
+      const statusLabel = document.getElementById("startup-status-label");
+      const statusDetail = document.getElementById("startup-status-detail");
+
+      async function pollBackend() {
+        try {
+          await fetch(healthUrl + "?ts=" + Date.now(), {
+            cache: "no-store",
+            mode: "no-cors"
+          });
+          window.location.replace(appUrl);
+          return;
+        } catch (error) {
+          if (statusLabel) statusLabel.textContent = "Waiting for local GO BAG services";
+          if (statusDetail) statusDetail.textContent = "The Raspberry Pi is still finishing startup. The dashboard will open automatically.";
+        }
+        window.setTimeout(pollBackend, 800);
+      }
+
+      window.setTimeout(pollBackend, 500);
+    }());
+  </script>
+</body>
+</html>
+EOF
 }
 
 if [[ ! -f "${DATA_DIR}/gobag.db" ]]; then
