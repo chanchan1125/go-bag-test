@@ -5608,6 +5608,7 @@ def home(request: Request) -> HTMLResponse:
       margin: 0 auto;
       padding: var(--page-padding);
       padding-bottom: calc(var(--bottom-nav-height) + 18px + var(--touch-keyboard-offset));
+      scroll-padding-bottom: calc(var(--bottom-nav-height) + 24px + var(--touch-keyboard-offset));
     }}
     h1, h2, h3, p {{ margin: 0; }}
     html[data-large-buttons="1"] button,
@@ -6900,29 +6901,36 @@ def home(request: Request) -> HTMLResponse:
     }}
     .bottom-nav {{
       position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      left: 50%;
+      bottom: calc(6px + env(safe-area-inset-bottom, 0px));
       z-index: 32;
       display: grid;
       grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 8px;
-      padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+      width: min(calc(100vw - 10px), 456px);
+      gap: 6px;
+      padding: 8px;
       background: var(--topbar);
-      border-top: 1px solid var(--line);
+      border: 1px solid var(--line);
+      border-radius: 18px;
       backdrop-filter: blur(10px);
-      box-shadow: 0 -10px 22px var(--shadow);
-      opacity: calc(0.04 + (var(--bottom-nav-reveal, 0) * 0.96));
-      transform: translateY(calc((1 - var(--bottom-nav-reveal, 0)) * 108%));
-      transition: transform 320ms ease, opacity 320ms ease, box-shadow 320ms ease;
+      box-shadow: 0 12px 24px var(--shadow-strong);
+      opacity: calc(0.02 + (var(--bottom-nav-reveal, 0) * 0.98));
+      transform: translate3d(-50%, calc((1 - var(--bottom-nav-reveal, 0)) * 118%), 0);
+      transition:
+        transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 220ms ease,
+        box-shadow 260ms ease,
+        filter 260ms ease;
       will-change: transform, opacity;
+      overflow: hidden;
     }}
     .bottom-nav.is-revealed {{
-      box-shadow: 0 -14px 28px var(--shadow-strong);
+      box-shadow: 0 16px 30px var(--shadow-strong);
     }}
     .bottom-nav.is-hidden {{
       pointer-events: none;
       box-shadow: none;
+      filter: saturate(0.92);
     }}
     .bottom-nav-button {{
       min-height: 60px;
@@ -8273,6 +8281,7 @@ def home(request: Request) -> HTMLResponse:
       const touchKeyboardDoneButton = document.getElementById("touch-keyboard-done-button");
       const uiStateStorageKey = "gobag-pi-ui-state";
       const keyboardEligibleSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="date"]):not([type="file"]):not([type="radio"]):not([type="range"]):not([disabled]), textarea:not([disabled])';
+      const mainScrollContainer = document.scrollingElement || document.documentElement || document.body;
       const screenElements = Array.from(document.querySelectorAll(".app-screen"));
       const bottomNav = document.querySelector(".bottom-nav");
       const bottomNavButtons = Array.from(document.querySelectorAll(".bottom-nav-button"));
@@ -8303,6 +8312,9 @@ def home(request: Request) -> HTMLResponse:
       let screenScrollPositions = {{}};
       let bottomNavReveal = 0;
       let bottomNavHideTimer = 0;
+      let bottomNavActivityFrame = 0;
+      let bottomNavActivityForce = false;
+      let lastBottomNavScrollTop = 0;
       let inventoryCategoryFilter = "all";
       let inventorySearchQuery = "";
       let pendingInventoryFocusItemId = "";
@@ -8941,6 +8953,23 @@ def home(request: Request) -> HTMLResponse:
         bottomNavHideTimer = 0;
       }}
 
+      function bottomNavOverlayBlocked() {{
+        return wifiModalIsOpen() || powerDialogIsOpen() || scanIsOpen() || shutdownProgressIsOpen();
+      }}
+
+      function currentMainScrollTop() {{
+        const containerTop =
+          mainScrollContainer && typeof mainScrollContainer.scrollTop === "number" ? Number(mainScrollContainer.scrollTop) : 0;
+        const documentTop = document.documentElement ? Number(document.documentElement.scrollTop || 0) : 0;
+        const bodyTop = document.body ? Number(document.body.scrollTop || 0) : 0;
+        const windowTop = typeof window.scrollY === "number" ? Number(window.scrollY) : 0;
+        return Math.max(containerTop, documentTop, bodyTop, windowTop, 0);
+      }}
+
+      function updateBottomNavScrollBaseline() {{
+        lastBottomNavScrollTop = currentMainScrollTop();
+      }}
+
       function setBottomNavReveal(value) {{
         if (!bottomNav) {{
           return;
@@ -8955,7 +8984,7 @@ def home(request: Request) -> HTMLResponse:
         clearBottomNavHideTimer();
         bottomNavHideTimer = window.setTimeout(() => {{
           bottomNavHideTimer = 0;
-          if (wifiModalIsOpen() || powerDialogIsOpen() || scanIsOpen() || shutdownProgressIsOpen()) {{
+          if (bottomNavOverlayBlocked()) {{
             return;
           }}
           setBottomNavReveal(0);
@@ -8963,17 +8992,52 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function showBottomNavWhileScrolling() {{
+        if (bottomNavOverlayBlocked()) {{
+          clearBottomNavHideTimer();
+          setBottomNavReveal(0);
+          return;
+        }}
         setBottomNavReveal(1);
         scheduleBottomNavHide();
+      }}
+
+      function processBottomNavScrollActivity(force = false) {{
+        if (bottomNavOverlayBlocked()) {{
+          clearBottomNavHideTimer();
+          updateBottomNavScrollBaseline();
+          setBottomNavReveal(0);
+          return;
+        }}
+        const nextScrollTop = currentMainScrollTop();
+        const hasRealMovement = force || Math.abs(nextScrollTop - lastBottomNavScrollTop) >= 1;
+        lastBottomNavScrollTop = nextScrollTop;
+        if (!hasRealMovement) {{
+          return;
+        }}
+        showBottomNavWhileScrolling();
+      }}
+
+      function queueBottomNavScrollActivity(force = false) {{
+        bottomNavActivityForce = bottomNavActivityForce || force;
+        if (bottomNavActivityFrame) {{
+          return;
+        }}
+        bottomNavActivityFrame = window.requestAnimationFrame(() => {{
+          bottomNavActivityFrame = 0;
+          const shouldForce = bottomNavActivityForce;
+          bottomNavActivityForce = false;
+          processBottomNavScrollActivity(shouldForce);
+        }});
       }}
 
       function syncBottomNavReveal(force = false) {{
         if (force) {{
           clearBottomNavHideTimer();
+          updateBottomNavScrollBaseline();
           setBottomNavReveal(0);
           return;
         }}
-        showBottomNavWhileScrolling();
+        queueBottomNavScrollActivity(true);
       }}
 
       function applyInventoryFilters() {{
@@ -9214,6 +9278,12 @@ def home(request: Request) -> HTMLResponse:
         document.body.classList.toggle("modal-open", anyModalOpen);
         documentRoot.classList.toggle("wifi-modal-open", wifiOpen);
         document.body.classList.toggle("wifi-modal-open", wifiOpen);
+        if (anyModalOpen) {{
+          clearBottomNavHideTimer();
+          setBottomNavReveal(0);
+          return;
+        }}
+        updateBottomNavScrollBaseline();
       }}
 
       function setPowerUiBusy(isBusy) {{
@@ -10446,6 +10516,7 @@ def home(request: Request) -> HTMLResponse:
       initializeUiScale();
       setBottomNavReveal(bottomNavReveal);
       initializeScreenState();
+      updateBottomNavScrollBaseline();
       applyInventoryFilters();
       applyWifiStatusPayload(wifiStatusState, {{ focusPassword: false }});
       updatePowerDialogCopy();
@@ -10480,18 +10551,15 @@ def home(request: Request) -> HTMLResponse:
           showKioskCursorBriefly();
         }}
       }});
+      const bottomNavScrollTarget =
+        mainScrollContainer === document.body || mainScrollContainer === document.documentElement ? window : mainScrollContainer;
       const handleBottomNavScrollActivity = () => {{
-        if (wifiModalIsOpen() || powerDialogIsOpen() || scanIsOpen() || shutdownProgressIsOpen()) {{
-          return;
-        }}
-        syncBottomNavReveal(false);
+        queueBottomNavScrollActivity(false);
       }};
-      document.addEventListener("scroll", handleBottomNavScrollActivity, {{ passive: true, capture: true }});
-      window.addEventListener(
-        "scroll",
-        handleBottomNavScrollActivity,
-        {{ passive: true }},
-      );
+      bottomNavScrollTarget.addEventListener("scroll", handleBottomNavScrollActivity, {{ passive: true }});
+      if (bottomNavScrollTarget !== window) {{
+        window.addEventListener("scroll", handleBottomNavScrollActivity, {{ passive: true }});
+      }}
 
       window.addEventListener("keydown", (event) => {{
         if (event.key !== "Escape") {{
