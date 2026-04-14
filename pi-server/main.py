@@ -5620,6 +5620,13 @@ def home(request: Request) -> HTMLResponse:
   <style>
 {render_pi_dashboard_css_tokens()}
     * {{ box-sizing: border-box; }}
+    button,
+    input,
+    textarea,
+    select,
+    a {{
+      -webkit-tap-highlight-color: transparent;
+    }}
     html.kiosk-cursor-hidden,
     html.kiosk-cursor-hidden body,
     html.kiosk-cursor-hidden * {{
@@ -8990,6 +8997,10 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function selectedWifiUsesDisconnectAction() {{
+        return false;
+      }}
+
+      function selectedWifiIsCurrentNetwork() {{
         const network = selectedWifiNetwork();
         return !!(network && network.active && wifiStatusState.connected);
       }}
@@ -9041,9 +9052,6 @@ def home(request: Request) -> HTMLResponse:
         if (wifiConnecting && wifiBusyAction === "connect") {{
           return "connecting";
         }}
-        if (selectedWifiUsesDisconnectAction()) {{
-          return "connected";
-        }}
         if (wifiSelectedNetworkRequiresPassword) {{
           return "entry";
         }}
@@ -9065,7 +9073,7 @@ def home(request: Request) -> HTMLResponse:
         const activeNetwork = Array.isArray(wifiStatusState.networks)
           ? wifiStatusState.networks.find((network) => network && network.active) || null
           : null;
-        const showDisconnect = !!(selectedNetwork && selectedNetwork.active && wifiStatusState.connected);
+        const selectedNetworkIsActive = !!(selectedNetwork && selectedNetwork.active && wifiStatusState.connected);
         const displayNetwork = selectedNetwork || activeNetwork || null;
         const selectedName = String(wifiSelectedNetworkSsid || wifiStatusState.ssid || "").trim();
         const networkName = displayNetwork && displayNetwork.ssid ? String(displayNetwork.ssid).trim() : selectedName || "Choose a network";
@@ -9085,17 +9093,17 @@ def home(request: Request) -> HTMLResponse:
         }} else if (!selectedNetwork && activeNetwork && wifiStatusState.connected) {{
           state = "connected";
           kicker = "Currently connected";
-          detail = `${{wifiSecurityLabel(activeNetwork)}}. Tap the connected network below only if you want to disconnect.`;
+          detail = `${{wifiSecurityLabel(activeNetwork)}}. Tap the current network below to view it, or choose another one to switch.`;
         }} else if (wifiSelectedNetworkRequiresPassword && selectedNetwork) {{
           state = "entry";
           kicker = "Connecting to network";
           detail = `${{wifiSecurityLabel(selectedNetwork)}}. Enter the password below to continue.`;
           signalValue = wifiSignalValueLabel(selectedNetwork.signal);
           signalNote = wifiSignalDescriptor(selectedNetwork.signal);
-        }} else if (showDisconnect) {{
+        }} else if (selectedNetworkIsActive) {{
           state = "connected";
           kicker = "Currently connected";
-          detail = `${{wifiSecurityLabel(selectedNetwork)}}. Disconnect only if you want to leave this network.`;
+          detail = `${{wifiSecurityLabel(selectedNetwork)}}. This network is already active. Choose another network below if you want to switch.`;
           signalValue = wifiSignalValueLabel(selectedNetwork.signal);
           signalNote = wifiSignalDescriptor(selectedNetwork.signal);
         }} else if (selectedNetwork) {{
@@ -9131,32 +9139,26 @@ def home(request: Request) -> HTMLResponse:
       function updateWifiActionButtons() {{
         const selectedNetwork = selectedWifiNetwork();
         const selectedName = String(wifiSelectedNetworkSsid || "").trim();
-        const showDisconnect = !!(selectedNetwork && selectedNetwork.active && wifiStatusState.connected);
-        const busyAction = wifiBusyAction || (showDisconnect ? "disconnect" : "connect");
-        const requiresPassword = !!(selectedNetwork && selectedNetwork.requires_password && !showDisconnect);
+        const selectedNetworkIsActive = !!(selectedNetwork && selectedNetwork.active && wifiStatusState.connected);
+        const busyAction = wifiBusyAction || "connect";
+        const requiresPassword = !!(selectedNetwork && selectedNetwork.requires_password && !selectedNetworkIsActive);
         const passwordValue = String(wifiPasswordInput && wifiPasswordInput.value ? wifiPasswordInput.value : "").trim();
-        const showHeroActions = showDisconnect || (wifiConnecting && busyAction === "disconnect");
         if (wifiHeroActions) {{
-          wifiHeroActions.classList.toggle("hidden", !showHeroActions);
+          wifiHeroActions.classList.add("hidden");
         }}
         if (wifiConnectButton) {{
           wifiConnectButton.textContent = wifiConnecting
-            ? busyAction === "disconnect"
-              ? "Disconnecting..."
-              : "Connecting..."
-            : showDisconnect
-              ? "Disconnect"
-              : "Connect";
-          wifiConnectButton.classList.toggle("secondary", showDisconnect);
-          wifiConnectButton.classList.toggle("danger", showDisconnect);
+            ? "Connecting..."
+            : "Connect";
+          wifiConnectButton.classList.remove("secondary", "danger");
           wifiConnectButton.disabled =
             wifiConnecting ||
-            (showDisconnect
-              ? !wifiStatusState.connected
-              : !selectedName || (requiresPassword && !passwordValue));
+            !selectedName ||
+            selectedNetworkIsActive ||
+            (requiresPassword && !passwordValue);
         }}
         if (wifiRefreshButton) {{
-          const showRefresh = !showDisconnect && !wifiSelectedNetworkRequiresPassword && !(wifiConnecting && busyAction === "connect");
+          const showRefresh = !wifiSelectedNetworkRequiresPassword && !(wifiConnecting && busyAction === "connect");
           wifiRefreshButton.classList.toggle("hidden", !showRefresh);
           wifiRefreshButton.textContent = wifiRefreshing ? "Refreshing..." : "Refresh";
           wifiRefreshButton.disabled = wifiConnecting || wifiRefreshing;
