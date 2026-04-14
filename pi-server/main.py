@@ -8042,29 +8042,6 @@ def home(request: Request) -> HTMLResponse:
       {settings_screen}
     </div>
 
-    <nav class="bottom-nav" aria-label="Primary">
-      <button type="button" class="bottom-nav-button active" data-nav-screen="dashboard">
-        <span class="bottom-nav-icon" aria-hidden="true">&#8962;</span>
-        <span class="bottom-nav-label">Dashboard</span>
-      </button>
-      <button type="button" class="bottom-nav-button" data-nav-screen="inventory">
-        <span class="bottom-nav-icon" aria-hidden="true">&#9776;</span>
-        <span class="bottom-nav-label">Inventory</span>
-      </button>
-      <button type="button" class="bottom-nav-button" data-nav-screen="check">
-        <span class="bottom-nav-icon" aria-hidden="true">&#10003;</span>
-        <span class="bottom-nav-label">Check</span>
-      </button>
-      <button type="button" class="bottom-nav-button" data-nav-screen="sync">
-        <span class="bottom-nav-icon" aria-hidden="true">&#8645;</span>
-        <span class="bottom-nav-label">Sync</span>
-      </button>
-      <button type="button" class="bottom-nav-button" data-nav-screen="settings">
-        <span class="bottom-nav-icon" aria-hidden="true">&#9881;</span>
-        <span class="bottom-nav-label">Settings</span>
-      </button>
-    </nav>
-
     <div class="scan-modal hidden" id="scan-modal" aria-hidden="true">
       <section class="scan-dialog" aria-label="USB QR scanner">
         <div class="scan-preview-shell">
@@ -8186,6 +8163,28 @@ def home(request: Request) -> HTMLResponse:
     </div>
     {render_touch_keyboard_html()}
   </main>
+  <nav class="bottom-nav" aria-label="Primary">
+    <button type="button" class="bottom-nav-button active" data-nav-screen="dashboard">
+      <span class="bottom-nav-icon" aria-hidden="true">&#8962;</span>
+      <span class="bottom-nav-label">Dashboard</span>
+    </button>
+    <button type="button" class="bottom-nav-button" data-nav-screen="inventory">
+      <span class="bottom-nav-icon" aria-hidden="true">&#9776;</span>
+      <span class="bottom-nav-label">Inventory</span>
+    </button>
+    <button type="button" class="bottom-nav-button" data-nav-screen="check">
+      <span class="bottom-nav-icon" aria-hidden="true">&#10003;</span>
+      <span class="bottom-nav-label">Check</span>
+    </button>
+    <button type="button" class="bottom-nav-button" data-nav-screen="sync">
+      <span class="bottom-nav-icon" aria-hidden="true">&#8645;</span>
+      <span class="bottom-nav-label">Sync</span>
+    </button>
+    <button type="button" class="bottom-nav-button" data-nav-screen="settings">
+      <span class="bottom-nav-icon" aria-hidden="true">&#9881;</span>
+      <span class="bottom-nav-label">Settings</span>
+    </button>
+  </nav>
   <script>
     (() => {{
       const refreshIntervalMs = {UI_REFRESH_INTERVAL_MS};
@@ -10517,6 +10516,7 @@ def home(request: Request) -> HTMLResponse:
       setBottomNavReveal(bottomNavReveal);
       initializeScreenState();
       updateBottomNavScrollBaseline();
+      showBottomNavWhileScrolling();
       applyInventoryFilters();
       applyWifiStatusPayload(wifiStatusState, {{ focusPassword: false }});
       updatePowerDialogCopy();

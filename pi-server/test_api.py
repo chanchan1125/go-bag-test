@@ -416,6 +416,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn("scheduleBottomNavHide", body)
         self.assertIn("3000", body)
         self.assertIn("handleBottomNavScrollActivity", body)
+        self.assertLess(body.index("</main>"), body.index('<nav class="bottom-nav"'))
         self.assertIn('selectWifiNetwork(targetSsid, { focusPassword: false });', body)
         self.assertNotIn("touchKeyboardDock.appendChild(wifiEntryPanel)", body)
         self.assertIn('id="settings-preferences-form"', body)
