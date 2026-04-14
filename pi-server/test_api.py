@@ -409,8 +409,10 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn('id="wifi-password-toggle"', body)
         self.assertIn('id="wifi-close-button"', body)
         self.assertIn('data-keyboard-submit-target="wifi-connect-submit"', body)
-        self.assertIn("--bottom-nav-reveal: 0.18;", body)
+        self.assertIn("--bottom-nav-reveal: 0;", body)
         self.assertIn("syncBottomNavReveal", body)
+        self.assertIn("showBottomNavWhileScrolling", body)
+        self.assertIn("scheduleBottomNavHide", body)
         self.assertIn('id="settings-preferences-form"', body)
         self.assertIn("Appearance", body)
         self.assertIn("Alerts & reminders", body)
@@ -713,7 +715,39 @@ class PiServerApiTests(unittest.TestCase):
                 self.module.connect_wifi_network("FieldNet", "camp-secret")
 
         self.assertEqual(captured.exception.status_code, 400)
-        self.assertEqual(captured.exception.detail, "Permission error while connecting. Failed to save Wi-Fi connection.")
+        self.assertEqual(
+            captured.exception.detail,
+            "Wi-Fi save is blocked by Raspberry Pi permissions. Re-run pi-server/install.sh, then try again.",
+        )
+
+    def test_connect_wifi_network_reports_manual_setup_when_helper_is_missing(self):
+        network_payload = [
+            {
+                "ssid": "FieldNet",
+                "active": False,
+                "signal": 78,
+                "security": "WPA2",
+                "requires_password": True,
+            }
+        ]
+
+        with mock.patch.object(self.module, "wifi_command_available", return_value=True), mock.patch.object(
+            self.module, "list_wifi_networks", return_value=network_payload
+        ), mock.patch.object(self.module, "current_wifi_device_name", return_value="wlan0"), mock.patch.object(
+            self.module, "wifi_connect_should_use_helper", return_value=True
+        ), mock.patch.object(
+            self.module,
+            "run_wifi_connect_helper",
+            side_effect=PermissionError("Wi-Fi permission is not installed yet. Re-run pi-server/install.sh to enable kiosk Wi-Fi controls."),
+        ):
+            with self.assertRaises(self.module.HTTPException) as captured:
+                self.module.connect_wifi_network("FieldNet", "camp-secret")
+
+        self.assertEqual(captured.exception.status_code, 400)
+        self.assertEqual(
+            captured.exception.detail,
+            "Wi-Fi setup requires Raspberry Pi admin setup. Re-run pi-server/install.sh, then try again.",
+        )
 
     def test_connect_wifi_network_uses_privileged_helper_when_available(self):
         network_payload = [

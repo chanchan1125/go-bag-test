@@ -1840,6 +1840,14 @@ def connect_wifi_via_managed_profile(
 def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_supplied: bool) -> str:
     normalized = " ".join((detail or "").split()) or "Wi-Fi connection failed."
     lowered = normalized.lower()
+    helper_setup_markers = (
+        "permission is not installed",
+        "wi-fi helper is unavailable",
+        "wifi helper is unavailable",
+        "sudo is unavailable",
+    )
+    if any(marker in lowered for marker in helper_setup_markers):
+        return "Wi-Fi setup requires Raspberry Pi admin setup. Re-run pi-server/install.sh, then try again."
     permission_markers = (
         "insufficient privileges",
         "not authorized",
@@ -1847,15 +1855,11 @@ def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_sup
         "permission denied",
         "operation not permitted",
         "must run this command as root",
-        "sudo is unavailable",
         "wi-fi helper",
         "wifi helper",
-        "permission is not installed",
     )
     if any(marker in lowered for marker in permission_markers):
-        if "failed to add" in lowered or "failed to save" in lowered:
-            return "Permission error while connecting. Failed to save Wi-Fi connection."
-        return "Permission error while connecting. Could not connect to Wi-Fi."
+        return "Wi-Fi save is blocked by Raspberry Pi permissions. Re-run pi-server/install.sh, then try again."
     if "802-11-wireless-security.key-mgmt" in lowered or "key-mgmt: property is missing" in lowered:
         return "Security settings missing. Could not connect to Wi-Fi."
     authentication_markers = (
@@ -5380,7 +5384,7 @@ def home(request: Request) -> HTMLResponse:
     }}
     html {{
       --touch-keyboard-offset: 0px;
-      --bottom-nav-reveal: 0.18;
+      --bottom-nav-reveal: 0;
       --ui-font-scale: 1;
       --ui-density-scale: 1;
       --access-font-scale: 1;
@@ -6821,16 +6825,17 @@ def home(request: Request) -> HTMLResponse:
       border-top: 1px solid var(--line);
       backdrop-filter: blur(10px);
       box-shadow: 0 -10px 22px var(--shadow);
-      opacity: calc(0.34 + (var(--bottom-nav-reveal, 0.18) * 0.66));
-      transform: translateY(calc((1 - var(--bottom-nav-reveal, 0.18)) * 52%));
-      transition: transform 180ms ease, opacity 180ms ease, box-shadow 180ms ease;
+      opacity: calc(0.04 + (var(--bottom-nav-reveal, 0) * 0.96));
+      transform: translateY(calc((1 - var(--bottom-nav-reveal, 0)) * 108%));
+      transition: transform 160ms ease-out, opacity 160ms ease-out, box-shadow 160ms ease-out;
       will-change: transform, opacity;
     }}
     .bottom-nav.is-revealed {{
       box-shadow: 0 -14px 28px var(--shadow-strong);
     }}
-    .bottom-nav.is-peeking {{
-      box-shadow: 0 -8px 16px var(--shadow);
+    .bottom-nav.is-hidden {{
+      pointer-events: none;
+      box-shadow: none;
     }}
     .bottom-nav-button {{
       min-height: 60px;
@@ -8171,6 +8176,7 @@ def home(request: Request) -> HTMLResponse:
       const touchKeyboardDoneButton = document.getElementById("touch-keyboard-done-button");
       const uiStateStorageKey = "gobag-pi-ui-state";
       const keyboardEligibleSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="date"]):not([type="file"]):not([type="radio"]):not([type="range"]):not([disabled]), textarea:not([disabled])';
+      const mainScrollContainer = document.scrollingElement || document.documentElement;
       const screenElements = Array.from(document.querySelectorAll(".app-screen"));
       const bottomNav = document.querySelector(".bottom-nav");
       const bottomNavButtons = Array.from(document.querySelectorAll(".bottom-nav-button"));
@@ -8199,8 +8205,10 @@ def home(request: Request) -> HTMLResponse:
       let currentPowerAction = "shutdown";
       let activeScreen = "dashboard";
       let screenScrollPositions = {{}};
-      let bottomNavReveal = 0.18;
-      let lastScrollY = Math.max(window.scrollY || 0, 0);
+      let bottomNavReveal = 0;
+      let lastScrollY = 0;
+      let bottomNavHideTimer = 0;
+      let bottomNavScrollAccumulator = 0;
       let inventoryCategoryFilter = "all";
       let inventorySearchQuery = "";
       let pendingInventoryFocusItemId = "";
@@ -8727,34 +8735,71 @@ def home(request: Request) -> HTMLResponse:
         return Math.min(Math.max(value, min), max);
       }}
 
+      function readMainScrollTop() {{
+        if (mainScrollContainer && typeof mainScrollContainer.scrollTop === "number") {{
+          return Math.max(mainScrollContainer.scrollTop || 0, 0);
+        }}
+        return Math.max(window.scrollY || 0, 0);
+      }}
+
+      function clearBottomNavHideTimer() {{
+        if (!bottomNavHideTimer) {{
+          return;
+        }}
+        window.clearTimeout(bottomNavHideTimer);
+        bottomNavHideTimer = 0;
+      }}
+
       function setBottomNavReveal(value) {{
         if (!bottomNav) {{
           return;
         }}
-        bottomNavReveal = clampNumber(Number.isFinite(value) ? value : 0.18, 0.18, 1);
+        bottomNavReveal = clampNumber(Number.isFinite(value) ? value : 0, 0, 1);
         bottomNav.style.setProperty("--bottom-nav-reveal", bottomNavReveal.toFixed(3));
-        bottomNav.classList.toggle("is-revealed", bottomNavReveal >= 0.72);
-        bottomNav.classList.toggle("is-peeking", bottomNavReveal < 0.72);
+        bottomNav.classList.toggle("is-revealed", bottomNavReveal > 0.02);
+        bottomNav.classList.toggle("is-hidden", bottomNavReveal <= 0.02);
+      }}
+
+      function scheduleBottomNavHide() {{
+        clearBottomNavHideTimer();
+        bottomNavHideTimer = window.setTimeout(() => {{
+          bottomNavHideTimer = 0;
+          if (wifiModalIsOpen() || powerDialogIsOpen() || scanIsOpen() || shutdownProgressIsOpen()) {{
+            return;
+          }}
+          setBottomNavReveal(0);
+        }}, 480);
+      }}
+
+      function showBottomNavWhileScrolling() {{
+        setBottomNavReveal(1);
+        scheduleBottomNavHide();
       }}
 
       function syncBottomNavReveal(force = false) {{
-        const currentScroll = Math.max(window.scrollY || 0, 0);
+        const currentScroll = readMainScrollTop();
         const delta = currentScroll - lastScrollY;
-        if (!force && Math.abs(delta) < 3) {{
+        if (force) {{
+          bottomNavScrollAccumulator = 0;
+          lastScrollY = currentScroll;
+          if (currentScroll <= 4) {{
+            clearBottomNavHideTimer();
+            setBottomNavReveal(0);
+            return;
+          }}
+          showBottomNavWhileScrolling();
+          return;
+        }}
+        if (Math.abs(delta) < 1) {{
           return;
         }}
         lastScrollY = currentScroll;
-        if (currentScroll <= 6) {{
-          setBottomNavReveal(0.18);
+        bottomNavScrollAccumulator += delta;
+        if (Math.abs(bottomNavScrollAccumulator) < 10) {{
           return;
         }}
-        if (delta > 0) {{
-          setBottomNavReveal(bottomNavReveal + clampNumber(delta / 70, 0.05, 0.26));
-          return;
-        }}
-        if (delta < 0) {{
-          setBottomNavReveal(bottomNavReveal - clampNumber(Math.abs(delta) / 70, 0.05, 0.26));
-        }}
+        bottomNavScrollAccumulator = 0;
+        showBottomNavWhileScrolling();
       }}
 
       function applyInventoryFilters() {{
@@ -8832,7 +8877,7 @@ def home(request: Request) -> HTMLResponse:
         }} else {{
           restoreScreenScroll(activeScreen);
         }}
-        setBottomNavReveal(1);
+        showBottomNavWhileScrolling();
         if (activeScreen === "inventory") {{
           applyInventoryFilters();
           if (pendingInventoryFocusItemId) {{
@@ -10231,6 +10276,7 @@ def home(request: Request) -> HTMLResponse:
       initializeTheme();
       applyUiPreferences(initialUiPreferences);
       initializeUiScale();
+      lastScrollY = readMainScrollTop();
       setBottomNavReveal(bottomNavReveal);
       initializeScreenState();
       applyInventoryFilters();
@@ -10277,6 +10323,23 @@ def home(request: Request) -> HTMLResponse:
         }},
         {{ passive: true }},
       );
+      if (
+        mainScrollContainer &&
+        mainScrollContainer !== document.documentElement &&
+        mainScrollContainer !== document.body &&
+        typeof mainScrollContainer.addEventListener === "function"
+      ) {{
+        mainScrollContainer.addEventListener(
+          "scroll",
+          () => {{
+            if (wifiModalIsOpen() || powerDialogIsOpen() || scanIsOpen() || shutdownProgressIsOpen()) {{
+              return;
+            }}
+            syncBottomNavReveal(false);
+          }},
+          {{ passive: true }},
+        );
+      }}
 
       window.addEventListener("keydown", (event) => {{
         if (event.key !== "Escape") {{
