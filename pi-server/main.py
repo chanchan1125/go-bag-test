@@ -1603,6 +1603,33 @@ def wifi_networks_payload() -> dict:
     return payload
 
 
+def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_supplied: bool) -> str:
+    normalized = " ".join((detail or "").split()) or "Wi-Fi connection failed."
+    lowered = normalized.lower()
+    authentication_markers = (
+        "wrong password",
+        "incorrect password",
+        "bad password",
+        "invalid password",
+        "invalid secrets",
+        "no secrets were provided",
+        "secrets were required",
+        "802-11-wireless-security.psk",
+        "wifi password rejected",
+        "authentication required",
+        "authentication failed",
+    )
+    if any(marker in lowered for marker in authentication_markers):
+        return "Incorrect Wi-Fi password. Try again."
+    if "ssid" in lowered and ("no network with ssid" in lowered or "not found" in lowered):
+        return f"{ssid} is no longer available. Choose a network and try again."
+    if "failed to activate connection" in lowered or "activation failed" in lowered or "could not activate connection" in lowered:
+        if password_supplied:
+            return "Failed to connect. Check the Wi-Fi password and try again."
+        return "Failed to connect. Try again."
+    return normalized
+
+
 def connect_wifi_network(ssid: str, password: str = "") -> dict:
     target_ssid = (ssid or "").strip()
     if not target_ssid:
@@ -1628,7 +1655,11 @@ def connect_wifi_network(ssid: str, password: str = "") -> dict:
     try:
         run_wifi_command(command, WIFI_CONNECT_TIMEOUT_S)
     except RuntimeError as exc:
-        detail = " ".join((str(exc) or exc.__class__.__name__).split()) or "Wi-Fi connection failed."
+        detail = normalize_wifi_connect_error_message(
+            str(exc) or exc.__class__.__name__,
+            ssid=target_ssid,
+            password_supplied=bool((password or "").strip()),
+        )
         raise HTTPException(status_code=400, detail=detail) from exc
     payload = wifi_networks_payload()
     payload["ok"] = True
@@ -7700,6 +7731,9 @@ def home(request: Request) -> HTMLResponse:
           return;
         }}
         const password = String(wifiPasswordInput && wifiPasswordInput.value ? wifiPasswordInput.value : "");
+        if (keyboardTarget === wifiPasswordInput) {{
+          dismissTouchKeyboard();
+        }}
         setWifiUiBusy(true);
         setWifiModalMessage(`Connecting to ${{selectedName}}...`, "notice");
         try {{

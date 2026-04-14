@@ -489,6 +489,64 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(connect.json()["message"], "Connected to FieldNet.")
         self.assertEqual(connect.json()["networks"][1]["ssid"], "OpenTent")
 
+    def test_wifi_connect_endpoint_returns_retryable_error_payload(self):
+        failure_payload = {
+            "ok": False,
+            "available": True,
+            "status": "disconnected",
+            "connected": False,
+            "radio_enabled": True,
+            "ssid": "",
+            "signal": 0,
+            "device": "wlan0",
+            "message": "Incorrect Wi-Fi password. Try again.",
+            "networks": [
+                {
+                    "ssid": "FieldNet",
+                    "active": False,
+                    "signal": 78,
+                    "security": "WPA2",
+                    "requires_password": True,
+                }
+            ],
+        }
+
+        with mock.patch.object(
+            self.module,
+            "connect_wifi_network",
+            side_effect=self.module.HTTPException(status_code=400, detail="Incorrect Wi-Fi password. Try again."),
+        ), mock.patch.object(self.module, "wifi_networks_payload", return_value=failure_payload):
+            connect = self.client.post("/ui/wifi/connect", data={"ssid": "FieldNet", "password": "bad-pass"})
+
+        self.assertEqual(connect.status_code, 400)
+        self.assertFalse(connect.json()["ok"])
+        self.assertEqual(connect.json()["message"], "Incorrect Wi-Fi password. Try again.")
+        self.assertEqual(connect.json()["networks"][0]["ssid"], "FieldNet")
+
+    def test_connect_wifi_network_normalizes_wrong_password_errors(self):
+        network_payload = [
+            {
+                "ssid": "FieldNet",
+                "active": False,
+                "signal": 78,
+                "security": "WPA2",
+                "requires_password": True,
+            }
+        ]
+
+        with mock.patch.object(self.module, "wifi_command_available", return_value=True), mock.patch.object(
+            self.module, "list_wifi_networks", return_value=network_payload
+        ), mock.patch.object(self.module, "current_wifi_device_name", return_value="wlan0"), mock.patch.object(
+            self.module,
+            "run_wifi_command",
+            side_effect=RuntimeError("Error: Connection activation failed: Secrets were required, but not provided."),
+        ):
+            with self.assertRaises(self.module.HTTPException) as captured:
+                self.module.connect_wifi_network("FieldNet", "bad-pass")
+
+        self.assertEqual(captured.exception.status_code, 400)
+        self.assertEqual(captured.exception.detail, "Incorrect Wi-Fi password. Try again.")
+
     def test_usb_camera_session_endpoints_return_structured_state(self):
         bag_id = self.client.get("/bags").json()[0]["id"]
         session_payload = {
