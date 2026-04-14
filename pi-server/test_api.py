@@ -430,7 +430,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn("gap: 0;", body)
         self.assertIn("padding: 0;", body)
         self.assertIn("top: var(--wifi-keyboard-top, 0px);", body)
-        self.assertIn("min-height: 16px;", body)
+        self.assertIn("min-height: 18px;", body)
         self.assertIn("const wifiPasswordRow = wifiPasswordInput instanceof HTMLElement ? wifiPasswordInput.closest(\".wifi-password-row\") : null;", body)
         self.assertIn("documentRoot.style.setProperty(\"--wifi-modal-top\"", body)
         self.assertIn("documentRoot.style.setProperty(\"--wifi-keyboard-top\"", body)

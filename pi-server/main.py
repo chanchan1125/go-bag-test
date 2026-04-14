@@ -7004,7 +7004,7 @@ def home(request: Request) -> HTMLResponse:
       transform: translateX(-50%);
       width: min(calc(100vw - 8px), 378px);
       max-height: calc(100dvh - var(--wifi-keyboard-top, 0px));
-      padding: 0 1px calc(1px + env(safe-area-inset-bottom, 0px));
+      padding: 0 1px calc(2px + env(safe-area-inset-bottom, 0px));
       border-top: none;
       border-top-left-radius: 0;
       border-top-right-radius: 0;
@@ -7013,16 +7013,16 @@ def home(request: Request) -> HTMLResponse:
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard-inner,
     body.wifi-modal-open.keyboard-open .touch-keyboard-row {{
-      gap: 0;
+      gap: 1px;
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard button {{
-      min-height: 16px;
-      padding: 0;
-      font-size: 0.48rem;
-      border-radius: 4px;
+      min-height: 18px;
+      padding: 0 1px;
+      font-size: 0.52rem;
+      border-radius: 5px;
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard button.action {{
-      font-size: 0.44rem;
+      font-size: 0.48rem;
     }}
     body.wifi-modal-open.keyboard-open .wifi-entry-panel {{
       padding-top: 0;
@@ -9319,7 +9319,7 @@ def home(request: Request) -> HTMLResponse:
           wifiModalIsOpen() &&
           keyboardTarget === wifiPasswordInput &&
           wifiPasswordRow instanceof HTMLElement
-            ? Math.max(Math.ceil(wifiPasswordRow.getBoundingClientRect().bottom) - 1, 0)
+            ? Math.max(Math.ceil(wifiPasswordRow.getBoundingClientRect().bottom) + 2, 0)
             : 0;
         documentRoot.style.setProperty("--touch-keyboard-offset", `${{Math.max(keyboardHeight, 0)}}px`);
         documentRoot.style.setProperty("--wifi-modal-top", `${{Math.max(wifiModalTop - 1, 0)}}px`);
