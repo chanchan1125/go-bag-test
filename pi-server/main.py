@@ -7930,6 +7930,14 @@ def home(request: Request) -> HTMLResponse:
       font-size: 0.68rem;
       border-radius: 14px !important;
       background: var(--panel-muted) !important;
+      color: var(--muted) !important;
+      border-color: rgba(255, 255, 255, 0.06) !important;
+    }}
+    .wifi-password-toggle.active {{
+      background: var(--accent-soft) !important;
+      color: var(--accent) !important;
+      border-color: transparent !important;
+      box-shadow: inset 0 0 0 1px rgba(255, 107, 0, 0.18);
     }}
     .wifi-actions {{
       display: grid;
@@ -9185,6 +9193,7 @@ def home(request: Request) -> HTMLResponse:
           button.disabled = wifiConnecting && action !== "connect";
           if (action === "shift") {{
             button.classList.toggle("active", wifiInlineKeyboardShift);
+            button.textContent = wifiInlineKeyboardShift ? "Lower" : "Upper";
           }}
         }});
         if (wifiInlineConnectButton) {{
@@ -9192,6 +9201,24 @@ def home(request: Request) -> HTMLResponse:
           wifiInlineConnectButton.textContent = wifiConnecting ? "Connecting..." : "Connect";
           wifiInlineConnectButton.disabled = wifiConnecting || !passwordValue;
         }}
+      }}
+
+      function updateWifiPasswordToggle() {{
+        if (!wifiPasswordToggle || !wifiPasswordInput) {{
+          return;
+        }}
+        wifiPasswordInput.type = wifiPasswordVisible ? "text" : "password";
+        wifiPasswordToggle.textContent = wifiPasswordVisible ? "Hide" : "Show";
+        wifiPasswordToggle.classList.toggle("active", wifiPasswordVisible);
+        wifiPasswordToggle.setAttribute("aria-pressed", wifiPasswordVisible ? "true" : "false");
+        wifiPasswordToggle.setAttribute(
+          "aria-label",
+          wifiPasswordVisible ? "Hide Wi-Fi password" : "Show Wi-Fi password"
+        );
+        wifiPasswordToggle.setAttribute(
+          "title",
+          wifiPasswordVisible ? "Hide Wi-Fi password" : "Show Wi-Fi password"
+        );
       }}
 
       function dispatchWifiPasswordInput() {{
@@ -9208,10 +9235,6 @@ def home(request: Request) -> HTMLResponse:
         const text = wifiInlineKeyboardShift ? rawText.toUpperCase() : rawText.toLowerCase();
         wifiPasswordInput.value = `${{wifiPasswordInput.value || ""}}${{text}}`;
         dispatchWifiPasswordInput();
-        if (wifiInlineKeyboardShift && /^[a-z]$/i.test(rawText)) {{
-          wifiInlineKeyboardShift = false;
-          updateWifiInlineKeyboard();
-        }}
       }}
 
       function backspaceWifiPasswordText() {{
@@ -9306,13 +9329,10 @@ def home(request: Request) -> HTMLResponse:
           if (clearValue) {{
             wifiPasswordInput.value = "";
           }}
-          wifiPasswordInput.type = "password";
         }}
         wifiPasswordVisible = false;
         wifiInlineKeyboardShift = true;
-        if (wifiPasswordToggle) {{
-          wifiPasswordToggle.textContent = "Show";
-        }}
+        updateWifiPasswordToggle();
         updateWifiInlineKeyboard();
       }}
 
@@ -11199,8 +11219,7 @@ def home(request: Request) -> HTMLResponse:
       if (wifiPasswordToggle && wifiPasswordInput) {{
         wifiPasswordToggle.addEventListener("click", () => {{
           wifiPasswordVisible = !wifiPasswordVisible;
-          wifiPasswordInput.type = wifiPasswordVisible ? "text" : "password";
-          wifiPasswordToggle.textContent = wifiPasswordVisible ? "Hide" : "Show";
+          updateWifiPasswordToggle();
         }});
       }}
       if (wifiPasswordInput) {{
