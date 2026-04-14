@@ -495,12 +495,15 @@ class PiServerApiTests(unittest.TestCase):
 
         def fake_run(args, timeout_s):
             command_calls.append(list(args))
+            if args == ["-t", "-f", "IN-USE,SSID,SECURITY,SIGNAL", "device", "wifi", "list", "--rescan", "no"]:
+                list_call_count = sum(1 for call in command_calls if call == args)
+                if list_call_count == 1:
+                    return subprocess.CompletedProcess(["nmcli", *args], 0, ":FieldNet:WPA2:78\n", "")
+                return subprocess.CompletedProcess(["nmcli", *args], 0, ":FieldNet:WPA2:78\n:CampMesh:Open:61\n", "")
             if args == ["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"]:
                 return subprocess.CompletedProcess(["nmcli", *args], 0, "wlan0:wifi:disconnected:--\n", "")
             if args == ["device", "wifi", "rescan", "ifname", "wlan0"]:
                 return subprocess.CompletedProcess(["nmcli", *args], 0, "", "")
-            if args == ["-t", "-f", "IN-USE,SSID,SECURITY,SIGNAL", "device", "wifi", "list", "--rescan", "no"]:
-                return subprocess.CompletedProcess(["nmcli", *args], 0, ":FieldNet:WPA2:78\n", "")
             raise AssertionError(f"Unexpected nmcli args: {args}")
 
         with mock.patch.object(self.module, "run_wifi_command", side_effect=fake_run):
@@ -509,6 +512,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(
             command_calls,
             [
+                ["-t", "-f", "IN-USE,SSID,SECURITY,SIGNAL", "device", "wifi", "list", "--rescan", "no"],
                 ["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"],
                 ["device", "wifi", "rescan", "ifname", "wlan0"],
                 ["-t", "-f", "IN-USE,SSID,SECURITY,SIGNAL", "device", "wifi", "list", "--rescan", "no"],
@@ -523,6 +527,13 @@ class PiServerApiTests(unittest.TestCase):
                     "signal": 78,
                     "security": "WPA2",
                     "requires_password": True,
+                },
+                {
+                    "ssid": "CampMesh",
+                    "active": False,
+                    "signal": 61,
+                    "security": "Open",
+                    "requires_password": False,
                 }
             ],
         )

@@ -1641,7 +1641,52 @@ def current_wifi_device_name() -> str:
 
 
 def list_wifi_networks(*, rescan: bool) -> List[dict]:
+    def read_networks(timeout_s: float) -> List[dict]:
+        args = [
+            "-t",
+            "-f",
+            "IN-USE,SSID,SECURITY,SIGNAL",
+            "device",
+            "wifi",
+            "list",
+            "--rescan",
+            "no",
+        ]
+        result = run_wifi_command(args, timeout_s)
+        deduped: Dict[str, dict] = {}
+        for raw_line in result.stdout.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            fields = split_nmcli_terse_fields(line)
+            if len(fields) < 4:
+                continue
+            in_use, ssid, security, signal_raw = fields[:4]
+            ssid = (ssid or "").strip()
+            if not ssid:
+                continue
+            try:
+                signal = max(0, min(int(float(signal_raw or "0")), 100))
+            except ValueError:
+                signal = 0
+            network = {
+                "ssid": ssid,
+                "active": (in_use or "").strip() == "*",
+                "signal": signal,
+                "security": (security or "").strip() or "Open",
+                "requires_password": wifi_requires_password(security or ""),
+            }
+            existing = deduped.get(ssid)
+            if not existing or network["active"] or network["signal"] > existing["signal"]:
+                deduped[ssid] = network
+        return sorted(deduped.values(), key=lambda row: (0 if row["active"] else 1, -row["signal"], row["ssid"].lower()))
+
+    baseline_networks: List[dict] = []
     if rescan:
+        try:
+            baseline_networks = read_networks(WIFI_STATUS_TIMEOUT_S)
+        except Exception:
+            baseline_networks = []
         try:
             rescan_args = ["device", "wifi", "rescan"]
             wifi_device_name = current_wifi_device_name()
@@ -1651,46 +1696,22 @@ def list_wifi_networks(*, rescan: bool) -> List[dict]:
         except Exception:
             # Fall back to the cached list if the active rescan request fails.
             pass
-    args = [
-        "-t",
-        "-f",
-        "IN-USE,SSID,SECURITY,SIGNAL",
-        "device",
-        "wifi",
-        "list",
-        "--rescan",
-        "no",
-    ]
-    result = run_wifi_command(args, WIFI_SCAN_TIMEOUT_S if rescan else WIFI_STATUS_TIMEOUT_S)
-    deduped: Dict[str, dict] = {}
-    for raw_line in result.stdout.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        fields = split_nmcli_terse_fields(line)
-        if len(fields) < 4:
-            continue
-        in_use, ssid, security, signal_raw = fields[:4]
-        ssid = (ssid or "").strip()
-        if not ssid:
-            continue
-        try:
-            signal = max(0, min(int(float(signal_raw or "0")), 100))
-        except ValueError:
-            signal = 0
-        active = (in_use or "").strip() == "*"
-        network = {
-            "ssid": ssid,
-            "active": active,
-            "signal": signal,
-            "security": (security or "").strip() or "Open",
-            "requires_password": wifi_requires_password(security or ""),
-        }
-        existing = deduped.get(ssid)
-        if not existing or network["active"] or network["signal"] > existing["signal"]:
-            deduped[ssid] = network
-    networks = sorted(deduped.values(), key=lambda row: (0 if row["active"] else 1, -row["signal"], row["ssid"].lower()))
-    return networks
+    if not rescan:
+        return read_networks(WIFI_STATUS_TIMEOUT_S)
+
+    baseline_signature = json.dumps(baseline_networks, sort_keys=True)
+    deadline = time.monotonic() + min(max(WIFI_STATUS_TIMEOUT_S, 2.5), 5.0)
+    last_networks = baseline_networks
+    while True:
+        networks = read_networks(WIFI_STATUS_TIMEOUT_S)
+        if networks:
+            last_networks = networks
+        signature = json.dumps(networks, sort_keys=True)
+        if signature != baseline_signature:
+            return networks
+        if time.monotonic() >= deadline:
+            return last_networks
+        time.sleep(0.45)
 
 
 def wifi_status_payload() -> dict:
