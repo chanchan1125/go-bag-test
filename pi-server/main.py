@@ -3883,8 +3883,8 @@ def render_touch_keyboard_html() -> str:
           <button type="button" data-key="l">l</button>
           <button type="button" data-key="@">@</button>
         </div>
-        <div class="touch-keyboard-row ten">
-          <button type="button" class="action wide" data-keyboard-action="shift">Shift</button>
+        <div class="touch-keyboard-row twelve">
+          <button type="button" class="action compact-wide" data-keyboard-action="shift">Shf</button>
           <button type="button" data-key="z">z</button>
           <button type="button" data-key="x">x</button>
           <button type="button" data-key="c">c</button>
@@ -3893,15 +3893,15 @@ def render_touch_keyboard_html() -> str:
           <button type="button" data-key="n">n</button>
           <button type="button" data-key="m">m</button>
           <button type="button" data-key=".">.</button>
-          <button type="button" class="action wide" data-keyboard-action="backspace">Bksp</button>
+          <button type="button" class="action compact-wide" data-keyboard-action="backspace">Bk</button>
         </div>
-        <div class="touch-keyboard-row six">
+        <div class="touch-keyboard-row seven">
           <button type="button" data-key="/">/</button>
           <button type="button" data-key="-">-</button>
           <button type="button" data-key=":">:</button>
-          <button type="button" class="action space" data-keyboard-action="space">Space</button>
-          <button type="button" class="action wide" data-keyboard-action="clear">Clear</button>
-          <button type="button" class="action wide done" data-keyboard-action="done" id="touch-keyboard-done-button">Done</button>
+          <button type="button" class="action compact-space" data-keyboard-action="space">Sp</button>
+          <button type="button" class="action compact-action" data-keyboard-action="clear">Clr</button>
+          <button type="button" class="action compact-action done" data-keyboard-action="done" id="touch-keyboard-done-button">Go</button>
         </div>
       </div>
     </div>
@@ -6079,10 +6079,16 @@ def home(request: Request) -> HTMLResponse:
     .touch-keyboard-dock .wifi-password-row input,
     .touch-keyboard-dock .wifi-password-toggle,
     .touch-keyboard-dock .wifi-actions button {{
-      min-height: 28px;
+      min-height: 26px;
+    }}
+    .touch-keyboard-dock .wifi-actions {{
+      justify-items: end;
     }}
     .touch-keyboard-dock .wifi-actions button {{
-      font-size: 0.76rem;
+      width: auto;
+      min-width: 58px;
+      padding: 0 8px;
+      font-size: 0.68rem;
     }}
     .touch-keyboard-inner {{
       max-width: 420px;
@@ -6097,8 +6103,11 @@ def home(request: Request) -> HTMLResponse:
     .touch-keyboard-row.ten {{
       grid-template-columns: repeat(10, minmax(0, 1fr));
     }}
-    .touch-keyboard-row.six {{
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+    .touch-keyboard-row.twelve {{
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+    }}
+    .touch-keyboard-row.seven {{
+      grid-template-columns: repeat(7, minmax(0, 1fr));
     }}
     .touch-keyboard button {{
       min-height: var(--touch-keyboard-button-height);
@@ -6113,6 +6122,7 @@ def home(request: Request) -> HTMLResponse:
     .touch-keyboard button.action {{
       background: var(--panel-strong);
       color: var(--ink);
+      font-size: calc(var(--touch-keyboard-button-font-size) - 0.04rem);
     }}
     .touch-keyboard button.done {{
       background: var(--accent);
@@ -6122,11 +6132,15 @@ def home(request: Request) -> HTMLResponse:
       background: var(--accent-soft);
       color: var(--accent-strong);
     }}
-    .touch-keyboard button.wide {{
+    .touch-keyboard button.compact-wide {{
       grid-column: span 2;
     }}
-    .touch-keyboard button.space {{
+    .touch-keyboard button.compact-space {{
       grid-column: span 2;
+    }}
+    .touch-keyboard button.compact-action {{
+      padding-inline: 1px;
+      letter-spacing: 0;
     }}
     .check-row.ok strong {{
       color: var(--accent);
@@ -7212,13 +7226,13 @@ def home(request: Request) -> HTMLResponse:
               <div class="wifi-password-row">
                 <input
                   type="password"
-                  id="wifi-password-input"
-                  placeholder="Wi-Fi password"
-                  autocomplete="off"
-                  autocapitalize="none"
-                  spellcheck="false"
-                  data-keyboard-submit-target="wifi-connect-submit"
-                  data-keyboard-submit-label="Connect">
+                id="wifi-password-input"
+                placeholder="Wi-Fi password"
+                autocomplete="off"
+                autocapitalize="none"
+                spellcheck="false"
+                data-keyboard-submit-target="wifi-connect-submit"
+                data-keyboard-submit-label="Go">
                 <button type="button" class="secondary wifi-password-toggle" id="wifi-password-toggle">Show</button>
               </div>
             </div>
