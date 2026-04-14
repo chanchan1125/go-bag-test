@@ -409,6 +409,8 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn('id="wifi-password-toggle"', body)
         self.assertIn('id="wifi-close-button"', body)
         self.assertIn('data-keyboard-submit-target="wifi-connect-submit"', body)
+        self.assertIn("--bottom-nav-reveal: 0.18;", body)
+        self.assertIn("syncBottomNavReveal", body)
         self.assertIn('id="settings-preferences-form"', body)
         self.assertIn("Appearance", body)
         self.assertIn("Alerts & reminders", body)
@@ -685,6 +687,73 @@ class PiServerApiTests(unittest.TestCase):
 
         self.assertEqual(captured.exception.status_code, 400)
         self.assertEqual(captured.exception.detail, "Security settings missing. Could not connect to Wi-Fi.")
+
+    def test_connect_wifi_network_normalizes_permission_errors(self):
+        network_payload = [
+            {
+                "ssid": "FieldNet",
+                "active": False,
+                "signal": 78,
+                "security": "WPA2",
+                "requires_password": True,
+            }
+        ]
+
+        def fake_run(args, timeout_s):
+            if args[:4] == ["connection", "add", "type", "wifi"]:
+                raise RuntimeError("Error: Failed to add 'gobag-wifi-a1701003bd2c' connection: insufficient privileges")
+            return subprocess.CompletedProcess(["nmcli", *args], 0, "", "")
+
+        with mock.patch.object(self.module, "wifi_command_available", return_value=True), mock.patch.object(
+            self.module, "list_wifi_networks", return_value=network_payload
+        ), mock.patch.object(self.module, "current_wifi_device_name", return_value="wlan0"), mock.patch.object(
+            self.module, "run_wifi_command_result", return_value=subprocess.CompletedProcess(["nmcli"], 10, "", "")
+        ), mock.patch.object(self.module, "run_wifi_command", side_effect=fake_run):
+            with self.assertRaises(self.module.HTTPException) as captured:
+                self.module.connect_wifi_network("FieldNet", "camp-secret")
+
+        self.assertEqual(captured.exception.status_code, 400)
+        self.assertEqual(captured.exception.detail, "Permission error while connecting. Failed to save Wi-Fi connection.")
+
+    def test_connect_wifi_network_uses_privileged_helper_when_available(self):
+        network_payload = [
+            {
+                "ssid": "FieldNet",
+                "active": False,
+                "signal": 78,
+                "security": "WPA2",
+                "requires_password": True,
+            }
+        ]
+        success_payload = {
+            "ok": True,
+            "available": True,
+            "status": "connected",
+            "connected": True,
+            "radio_enabled": True,
+            "ssid": "FieldNet",
+            "signal": 78,
+            "device": "wlan0",
+            "message": "Connected to FieldNet.",
+            "networks": network_payload,
+        }
+
+        with mock.patch.object(self.module, "wifi_command_available", return_value=True), mock.patch.object(
+            self.module, "list_wifi_networks", return_value=network_payload
+        ), mock.patch.object(self.module, "current_wifi_device_name", return_value="wlan0"), mock.patch.object(
+            self.module, "wifi_connect_should_use_helper", return_value=True
+        ), mock.patch.object(self.module, "run_wifi_connect_helper") as helper_mock, mock.patch.object(
+            self.module, "wifi_networks_payload", return_value=success_payload
+        ):
+            payload = self.module.connect_wifi_network("FieldNet", "camp-secret")
+
+        self.assertEqual(payload["message"], "Connected to FieldNet.")
+        helper_mock.assert_called_once_with(
+            ssid="FieldNet",
+            password="camp-secret",
+            wifi_device_name="wlan0",
+            requires_password=True,
+        )
 
     def test_usb_camera_session_endpoints_return_structured_state(self):
         bag_id = self.client.get("/bags").json()[0]["id"]

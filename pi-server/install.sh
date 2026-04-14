@@ -13,6 +13,9 @@ CONFIG_FILE="${CONFIG_DIR}/gobag.env"
 SERVICE_NAME="gobag-backend.service"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 POWER_SUDOERS_FILE="/etc/sudoers.d/gobag-poweroff"
+WIFI_SUDOERS_FILE="/etc/sudoers.d/gobag-wifi-helper"
+WIFI_HELPER_INSTALL_DIR="/usr/local/libexec"
+WIFI_HELPER_INSTALL_PATH="${WIFI_HELPER_INSTALL_DIR}/gobag-wifi-helper"
 MENU_ENTRY="/usr/share/applications/gobag-inventory.desktop"
 
 AUTOSTART_BACKEND=1
@@ -160,6 +163,7 @@ log "Ensuring executable permissions for scripts..."
 ${SUDO} chmod +x "${APP_DIR}/install.sh" "${APP_DIR}/launch.sh"
 ${SUDO} chmod +x "${APP_DIR}/scripts/"*.sh
 ${SUDO} chmod +x "${APP_DIR}/scripts/run_app_shell.py"
+${SUDO} chmod +x "${APP_DIR}/scripts/wifi_helper.py"
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   log "Creating default config at ${CONFIG_FILE}..."
@@ -210,6 +214,16 @@ ${SUDO} chown root:root "${POWER_SUDOERS_FILE}"
 ${SUDO} chmod 440 "${POWER_SUDOERS_FILE}"
 if command -v visudo >/dev/null 2>&1; then
   ${SUDO} visudo -cf "${POWER_SUDOERS_FILE}" >/dev/null
+fi
+
+log "Installing privileged Wi-Fi helper for the GO BAG dashboard..."
+${SUDO} install -d -m 755 "${WIFI_HELPER_INSTALL_DIR}"
+${SUDO} install -m 755 -o root -g root "${APP_DIR}/scripts/wifi_helper.py" "${WIFI_HELPER_INSTALL_PATH}"
+render_template "${APP_DIR}/systemd/gobag-wifi-helper.sudoers" "${WIFI_SUDOERS_FILE}" "${APP_DIR}/launch.sh"
+${SUDO} chown root:root "${WIFI_SUDOERS_FILE}"
+${SUDO} chmod 440 "${WIFI_SUDOERS_FILE}"
+if command -v visudo >/dev/null 2>&1; then
+  ${SUDO} visudo -cf "${WIFI_SUDOERS_FILE}" >/dev/null
 fi
 
 log "Installing systemd service..."

@@ -78,6 +78,8 @@ UI_REFRESH_INTERVAL_MS = max(int(os.getenv("GOBAG_UI_REFRESH_INTERVAL_MS", "5000
 SHUTDOWN_SUDOERS_FILE = os.getenv("GOBAG_SHUTDOWN_SUDOERS_FILE", "/etc/sudoers.d/gobag-poweroff")
 SHUTDOWN_DELAY_S = max(float(os.getenv("GOBAG_SHUTDOWN_DELAY_S", "1.2")), 0.2)
 WIFI_CMD = os.getenv("GOBAG_WIFI_CMD", "nmcli").strip() or "nmcli"
+WIFI_HELPER_CMD = os.getenv("GOBAG_WIFI_HELPER_CMD", "/usr/local/libexec/gobag-wifi-helper").strip() or "/usr/local/libexec/gobag-wifi-helper"
+WIFI_SUDOERS_FILE = os.getenv("GOBAG_WIFI_SUDOERS_FILE", "/etc/sudoers.d/gobag-wifi-helper")
 WIFI_STATUS_TIMEOUT_S = max(float(os.getenv("GOBAG_WIFI_STATUS_TIMEOUT_S", "4")), 1.0)
 WIFI_SCAN_TIMEOUT_S = max(float(os.getenv("GOBAG_WIFI_SCAN_TIMEOUT_S", "12")), 2.0)
 WIFI_CONNECT_TIMEOUT_S = max(float(os.getenv("GOBAG_WIFI_CONNECT_TIMEOUT_S", "25")), 4.0)
@@ -1446,11 +1448,35 @@ def require_admin_access(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Admin token required")
 
 
+def resolve_executable(candidate: str) -> str:
+    normalized = (candidate or "").strip()
+    if not normalized:
+        return ""
+    if os.path.sep in normalized:
+        return normalized if os.path.exists(normalized) else ""
+    return shutil.which(normalized) or ""
+
+
 def resolve_wifi_command() -> str:
-    candidate = (WIFI_CMD or "").strip() or "nmcli"
-    if os.path.sep in candidate:
-        return candidate if os.path.exists(candidate) else ""
-    return shutil.which(candidate) or ""
+    return resolve_executable(WIFI_CMD or "nmcli")
+
+
+def resolve_wifi_helper_command() -> str:
+    return resolve_executable(WIFI_HELPER_CMD)
+
+
+def resolve_sudo_command() -> str:
+    return resolve_executable("sudo")
+
+
+def running_as_root() -> bool:
+    return bool(hasattr(os, "geteuid") and os.geteuid() == 0)
+
+
+def wifi_connect_should_use_helper() -> bool:
+    if not hasattr(os, "geteuid") or running_as_root():
+        return False
+    return bool(resolve_sudo_command() and resolve_wifi_helper_command() and os.path.exists(WIFI_SUDOERS_FILE))
 
 
 def wifi_command_available() -> bool:
@@ -1505,6 +1531,58 @@ def run_wifi_command(args: List[str], timeout_s: float) -> subprocess.CompletedP
         detail = (result.stderr or result.stdout or "").strip() or "Wi-Fi command failed."
         raise RuntimeError(detail)
     return result
+
+
+def run_wifi_helper_command_result(action: str, payload: dict, timeout_s: float) -> subprocess.CompletedProcess[str]:
+    helper_command = resolve_wifi_helper_command()
+    if not helper_command:
+        raise PermissionError(
+            "Wi-Fi helper is unavailable. Re-run pi-server/install.sh to enable kiosk Wi-Fi controls."
+        )
+    sudo_command = resolve_sudo_command()
+    if not sudo_command:
+        raise PermissionError("sudo is unavailable for kiosk Wi-Fi controls on this Raspberry Pi.")
+    if not os.path.exists(WIFI_SUDOERS_FILE):
+        raise PermissionError(
+            "Wi-Fi permission is not installed yet. Re-run pi-server/install.sh to enable kiosk Wi-Fi controls."
+        )
+    try:
+        result = subprocess.run(
+            [sudo_command, "-n", helper_command, action],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Wi-Fi connection timed out. Check the Raspberry Pi network service and try again.") from exc
+    return result
+
+
+def run_wifi_connect_helper(
+    *,
+    ssid: str,
+    password: str,
+    wifi_device_name: str,
+    requires_password: bool,
+) -> None:
+    result = run_wifi_helper_command_result(
+        "connect",
+        {
+            "ssid": ssid,
+            "password": password,
+            "device": wifi_device_name,
+            "requires_password": bool(requires_password),
+            "profile_id": managed_wifi_connection_id(ssid),
+        },
+        WIFI_CONNECT_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip() or "Wi-Fi helper command failed."
+        raise RuntimeError(detail)
 
 
 def wifi_requires_password(security_label: str) -> bool:
@@ -1712,6 +1790,14 @@ def connect_wifi_via_managed_profile(
     wifi_device_name: str,
     requires_password: bool,
 ) -> None:
+    if wifi_connect_should_use_helper():
+        run_wifi_connect_helper(
+            ssid=ssid,
+            password=password,
+            wifi_device_name=wifi_device_name,
+            requires_password=requires_password,
+        )
+        return
     profile_id = managed_wifi_connection_id(ssid)
     remove_managed_wifi_connection(profile_id)
     add_args = ["connection", "add", "type", "wifi", "con-name", profile_id, "ssid", ssid]
@@ -1754,6 +1840,22 @@ def connect_wifi_via_managed_profile(
 def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_supplied: bool) -> str:
     normalized = " ".join((detail or "").split()) or "Wi-Fi connection failed."
     lowered = normalized.lower()
+    permission_markers = (
+        "insufficient privileges",
+        "not authorized",
+        "not authorised",
+        "permission denied",
+        "operation not permitted",
+        "must run this command as root",
+        "sudo is unavailable",
+        "wi-fi helper",
+        "wifi helper",
+        "permission is not installed",
+    )
+    if any(marker in lowered for marker in permission_markers):
+        if "failed to add" in lowered or "failed to save" in lowered:
+            return "Permission error while connecting. Failed to save Wi-Fi connection."
+        return "Permission error while connecting. Could not connect to Wi-Fi."
     if "802-11-wireless-security.key-mgmt" in lowered or "key-mgmt: property is missing" in lowered:
         return "Security settings missing. Could not connect to Wi-Fi."
     authentication_markers = (
@@ -1805,7 +1907,7 @@ def connect_wifi_network(ssid: str, password: str = "") -> dict:
             wifi_device_name=wifi_device_name,
             requires_password=target_requires_password,
         )
-    except RuntimeError as exc:
+    except (RuntimeError, PermissionError) as exc:
         raw_detail = " ".join((str(exc) or exc.__class__.__name__).split()) or "Wi-Fi connection failed."
         logger.warning("Wi-Fi connect failed for %s: %s", target_ssid, raw_detail)
         detail = normalize_wifi_connect_error_message(
@@ -5278,6 +5380,7 @@ def home(request: Request) -> HTMLResponse:
     }}
     html {{
       --touch-keyboard-offset: 0px;
+      --bottom-nav-reveal: 0.18;
       --ui-font-scale: 1;
       --ui-density-scale: 1;
       --access-font-scale: 1;
@@ -6718,6 +6821,16 @@ def home(request: Request) -> HTMLResponse:
       border-top: 1px solid var(--line);
       backdrop-filter: blur(10px);
       box-shadow: 0 -10px 22px var(--shadow);
+      opacity: calc(0.34 + (var(--bottom-nav-reveal, 0.18) * 0.66));
+      transform: translateY(calc((1 - var(--bottom-nav-reveal, 0.18)) * 52%));
+      transition: transform 180ms ease, opacity 180ms ease, box-shadow 180ms ease;
+      will-change: transform, opacity;
+    }}
+    .bottom-nav.is-revealed {{
+      box-shadow: 0 -14px 28px var(--shadow-strong);
+    }}
+    .bottom-nav.is-peeking {{
+      box-shadow: 0 -8px 16px var(--shadow);
     }}
     .bottom-nav-button {{
       min-height: 60px;
@@ -8059,6 +8172,7 @@ def home(request: Request) -> HTMLResponse:
       const uiStateStorageKey = "gobag-pi-ui-state";
       const keyboardEligibleSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="date"]):not([type="file"]):not([type="radio"]):not([type="range"]):not([disabled]), textarea:not([disabled])';
       const screenElements = Array.from(document.querySelectorAll(".app-screen"));
+      const bottomNav = document.querySelector(".bottom-nav");
       const bottomNavButtons = Array.from(document.querySelectorAll(".bottom-nav-button"));
       const inventorySearch = document.getElementById("inventory-search");
       const inventoryFilterBar = document.getElementById("inventory-filter-bar");
@@ -8085,6 +8199,8 @@ def home(request: Request) -> HTMLResponse:
       let currentPowerAction = "shutdown";
       let activeScreen = "dashboard";
       let screenScrollPositions = {{}};
+      let bottomNavReveal = 0.18;
+      let lastScrollY = Math.max(window.scrollY || 0, 0);
       let inventoryCategoryFilter = "all";
       let inventorySearchQuery = "";
       let pendingInventoryFocusItemId = "";
@@ -8555,6 +8671,14 @@ def home(request: Request) -> HTMLResponse:
           await refreshWifiStatus();
         }} catch (error) {{
           const message = error instanceof Error ? error.message : "Wi-Fi connection failed.";
+          if (wifiPasswordInput) {{
+            try {{
+              wifiPasswordInput.blur();
+            }} catch (_error) {{
+            }}
+          }}
+          dismissTouchKeyboard();
+          syncWifiKeyboardDock();
           setWifiModalMessage(message, "error");
           setBanner("error", message);
         }} finally {{
@@ -8585,6 +8709,7 @@ def home(request: Request) -> HTMLResponse:
         const top = Math.max(Number(screenScrollPositions[screenName] || 0), 0);
         const applyScroll = () => {{
           window.scrollTo({{ top, left: 0, behavior: "auto" }});
+          syncBottomNavReveal(true);
         }};
         window.requestAnimationFrame(applyScroll);
         window.setTimeout(applyScroll, 120);
@@ -8596,6 +8721,40 @@ def home(request: Request) -> HTMLResponse:
           button.classList.toggle("active", isActive);
           button.setAttribute("aria-current", isActive ? "page" : "false");
         }});
+      }}
+
+      function clampNumber(value, min, max) {{
+        return Math.min(Math.max(value, min), max);
+      }}
+
+      function setBottomNavReveal(value) {{
+        if (!bottomNav) {{
+          return;
+        }}
+        bottomNavReveal = clampNumber(Number.isFinite(value) ? value : 0.18, 0.18, 1);
+        bottomNav.style.setProperty("--bottom-nav-reveal", bottomNavReveal.toFixed(3));
+        bottomNav.classList.toggle("is-revealed", bottomNavReveal >= 0.72);
+        bottomNav.classList.toggle("is-peeking", bottomNavReveal < 0.72);
+      }}
+
+      function syncBottomNavReveal(force = false) {{
+        const currentScroll = Math.max(window.scrollY || 0, 0);
+        const delta = currentScroll - lastScrollY;
+        if (!force && Math.abs(delta) < 3) {{
+          return;
+        }}
+        lastScrollY = currentScroll;
+        if (currentScroll <= 6) {{
+          setBottomNavReveal(0.18);
+          return;
+        }}
+        if (delta > 0) {{
+          setBottomNavReveal(bottomNavReveal + clampNumber(delta / 70, 0.05, 0.26));
+          return;
+        }}
+        if (delta < 0) {{
+          setBottomNavReveal(bottomNavReveal - clampNumber(Math.abs(delta) / 70, 0.05, 0.26));
+        }}
       }}
 
       function applyInventoryFilters() {{
@@ -8669,9 +8828,11 @@ def home(request: Request) -> HTMLResponse:
         }}
         if (options.restoreScroll === false) {{
           window.scrollTo({{ top: 0, left: 0, behavior: "auto" }});
+          syncBottomNavReveal(true);
         }} else {{
           restoreScreenScroll(activeScreen);
         }}
+        setBottomNavReveal(1);
         if (activeScreen === "inventory") {{
           applyInventoryFilters();
           if (pendingInventoryFocusItemId) {{
@@ -10070,6 +10231,7 @@ def home(request: Request) -> HTMLResponse:
       initializeTheme();
       applyUiPreferences(initialUiPreferences);
       initializeUiScale();
+      setBottomNavReveal(bottomNavReveal);
       initializeScreenState();
       applyInventoryFilters();
       applyWifiStatusPayload(wifiStatusState, {{ focusPassword: false }});
@@ -10105,6 +10267,16 @@ def home(request: Request) -> HTMLResponse:
           showKioskCursorBriefly();
         }}
       }});
+      window.addEventListener(
+        "scroll",
+        () => {{
+          if (wifiModalIsOpen() || powerDialogIsOpen() || scanIsOpen() || shutdownProgressIsOpen()) {{
+            return;
+          }}
+          syncBottomNavReveal(false);
+        }},
+        {{ passive: true }},
+      );
 
       window.addEventListener("keydown", (event) => {{
         if (event.key !== "Escape") {{
