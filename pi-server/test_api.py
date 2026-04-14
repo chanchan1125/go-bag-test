@@ -408,6 +408,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn('id="wifi-password-input"', body)
         self.assertIn('id="wifi-password-toggle"', body)
         self.assertIn('id="wifi-close-button"', body)
+        self.assertIn('id="wifi-refresh-button"', body)
         self.assertIn('data-keyboard-submit-target="wifi-connect-submit"', body)
         self.assertIn("--bottom-nav-reveal: 0;", body)
         self.assertIn("syncBottomNavReveal", body)
@@ -447,6 +448,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertNotIn("Display controls", body)
         self.assertNotIn('id="wifi-cancel-button"', body)
         self.assertNotIn('id="wifi-rescan-button"', body)
+        self.assertNotIn('id="wifi-selected-note"', body)
         self.assertNotIn('id="topbar-readiness-value"', body)
         self.assertNotIn('id="topbar-sync-pill"', body)
         self.assertNotIn('aria-label="Open settings"', body)
@@ -493,6 +495,30 @@ class PiServerApiTests(unittest.TestCase):
             **networks_payload,
             "message": "Connected to FieldNet.",
         }
+        disconnect_payload = {
+            **networks_payload,
+            "status": "disconnected",
+            "connected": False,
+            "ssid": "",
+            "signal": 0,
+            "message": "Disconnected from FieldNet.",
+            "networks": [
+                {
+                    "ssid": "FieldNet",
+                    "active": False,
+                    "signal": 78,
+                    "security": "WPA2",
+                    "requires_password": True,
+                },
+                {
+                    "ssid": "OpenTent",
+                    "active": False,
+                    "signal": 52,
+                    "security": "Open",
+                    "requires_password": False,
+                },
+            ],
+        }
 
         with mock.patch.object(self.module, "wifi_status_payload", return_value=status_payload):
             status = self.client.get("/ui/wifi/status")
@@ -511,6 +537,12 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(connect.status_code, 200)
         self.assertEqual(connect.json()["message"], "Connected to FieldNet.")
         self.assertEqual(connect.json()["networks"][1]["ssid"], "OpenTent")
+
+        with mock.patch.object(self.module, "disconnect_wifi_network", return_value=disconnect_payload):
+            disconnect = self.client.post("/ui/wifi/disconnect")
+        self.assertEqual(disconnect.status_code, 200)
+        self.assertEqual(disconnect.json()["message"], "Disconnected from FieldNet.")
+        self.assertFalse(disconnect.json()["connected"])
 
     def test_wifi_connect_endpoint_returns_retryable_error_payload(self):
         failure_payload = {
@@ -792,6 +824,117 @@ class PiServerApiTests(unittest.TestCase):
             wifi_device_name="wlan0",
             requires_password=True,
         )
+
+    def test_disconnect_wifi_network_uses_device_disconnect_command(self):
+        status_payload = {
+            "ok": True,
+            "available": True,
+            "status": "connected",
+            "connected": True,
+            "radio_enabled": True,
+            "ssid": "FieldNet",
+            "signal": 78,
+            "device": "wlan0",
+            "message": "Connected to FieldNet.",
+        }
+        success_payload = {
+            "ok": True,
+            "available": True,
+            "status": "disconnected",
+            "connected": False,
+            "radio_enabled": True,
+            "ssid": "",
+            "signal": 0,
+            "device": "wlan0",
+            "message": "Not connected to Wi-Fi.",
+            "networks": [
+                {
+                    "ssid": "FieldNet",
+                    "active": False,
+                    "signal": 78,
+                    "security": "WPA2",
+                    "requires_password": True,
+                }
+            ],
+        }
+        command_calls = []
+
+        def fake_run(args, timeout_s):
+            command_calls.append(list(args))
+            return subprocess.CompletedProcess(["nmcli", *args], 0, "", "")
+
+        with mock.patch.object(self.module, "wifi_command_available", return_value=True), mock.patch.object(
+            self.module, "wifi_status_payload", return_value=status_payload
+        ), mock.patch.object(self.module, "run_wifi_command", side_effect=fake_run), mock.patch.object(
+            self.module, "wifi_networks_payload", return_value=success_payload
+        ):
+            payload = self.module.disconnect_wifi_network()
+
+        self.assertEqual(command_calls[0], ["device", "disconnect", "wlan0"])
+        self.assertEqual(payload["message"], "Disconnected from FieldNet.")
+        self.assertFalse(payload["connected"])
+
+    def test_disconnect_wifi_network_normalizes_permission_errors(self):
+        status_payload = {
+            "ok": True,
+            "available": True,
+            "status": "connected",
+            "connected": True,
+            "radio_enabled": True,
+            "ssid": "FieldNet",
+            "signal": 78,
+            "device": "wlan0",
+            "message": "Connected to FieldNet.",
+        }
+
+        with mock.patch.object(self.module, "wifi_command_available", return_value=True), mock.patch.object(
+            self.module, "wifi_status_payload", return_value=status_payload
+        ), mock.patch.object(
+            self.module, "run_wifi_command", side_effect=RuntimeError("Error: device disconnect failed: insufficient privileges")
+        ):
+            with self.assertRaises(self.module.HTTPException) as captured:
+                self.module.disconnect_wifi_network()
+
+        self.assertEqual(captured.exception.status_code, 400)
+        self.assertEqual(
+            captured.exception.detail,
+            "Wi-Fi save needs Raspberry Pi admin permission. Ask an admin to rerun pi-server/install.sh, then try again.",
+        )
+
+    def test_disconnect_wifi_network_uses_privileged_helper_when_available(self):
+        status_payload = {
+            "ok": True,
+            "available": True,
+            "status": "connected",
+            "connected": True,
+            "radio_enabled": True,
+            "ssid": "FieldNet",
+            "signal": 78,
+            "device": "wlan0",
+            "message": "Connected to FieldNet.",
+        }
+        success_payload = {
+            "ok": True,
+            "available": True,
+            "status": "disconnected",
+            "connected": False,
+            "radio_enabled": True,
+            "ssid": "",
+            "signal": 0,
+            "device": "wlan0",
+            "message": "Not connected to Wi-Fi.",
+            "networks": [],
+        }
+
+        with mock.patch.object(self.module, "wifi_command_available", return_value=True), mock.patch.object(
+            self.module, "wifi_status_payload", return_value=status_payload
+        ), mock.patch.object(self.module, "wifi_connect_should_use_helper", return_value=True), mock.patch.object(
+            self.module, "run_wifi_disconnect_helper"
+        ) as helper_mock, mock.patch.object(self.module, "wifi_networks_payload", return_value=success_payload):
+            payload = self.module.disconnect_wifi_network()
+
+        self.assertEqual(payload["message"], "Disconnected from FieldNet.")
+        helper_mock.assert_called_once_with(wifi_device_name="wlan0")
 
     def test_usb_camera_session_endpoints_return_structured_state(self):
         bag_id = self.client.get("/bags").json()[0]["id"]

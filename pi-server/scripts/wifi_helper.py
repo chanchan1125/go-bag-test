@@ -122,6 +122,14 @@ def connect_network(payload: dict) -> int:
     return 0
 
 
+def disconnect_network(payload: dict) -> int:
+    device = str(payload.get("device") or "").strip()
+    if not device:
+        return fail("Wi-Fi helper requires a device.")
+    run_nmcli(["device", "disconnect", device], DEFAULT_TIMEOUT_S)
+    return 0
+
+
 def main() -> int:
     if os.geteuid() != 0:
         return fail("Wi-Fi helper must run as root.")
@@ -132,6 +140,8 @@ def main() -> int:
     try:
         if action == "connect":
             return connect_network(payload)
+        if action == "disconnect":
+            return disconnect_network(payload)
         return fail(f"Unsupported Wi-Fi helper action: {action}")
     except RuntimeError as exc:
         return fail(str(exc))

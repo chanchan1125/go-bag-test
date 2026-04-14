@@ -1585,6 +1585,19 @@ def run_wifi_connect_helper(
         raise RuntimeError(detail)
 
 
+def run_wifi_disconnect_helper(*, wifi_device_name: str) -> None:
+    result = run_wifi_helper_command_result(
+        "disconnect",
+        {
+            "device": wifi_device_name,
+        },
+        WIFI_STATUS_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip() or "Wi-Fi helper command failed."
+        raise RuntimeError(detail)
+
+
 def wifi_requires_password(security_label: str) -> bool:
     normalized = (security_label or "").strip().lower()
     return normalized not in {"", "--", "none", "open"}
@@ -1837,9 +1850,8 @@ def connect_wifi_via_managed_profile(
     run_wifi_command(up_args, WIFI_CONNECT_TIMEOUT_S)
 
 
-def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_supplied: bool) -> str:
-    normalized = " ".join((detail or "").split()) or "Wi-Fi connection failed."
-    lowered = normalized.lower()
+def normalize_wifi_permission_error_message(detail: str) -> Optional[str]:
+    lowered = " ".join((detail or "").split()).lower()
     helper_setup_markers = (
         "permission is not installed",
         "wi-fi helper is unavailable",
@@ -1860,6 +1872,15 @@ def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_sup
     )
     if any(marker in lowered for marker in permission_markers):
         return "Wi-Fi save needs Raspberry Pi admin permission. Ask an admin to rerun pi-server/install.sh, then try again."
+    return None
+
+
+def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_supplied: bool) -> str:
+    normalized = " ".join((detail or "").split()) or "Wi-Fi connection failed."
+    lowered = normalized.lower()
+    permission_message = normalize_wifi_permission_error_message(normalized)
+    if permission_message:
+        return permission_message
     if "802-11-wireless-security.key-mgmt" in lowered or "key-mgmt: property is missing" in lowered:
         return "Security settings missing. Could not connect to Wi-Fi."
     authentication_markers = (
@@ -1883,6 +1904,23 @@ def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_sup
         if password_supplied:
             return "Failed to connect. Check the Wi-Fi password and try again."
         return "Failed to connect. Try again."
+    return normalized
+
+
+def normalize_wifi_disconnect_error_message(detail: str) -> str:
+    normalized = " ".join((detail or "").split()) or "Wi-Fi disconnect failed."
+    lowered = normalized.lower()
+    permission_message = normalize_wifi_permission_error_message(normalized)
+    if permission_message:
+        return permission_message
+    already_disconnected_markers = (
+        "not connected",
+        "no active connection",
+        "not active",
+        "is disconnected",
+    )
+    if any(marker in lowered for marker in already_disconnected_markers):
+        return "Wi-Fi is already disconnected."
     return normalized
 
 
@@ -1927,6 +1965,37 @@ def connect_wifi_network(ssid: str, password: str = "") -> dict:
     else:
         payload["status"] = "connecting"
         payload["message"] = f"Connection request sent for {target_ssid}."
+    return payload
+
+
+def disconnect_wifi_network() -> dict:
+    if not wifi_command_available():
+        raise HTTPException(status_code=503, detail="Wi-Fi controls are unavailable because nmcli is not installed on this Raspberry Pi.")
+    status = wifi_status_payload()
+    wifi_device_name = str(status.get("device") or "").strip()
+    active_ssid = str(status.get("ssid") or "").strip()
+    if not wifi_device_name:
+        raise HTTPException(status_code=503, detail="No Wi-Fi adapter was detected on this Raspberry Pi.")
+    if not status.get("connected"):
+        payload = wifi_networks_payload()
+        payload["ok"] = True
+        payload["message"] = "Wi-Fi is already disconnected."
+        return payload
+    try:
+        if wifi_connect_should_use_helper():
+            run_wifi_disconnect_helper(wifi_device_name=wifi_device_name)
+        else:
+            run_wifi_command(["device", "disconnect", wifi_device_name], WIFI_STATUS_TIMEOUT_S)
+    except (RuntimeError, PermissionError) as exc:
+        raw_detail = " ".join((str(exc) or exc.__class__.__name__).split()) or "Wi-Fi disconnect failed."
+        logger.warning("Wi-Fi disconnect failed for %s: %s", active_ssid or wifi_device_name, raw_detail)
+        detail = normalize_wifi_disconnect_error_message(raw_detail)
+        raise HTTPException(status_code=400, detail=detail) from exc
+    payload = wifi_networks_payload()
+    payload["ok"] = True
+    if not payload["connected"]:
+        payload["status"] = "disconnected"
+        payload["message"] = f"Disconnected from {active_ssid}." if active_ssid else "Wi-Fi disconnected."
     return payload
 
 
@@ -4465,6 +4534,24 @@ async def ui_wifi_connect(request: Request) -> JSONResponse:
         payload = wifi_networks_payload()
         payload["ok"] = False
         payload["message"] = unexpected_ui_error_message("Wi-Fi connect", exc)
+        return JSONResponse(payload, status_code=500)
+
+
+@app.post("/ui/wifi/disconnect")
+async def ui_wifi_disconnect(request: Request) -> JSONResponse:
+    require_admin_access(request)
+    try:
+        payload = disconnect_wifi_network()
+        return JSONResponse(payload)
+    except HTTPException as exc:
+        payload = wifi_networks_payload()
+        payload["ok"] = False
+        payload["message"] = str(exc.detail)
+        return JSONResponse(payload, status_code=exc.status_code)
+    except Exception as exc:
+        payload = wifi_networks_payload()
+        payload["ok"] = False
+        payload["message"] = unexpected_ui_error_message("Wi-Fi disconnect", exc)
         return JSONResponse(payload, status_code=500)
 
 
@@ -7471,7 +7558,6 @@ def home(request: Request) -> HTMLResponse:
       letter-spacing: -0.03em;
     }}
     .wifi-dialog-note,
-    .wifi-selected-note,
     .wifi-network-meta,
     .wifi-empty-state {{
       color: var(--muted);
@@ -7504,9 +7590,9 @@ def home(request: Request) -> HTMLResponse:
     }}
     .wifi-entry-panel {{
       display: grid;
-      gap: 4px;
+      gap: 3px;
       min-height: 0;
-      padding-top: 4px;
+      padding-top: 3px;
       border-top: 1px solid var(--line);
       background: var(--panel);
     }}
@@ -7518,8 +7604,8 @@ def home(request: Request) -> HTMLResponse:
     }}
     .wifi-selected-card {{
       display: grid;
-      gap: 2px;
-      padding: 5px 7px;
+      gap: 1px;
+      padding: 4px 6px;
       border-radius: 10px;
       border: 1px solid var(--line);
       background: var(--panel-muted);
@@ -7555,13 +7641,13 @@ def home(request: Request) -> HTMLResponse:
     }}
     .wifi-actions {{
       display: grid;
-      grid-template-columns: 1fr;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 4px;
     }}
     .wifi-actions button {{
-      min-height: 32px;
-      padding: 0 10px;
-      font-size: 0.8rem;
+      min-height: 34px;
+      padding: 0 8px;
+      font-size: 0.76rem;
     }}
     .wifi-network-section {{
       display: grid;
@@ -7585,7 +7671,7 @@ def home(request: Request) -> HTMLResponse:
     }}
     .wifi-network-list {{
       display: grid;
-      gap: 4px;
+      gap: 3px;
       min-height: 0;
       padding-bottom: 2px;
       max-height: none;
@@ -7602,7 +7688,7 @@ def home(request: Request) -> HTMLResponse:
       gap: 2px;
       justify-items: start;
       text-align: left;
-      padding: 6px 8px;
+      padding: 5px 7px;
       border-radius: 10px;
       border: 1px solid var(--line);
       background: var(--panel-muted);
@@ -7618,8 +7704,7 @@ def home(request: Request) -> HTMLResponse:
       font-size: 0.82rem;
       line-height: 1.12;
     }}
-    body.keyboard-open .wifi-dialog-note,
-    body.keyboard-open .wifi-selected-note {{
+    body.keyboard-open .wifi-dialog-note {{
       display: none;
     }}
     body.keyboard-open .wifi-dialog {{
@@ -7863,7 +7948,7 @@ def home(request: Request) -> HTMLResponse:
         justify-content: center;
       }}
       .wifi-actions {{
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }}
       .wifi-password-row {{
         grid-template-columns: minmax(0, 1fr) auto;
@@ -8061,7 +8146,6 @@ def home(request: Request) -> HTMLResponse:
             <div class="wifi-selected-card">
               <div class="panel-subtitle">Selected network</div>
               <div class="wifi-selected-name" id="wifi-selected-name">Choose a network</div>
-              <div class="wifi-selected-note" id="wifi-selected-note">Tap a network below.</div>
             </div>
             <div class="wifi-password-shell hidden" id="wifi-password-shell">
               <div class="panel-subtitle">Password</div>
@@ -8080,6 +8164,7 @@ def home(request: Request) -> HTMLResponse:
             </div>
             <div class="wifi-actions">
               <button type="button" id="wifi-connect-submit">Connect</button>
+              <button type="button" class="secondary" id="wifi-refresh-button">Refresh</button>
             </div>
           </div>
         </div>
@@ -8133,6 +8218,7 @@ def home(request: Request) -> HTMLResponse:
       const wifiStatusUrl = "/ui/wifi/status";
       const wifiNetworksUrl = "/ui/wifi/networks";
       const wifiConnectUrl = "/ui/wifi/connect{admin_query}";
+      const wifiDisconnectUrl = "/ui/wifi/disconnect{admin_query}";
       const themeToggle = document.getElementById("theme-toggle");
       const themeToggleIcon = document.getElementById("theme-toggle-icon");
       const themeToggleLabel = document.getElementById("theme-toggle-label");
@@ -8165,12 +8251,12 @@ def home(request: Request) -> HTMLResponse:
       const wifiEntryPanelHost = document.getElementById("wifi-entry-panel-host");
       const wifiEntryPanel = document.getElementById("wifi-entry-panel");
       const wifiSelectedName = document.getElementById("wifi-selected-name");
-      const wifiSelectedNote = document.getElementById("wifi-selected-note");
       const wifiPasswordShell = document.getElementById("wifi-password-shell");
       const wifiPasswordInput = document.getElementById("wifi-password-input");
       const wifiPasswordToggle = document.getElementById("wifi-password-toggle");
       const wifiCloseButton = document.getElementById("wifi-close-button");
       const wifiConnectButton = document.getElementById("wifi-connect-submit");
+      const wifiRefreshButton = document.getElementById("wifi-refresh-button");
       const wifiNetworkList = document.getElementById("wifi-network-list");
       const wifiStatusChip = document.getElementById("wifi-status-chip");
       const scanModal = document.getElementById("scan-modal");
@@ -8228,6 +8314,8 @@ def home(request: Request) -> HTMLResponse:
       let wifiSelectedNetworkRequiresPassword = false;
       let wifiPasswordVisible = false;
       let wifiConnecting = false;
+      let wifiBusyAction = "";
+      let wifiRefreshing = false;
       let currentTimeBaseMs = {int(view_model["current_time_ms"])};
       let currentTimeBaseClientMs = Date.now();
 
@@ -8431,21 +8519,43 @@ def home(request: Request) -> HTMLResponse:
           : null;
       }}
 
-      function updateWifiConnectButton() {{
+      function updateSettingsWifiSummary() {{
+        if (!settingsWifiSummary) {{
+          return;
+        }}
+        settingsWifiSummary.textContent =
+          wifiStatusState.connected && wifiStatusState.ssid
+            ? wifiStatusState.ssid
+            : String(wifiStatusState.message || wifiStateLabel(wifiStatusState.status || "unavailable"));
+      }}
+
+      function updateWifiActionButtons() {{
         if (!wifiConnectButton) {{
           return;
         }}
-        const selectedNetwork = selectedWifiNetwork();
         const selectedName = String(wifiSelectedNetworkSsid || "").trim();
-        const alreadyConnected = !!(selectedNetwork && selectedNetwork.active && wifiStatusState.connected);
-        const requiresPassword = wifiSelectedNetworkRequiresPassword && !alreadyConnected;
+        const showDisconnect = !!wifiStatusState.connected;
+        const busyAction = wifiBusyAction || (showDisconnect ? "disconnect" : "connect");
+        const requiresPassword = wifiSelectedNetworkRequiresPassword && !showDisconnect;
         const passwordValue = String(wifiPasswordInput && wifiPasswordInput.value ? wifiPasswordInput.value : "").trim();
-        wifiConnectButton.textContent = wifiConnecting ? "Connecting..." : "Connect";
+        wifiConnectButton.textContent = wifiConnecting
+          ? busyAction === "disconnect"
+            ? "Disconnecting..."
+            : "Connecting..."
+          : showDisconnect
+            ? "Disconnect"
+            : "Connect";
+        wifiConnectButton.classList.toggle("secondary", showDisconnect);
+        wifiConnectButton.classList.toggle("danger", showDisconnect);
         wifiConnectButton.disabled =
           wifiConnecting ||
-          !selectedName ||
-          alreadyConnected ||
-          (requiresPassword && !passwordValue);
+          (showDisconnect
+            ? !wifiStatusState.connected
+            : !selectedName || (requiresPassword && !passwordValue));
+        if (wifiRefreshButton) {{
+          wifiRefreshButton.textContent = wifiRefreshing ? "Refreshing..." : "Refresh";
+          wifiRefreshButton.disabled = wifiConnecting || wifiRefreshing;
+        }}
       }}
 
       function renderWifiNetworks(networks) {{
@@ -8509,14 +8619,11 @@ def home(request: Request) -> HTMLResponse:
         if (wifiSelectedName) {{
           wifiSelectedName.textContent = "Choose a network";
         }}
-        if (wifiSelectedNote) {{
-          wifiSelectedNote.textContent = "Tap a network below.";
-        }}
         if (wifiPasswordShell) {{
           wifiPasswordShell.classList.add("hidden");
         }}
         renderWifiNetworks(wifiStatusState.networks);
-        updateWifiConnectButton();
+        updateWifiActionButtons();
       }}
 
       function selectWifiNetwork(rawSsid, options = {{}}) {{
@@ -8528,21 +8635,10 @@ def home(request: Request) -> HTMLResponse:
         const previousSsid = wifiSelectedNetworkSsid;
         wifiSelectedNetworkSsid = nextSsid;
         const network = selectedWifiNetwork();
-        const alreadyConnected = !!(network && network.active && wifiStatusState.connected);
-        wifiSelectedNetworkRequiresPassword = !!(network && network.requires_password && !alreadyConnected);
+        const canConnectSelectedNetwork = !!nextSsid && !wifiStatusState.connected;
+        wifiSelectedNetworkRequiresPassword = !!(network && network.requires_password && canConnectSelectedNetwork);
         if (wifiSelectedName) {{
           wifiSelectedName.textContent = nextSsid || "Choose a network";
-        }}
-        if (wifiSelectedNote) {{
-          if (!nextSsid) {{
-            wifiSelectedNote.textContent = "Tap a network below.";
-          }} else if (alreadyConnected) {{
-            wifiSelectedNote.textContent = `Already connected to ${{nextSsid}}.`;
-          }} else if (wifiSelectedNetworkRequiresPassword) {{
-            wifiSelectedNote.textContent = "Enter the password to connect.";
-          }} else {{
-            wifiSelectedNote.textContent = "Open network. Tap Connect.";
-          }}
         }}
         if (previousSsid !== nextSsid) {{
           resetWifiPasswordField({{ clearValue: true }});
@@ -8557,7 +8653,7 @@ def home(request: Request) -> HTMLResponse:
         }}
         syncWifiKeyboardDock();
         renderWifiNetworks(wifiStatusState.networks);
-        updateWifiConnectButton();
+        updateWifiActionButtons();
         if (wifiSelectedNetworkRequiresPassword && !wifiConnecting && options.focusPassword === true && wifiPasswordInput) {{
           window.setTimeout(() => {{
             if (wifiModalIsOpen() && wifiPasswordInput) {{
@@ -8581,6 +8677,7 @@ def home(request: Request) -> HTMLResponse:
         }}
         updateWifiButton();
         updateWifiStatusChip();
+        updateSettingsWifiSummary();
         if (Array.isArray(wifiStatusState.networks)) {{
           const preferredSsid =
             String(options.preferredSsid || "").trim() ||
@@ -8596,12 +8693,13 @@ def home(request: Request) -> HTMLResponse:
             clearWifiSelection({{ clearPassword: options.clearPassword }});
           }}
         }} else {{
-          updateWifiConnectButton();
+          updateWifiActionButtons();
         }}
       }}
 
-      function setWifiUiBusy(isBusy) {{
+      function setWifiUiBusy(isBusy, action = "") {{
         wifiConnecting = !!isBusy;
+        wifiBusyAction = wifiConnecting ? String(action || wifiBusyAction || "connect") : "";
         if (wifiCloseButton) {{
           wifiCloseButton.disabled = wifiConnecting;
         }}
@@ -8613,7 +8711,7 @@ def home(request: Request) -> HTMLResponse:
             button.disabled = wifiConnecting;
           }});
         }}
-        updateWifiConnectButton();
+        updateWifiActionButtons();
       }}
 
       async function refreshWifiStatus() {{
@@ -8627,18 +8725,14 @@ def home(request: Request) -> HTMLResponse:
           }}
           const payload = await response.json();
           applyWifiStatusPayload(payload, {{ preserveSelection: wifiModalIsOpen() }});
-          if (settingsWifiSummary) {{
-            settingsWifiSummary.textContent =
-              payload.connected && payload.ssid
-                ? payload.ssid
-                : String(payload.message || wifiStateLabel(payload.status || "unavailable"));
-          }}
           syncDashboardRefreshLoop();
         }} catch (_error) {{
         }}
       }}
 
       async function loadWifiNetworks(options = {{}}) {{
+        wifiRefreshing = options.markRefreshing === true;
+        updateWifiActionButtons();
         if (wifiNetworkList) {{
           wifiNetworkList.innerHTML = '<div class="wifi-empty-state">Scanning nearby Wi-Fi networks...</div>';
         }}
@@ -8661,6 +8755,9 @@ def home(request: Request) -> HTMLResponse:
           if (wifiModalIsOpen()) {{
             setWifiModalMessage(error instanceof Error ? error.message : "Wi-Fi scan failed.", "error");
           }}
+        }} finally {{
+          wifiRefreshing = false;
+          updateWifiActionButtons();
         }}
       }}
 
@@ -8703,6 +8800,48 @@ def home(request: Request) -> HTMLResponse:
         syncModalShellState();
       }}
 
+      async function disconnectWifiNetwork() {{
+        if (wifiConnecting || !wifiStatusState.connected) {{
+          return;
+        }}
+        dismissTouchKeyboard();
+        setWifiUiBusy(true, "disconnect");
+        setWifiModalMessage("Disconnecting Wi-Fi...", "notice");
+        try {{
+          const response = await fetch(wifiDisconnectUrl, {{
+            method: "POST",
+            headers: {{ "Accept": "application/json" }},
+          }});
+          const payload = await response.json();
+          applyWifiStatusPayload(payload, {{
+            preferredSsid: wifiSelectedNetworkSsid || payload.ssid || "",
+            focusPassword: false,
+            preserveSelection: true,
+            clearPassword: false,
+          }});
+          if (!response.ok || payload.ok === false) {{
+            throw new Error(payload.message || "Wi-Fi disconnect failed.");
+          }}
+          const successMessage = payload.message || "Wi-Fi disconnected.";
+          setWifiModalMessage(successMessage, "notice");
+          setBanner("notice", successMessage);
+        }} catch (error) {{
+          const message = error instanceof Error ? error.message : "Wi-Fi disconnect failed.";
+          setWifiModalMessage(message, "error");
+          setBanner("error", message);
+        }} finally {{
+          setWifiUiBusy(false);
+        }}
+      }}
+
+      async function submitWifiPrimaryAction() {{
+        if (wifiStatusState.connected) {{
+          await disconnectWifiNetwork();
+          return;
+        }}
+        await submitWifiConnection();
+      }}
+
       async function submitWifiConnection() {{
         const selectedName = String(wifiSelectedNetworkSsid || "").trim();
         if (!selectedName || wifiConnecting) {{
@@ -8718,7 +8857,7 @@ def home(request: Request) -> HTMLResponse:
         if (keyboardTarget === wifiPasswordInput) {{
           dismissTouchKeyboard();
         }}
-        setWifiUiBusy(true);
+        setWifiUiBusy(true, "connect");
         setWifiModalMessage(`Connecting to ${{selectedName}}...`, "notice");
         try {{
           const formData = new FormData();
@@ -10224,7 +10363,19 @@ def home(request: Request) -> HTMLResponse:
       }}
       if (wifiConnectButton) {{
         wifiConnectButton.addEventListener("click", () => {{
-          void submitWifiConnection();
+          void submitWifiPrimaryAction();
+        }});
+      }}
+      if (wifiRefreshButton) {{
+        wifiRefreshButton.addEventListener("click", () => {{
+          setWifiModalMessage("Refreshing nearby Wi-Fi networks...", "notice");
+          void loadWifiNetworks({{
+            preferredSsid: wifiSelectedNetworkSsid || (wifiStatusState.connected ? wifiStatusState.ssid || "" : ""),
+            focusPassword: false,
+            preserveSelection: true,
+            clearPassword: false,
+            markRefreshing: true,
+          }});
         }});
       }}
       if (wifiPasswordToggle && wifiPasswordInput) {{
@@ -10241,7 +10392,7 @@ def home(request: Request) -> HTMLResponse:
       }}
       if (wifiPasswordInput) {{
         wifiPasswordInput.addEventListener("input", () => {{
-          updateWifiConnectButton();
+          updateWifiActionButtons();
           window.requestAnimationFrame(() => {{
             if (keyboardTarget === wifiPasswordInput) {{
               wifiPasswordInput.scrollIntoView({{ block: "nearest", inline: "nearest", behavior: "auto" }});
@@ -10251,7 +10402,7 @@ def home(request: Request) -> HTMLResponse:
         wifiPasswordInput.addEventListener("keydown", (event) => {{
           if (event.key === "Enter") {{
             event.preventDefault();
-            void submitWifiConnection();
+            void submitWifiPrimaryAction();
           }}
         }});
       }}
