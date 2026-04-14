@@ -7512,7 +7512,7 @@ def home(request: Request) -> HTMLResponse:
       min-height: 0;
       max-height: calc(100dvh - var(--touch-keyboard-offset, 0px) - 4px);
       display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      grid-template-rows: auto auto auto auto;
       gap: 5px;
       border-radius: 14px;
       border: 1px solid var(--line);
@@ -7661,7 +7661,7 @@ def home(request: Request) -> HTMLResponse:
       display: grid;
       gap: 4px;
       min-height: 0;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto auto;
       overflow: hidden;
     }}
     .wifi-network-head {{
@@ -7682,7 +7682,7 @@ def home(request: Request) -> HTMLResponse:
       gap: 3px;
       min-height: 0;
       padding-bottom: 2px;
-      max-height: none;
+      max-height: 102px;
       overflow-x: hidden;
       overflow-y: auto;
       padding-right: 2px;
@@ -8529,6 +8529,11 @@ def home(request: Request) -> HTMLResponse:
           : null;
       }}
 
+      function selectedWifiUsesDisconnectAction() {{
+        const network = selectedWifiNetwork();
+        return !!(network && network.active && wifiStatusState.connected);
+      }}
+
       function updateSettingsWifiSummary() {{
         if (!settingsWifiSummary) {{
           return;
@@ -8543,10 +8548,11 @@ def home(request: Request) -> HTMLResponse:
         if (!wifiConnectButton) {{
           return;
         }}
+        const selectedNetwork = selectedWifiNetwork();
         const selectedName = String(wifiSelectedNetworkSsid || "").trim();
-        const showDisconnect = !!wifiStatusState.connected;
+        const showDisconnect = !!(selectedNetwork && selectedNetwork.active && wifiStatusState.connected);
         const busyAction = wifiBusyAction || (showDisconnect ? "disconnect" : "connect");
-        const requiresPassword = wifiSelectedNetworkRequiresPassword && !showDisconnect;
+        const requiresPassword = !!(selectedNetwork && selectedNetwork.requires_password && !showDisconnect);
         const passwordValue = String(wifiPasswordInput && wifiPasswordInput.value ? wifiPasswordInput.value : "").trim();
         wifiConnectButton.textContent = wifiConnecting
           ? busyAction === "disconnect"
@@ -8645,8 +8651,8 @@ def home(request: Request) -> HTMLResponse:
         const previousSsid = wifiSelectedNetworkSsid;
         wifiSelectedNetworkSsid = nextSsid;
         const network = selectedWifiNetwork();
-        const canConnectSelectedNetwork = !!nextSsid && !wifiStatusState.connected;
-        wifiSelectedNetworkRequiresPassword = !!(network && network.requires_password && canConnectSelectedNetwork);
+        const selectedNetworkIsActive = !!(network && network.active && wifiStatusState.connected);
+        wifiSelectedNetworkRequiresPassword = !!(network && network.requires_password && !selectedNetworkIsActive);
         if (wifiSelectedName) {{
           wifiSelectedName.textContent = nextSsid || "Choose a network";
         }}
@@ -8845,7 +8851,7 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       async function submitWifiPrimaryAction() {{
-        if (wifiStatusState.connected) {{
+        if (selectedWifiUsesDisconnectAction()) {{
           await disconnectWifiNetwork();
           return;
         }}
@@ -8857,7 +8863,15 @@ def home(request: Request) -> HTMLResponse:
         if (!selectedName || wifiConnecting) {{
           return;
         }}
+        const selectedNetwork = selectedWifiNetwork();
+        if (selectedNetwork && selectedNetwork.active && wifiStatusState.connected) {{
+          return;
+        }}
         const password = String(wifiPasswordInput && wifiPasswordInput.value ? wifiPasswordInput.value : "");
+        if (selectedNetwork && selectedNetwork.requires_password && !String(password).trim()) {{
+          selectWifiNetwork(selectedName, {{ focusPassword: true }});
+          return;
+        }}
         if (wifiPasswordInput) {{
           try {{
             wifiPasswordInput.blur();
@@ -8901,6 +8915,25 @@ def home(request: Request) -> HTMLResponse:
         }} finally {{
           setWifiUiBusy(false);
         }}
+      }}
+
+      function handleWifiNetworkSelection(rawSsid) {{
+        const targetSsid = String(rawSsid || "").trim();
+        if (!targetSsid) {{
+          clearWifiSelection();
+          return;
+        }}
+        const selectedNetwork = Array.isArray(wifiStatusState.networks)
+          ? wifiStatusState.networks.find((network) => network && network.ssid === targetSsid) || null
+          : null;
+        const usesDisconnectAction = !!(selectedNetwork && selectedNetwork.active && wifiStatusState.connected);
+        const shouldPromptForPassword = !!(selectedNetwork && selectedNetwork.requires_password && !usesDisconnectAction);
+        selectWifiNetwork(targetSsid, {{ focusPassword: shouldPromptForPassword }});
+        setWifiModalMessage("");
+        if (!selectedNetwork || wifiConnecting || usesDisconnectAction || selectedNetwork.requires_password) {{
+          return;
+        }}
+        void submitWifiConnection();
       }}
 
       function captureCurrentScreenScroll() {{
@@ -9443,13 +9476,29 @@ def home(request: Request) -> HTMLResponse:
         if (!wifiEntryPanel || !wifiEntryPanelHost || !touchKeyboardDock || !touchKeyboard) {{
           return;
         }}
-        if (wifiEntryPanel.parentElement !== wifiEntryPanelHost) {{
-          wifiEntryPanelHost.appendChild(wifiEntryPanel);
+        const shouldDockWifiEntryPanel =
+          wifiModalIsOpen() &&
+          keyboardTarget === wifiPasswordInput &&
+          document.body.classList.contains("keyboard-open") &&
+          !touchKeyboard.classList.contains("hidden");
+        if (shouldDockWifiEntryPanel) {{
+          if (wifiEntryPanel.parentElement !== touchKeyboardDock) {{
+            touchKeyboardDock.appendChild(wifiEntryPanel);
+          }}
+          touchKeyboardDock.classList.remove("hidden");
+          touchKeyboardDock.setAttribute("aria-hidden", "false");
+          wifiEntryPanelHost.classList.add("hidden");
+          touchKeyboard.classList.add("wifi-entry-docked");
+        }} else {{
+          if (wifiEntryPanel.parentElement !== wifiEntryPanelHost) {{
+            wifiEntryPanelHost.appendChild(wifiEntryPanel);
+          }}
+          touchKeyboardDock.classList.add("hidden");
+          touchKeyboardDock.setAttribute("aria-hidden", "true");
+          wifiEntryPanelHost.classList.remove("hidden");
+          touchKeyboard.classList.remove("wifi-entry-docked");
         }}
-        touchKeyboardDock.classList.add("hidden");
-        touchKeyboardDock.setAttribute("aria-hidden", "true");
-        wifiEntryPanelHost.classList.remove("hidden");
-        touchKeyboard.classList.remove("wifi-entry-docked");
+        window.requestAnimationFrame(syncTouchKeyboardOffset);
       }}
 
       function updateTouchKeyboard() {{
@@ -10481,8 +10530,7 @@ def home(request: Request) -> HTMLResponse:
             return;
           }}
           const targetSsid = String(button.getAttribute("data-wifi-ssid") || "").trim();
-          selectWifiNetwork(targetSsid, {{ focusPassword: false }});
-          setWifiModalMessage("");
+          handleWifiNetworkSelection(targetSsid);
         }});
       }}
       if (wifiModal) {{
