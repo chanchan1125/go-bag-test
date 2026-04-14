@@ -3845,6 +3845,7 @@ def render_pairing_card_html(base_url: str, pair: sqlite3.Row, pi_device_id: str
 def render_touch_keyboard_html() -> str:
     return """
     <div class="touch-keyboard hidden" id="touch-keyboard" aria-hidden="true" aria-label="Touch keyboard">
+      <div class="touch-keyboard-dock hidden" id="touch-keyboard-dock" aria-hidden="true"></div>
       <div class="touch-keyboard-inner">
         <div class="touch-keyboard-row ten">
           <button type="button" data-key="1">1</button>
@@ -6054,6 +6055,35 @@ def home(request: Request) -> HTMLResponse:
       box-shadow: 0 -6px 16px var(--shadow-strong);
       backdrop-filter: blur(4px);
     }}
+    .touch-keyboard-dock {{
+      max-width: 420px;
+      margin: 0 auto;
+      padding-bottom: 2px;
+    }}
+    .touch-keyboard-dock.hidden {{
+      display: none !important;
+    }}
+    .touch-keyboard-dock .wifi-entry-panel {{
+      gap: 3px;
+      padding-top: 0;
+      border-top: none;
+      background: transparent;
+    }}
+    .touch-keyboard-dock .wifi-selected-card {{
+      padding: 4px 6px;
+      border-radius: 8px;
+    }}
+    .touch-keyboard-dock .wifi-password-shell {{
+      gap: 2px;
+    }}
+    .touch-keyboard-dock .wifi-password-row input,
+    .touch-keyboard-dock .wifi-password-toggle,
+    .touch-keyboard-dock .wifi-actions button {{
+      min-height: 28px;
+    }}
+    .touch-keyboard-dock .wifi-actions button {{
+      font-size: 0.76rem;
+    }}
     .touch-keyboard-inner {{
       max-width: 420px;
       margin: 0 auto;
@@ -6636,6 +6666,9 @@ def home(request: Request) -> HTMLResponse:
       border-top: 1px solid var(--line);
       background: var(--panel);
     }}
+    .wifi-entry-panel-host.hidden {{
+      display: none !important;
+    }}
     .wifi-selected-card {{
       display: grid;
       gap: 2px;
@@ -7167,29 +7200,31 @@ def home(request: Request) -> HTMLResponse:
             <div class="wifi-empty-state">Scanning nearby Wi-Fi networks...</div>
           </div>
         </div>
-        <div class="wifi-entry-panel">
-          <div class="wifi-selected-card">
-            <div class="panel-subtitle">Selected network</div>
-            <div class="wifi-selected-name" id="wifi-selected-name">Choose a network</div>
-            <div class="wifi-selected-note" id="wifi-selected-note">Tap a network below.</div>
-          </div>
-          <div class="wifi-password-shell hidden" id="wifi-password-shell">
-            <div class="panel-subtitle">Password</div>
-            <div class="wifi-password-row">
-              <input
-                type="password"
-                id="wifi-password-input"
-                placeholder="Wi-Fi password"
-                autocomplete="off"
-                autocapitalize="none"
-                spellcheck="false"
-                data-keyboard-submit-target="wifi-connect-submit"
-                data-keyboard-submit-label="Connect">
-              <button type="button" class="secondary wifi-password-toggle" id="wifi-password-toggle">Show</button>
+        <div class="wifi-entry-panel-host" id="wifi-entry-panel-host">
+          <div class="wifi-entry-panel" id="wifi-entry-panel">
+            <div class="wifi-selected-card">
+              <div class="panel-subtitle">Selected network</div>
+              <div class="wifi-selected-name" id="wifi-selected-name">Choose a network</div>
+              <div class="wifi-selected-note" id="wifi-selected-note">Tap a network below.</div>
             </div>
-          </div>
-          <div class="wifi-actions">
-            <button type="button" id="wifi-connect-submit">Connect</button>
+            <div class="wifi-password-shell hidden" id="wifi-password-shell">
+              <div class="panel-subtitle">Password</div>
+              <div class="wifi-password-row">
+                <input
+                  type="password"
+                  id="wifi-password-input"
+                  placeholder="Wi-Fi password"
+                  autocomplete="off"
+                  autocapitalize="none"
+                  spellcheck="false"
+                  data-keyboard-submit-target="wifi-connect-submit"
+                  data-keyboard-submit-label="Connect">
+                <button type="button" class="secondary wifi-password-toggle" id="wifi-password-toggle">Show</button>
+              </div>
+            </div>
+            <div class="wifi-actions">
+              <button type="button" id="wifi-connect-submit">Connect</button>
+            </div>
           </div>
         </div>
       </section>
@@ -7266,6 +7301,8 @@ def home(request: Request) -> HTMLResponse:
       const shutdownProgressNote = document.getElementById("shutdown-progress-note");
       const wifiModal = document.getElementById("wifi-modal");
       const wifiModalMessage = document.getElementById("wifi-modal-message");
+      const wifiEntryPanelHost = document.getElementById("wifi-entry-panel-host");
+      const wifiEntryPanel = document.getElementById("wifi-entry-panel");
       const wifiSelectedName = document.getElementById("wifi-selected-name");
       const wifiSelectedNote = document.getElementById("wifi-selected-note");
       const wifiPasswordShell = document.getElementById("wifi-password-shell");
@@ -7286,6 +7323,7 @@ def home(request: Request) -> HTMLResponse:
       const scanStatusTitle = document.getElementById("scan-status-title");
       const scanStatusNote = document.getElementById("scan-status-note");
       const touchKeyboard = document.getElementById("touch-keyboard");
+      const touchKeyboardDock = document.getElementById("touch-keyboard-dock");
       const touchKeyboardDoneButton = document.getElementById("touch-keyboard-done-button");
       const uiStateStorageKey = "gobag-pi-ui-state";
       const keyboardEligibleSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="date"]):not([type="file"]):not([type="radio"]):not([type="range"]):not([disabled]), textarea:not([disabled])';
@@ -7517,6 +7555,7 @@ def home(request: Request) -> HTMLResponse:
         if (!wifiSelectedNetworkRequiresPassword && keyboardTarget === wifiPasswordInput) {{
           dismissTouchKeyboard();
         }}
+        syncWifiKeyboardDock();
         renderWifiNetworks(wifiStatusState.networks);
         updateWifiConnectButton();
         if (wifiSelectedNetworkRequiresPassword && !wifiConnecting && options.focusPassword !== false && wifiPasswordInput) {{
@@ -8063,6 +8102,40 @@ def home(request: Request) -> HTMLResponse:
         return submitTarget instanceof HTMLElement ? submitTarget : null;
       }}
 
+      function syncWifiKeyboardDock() {{
+        const shouldDock =
+          keyboardTarget === wifiPasswordInput &&
+          !!touchKeyboard &&
+          !touchKeyboard.classList.contains("hidden") &&
+          !!wifiModal &&
+          !wifiModal.classList.contains("hidden") &&
+          !!wifiPasswordShell &&
+          !wifiPasswordShell.classList.contains("hidden") &&
+          !!wifiEntryPanel &&
+          !!wifiEntryPanelHost &&
+          !!touchKeyboardDock;
+        if (!wifiEntryPanel || !wifiEntryPanelHost || !touchKeyboardDock || !touchKeyboard) {{
+          return;
+        }}
+        if (shouldDock) {{
+          if (wifiEntryPanel.parentElement !== touchKeyboardDock) {{
+            touchKeyboardDock.appendChild(wifiEntryPanel);
+          }}
+          touchKeyboardDock.classList.remove("hidden");
+          touchKeyboardDock.setAttribute("aria-hidden", "false");
+          wifiEntryPanelHost.classList.add("hidden");
+          touchKeyboard.classList.add("wifi-entry-docked");
+          return;
+        }}
+        if (wifiEntryPanel.parentElement !== wifiEntryPanelHost) {{
+          wifiEntryPanelHost.appendChild(wifiEntryPanel);
+        }}
+        touchKeyboardDock.classList.add("hidden");
+        touchKeyboardDock.setAttribute("aria-hidden", "true");
+        wifiEntryPanelHost.classList.remove("hidden");
+        touchKeyboard.classList.remove("wifi-entry-docked");
+      }}
+
       function updateTouchKeyboard() {{
         if (!touchKeyboard) return;
         touchKeyboard.querySelectorAll("[data-key]").forEach((button) => {{
@@ -8087,6 +8160,7 @@ def home(request: Request) -> HTMLResponse:
         touchKeyboard.classList.add("hidden");
         touchKeyboard.setAttribute("aria-hidden", "true");
         document.body.classList.remove("keyboard-open");
+        syncWifiKeyboardDock();
         updateTouchKeyboard();
         syncTouchKeyboardOffset();
       }}
@@ -8097,6 +8171,7 @@ def home(request: Request) -> HTMLResponse:
         touchKeyboard.classList.remove("hidden");
         touchKeyboard.setAttribute("aria-hidden", "false");
         document.body.classList.add("keyboard-open");
+        syncWifiKeyboardDock();
         updateTouchKeyboard();
         window.requestAnimationFrame(syncTouchKeyboardOffset);
         window.setTimeout(syncTouchKeyboardOffset, 40);
@@ -8829,12 +8904,18 @@ def home(request: Request) -> HTMLResponse:
 
       if (touchKeyboard) {{
         touchKeyboard.addEventListener("pointerdown", (event) => {{
-          if (event.target instanceof HTMLElement && event.target.closest("button")) {{
+          const button =
+            event.target instanceof HTMLElement ? event.target.closest("button[data-key], button[data-keyboard-action]") : null;
+          if (button) {{
             event.preventDefault();
           }}
         }});
         touchKeyboard.addEventListener("click", (event) => {{
-          const button = event.target instanceof HTMLElement ? event.target.closest("button") : null;
+          const button =
+            event.target instanceof HTMLElement ? event.target.closest("button[data-key], button[data-keyboard-action]") : null;
+          if (!button) {{
+            return;
+          }}
           handleTouchKeyboardButton(button);
         }});
       }}
