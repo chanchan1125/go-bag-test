@@ -6985,7 +6985,16 @@ def home(request: Request) -> HTMLResponse:
     body.wifi-modal-open .wifi-modal {{
       align-items: flex-start;
       padding-top: var(--wifi-modal-top, 0px);
-      padding-bottom: 4px;
+      padding-bottom: 0;
+    }}
+    body.wifi-modal-open.keyboard-open .wifi-dialog {{
+      width: min(100vw, 378px);
+      gap: 0;
+      padding: 0;
+      border-top: none;
+      border-top-left-radius: 0;
+      border-top-right-radius: 0;
+      box-shadow: 0 6px 14px var(--shadow);
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard {{
       left: 50%;
@@ -6994,29 +7003,48 @@ def home(request: Request) -> HTMLResponse:
       top: var(--wifi-keyboard-top, 0px);
       transform: translateX(-50%);
       width: min(calc(100vw - 8px), 378px);
-      max-height: calc(100dvh - var(--wifi-keyboard-top, 0px) - 2px);
-      padding: 1px 2px calc(2px + env(safe-area-inset-bottom, 0px));
-      border-top-left-radius: 10px;
-      border-top-right-radius: 10px;
-      box-shadow: 0 -2px 10px var(--shadow), 0 8px 18px var(--shadow-strong);
+      max-height: calc(100dvh - var(--wifi-keyboard-top, 0px));
+      padding: 0 1px calc(1px + env(safe-area-inset-bottom, 0px));
+      border-top: none;
+      border-top-left-radius: 0;
+      border-top-right-radius: 0;
+      box-shadow: 0 8px 16px var(--shadow-strong);
       overflow: hidden;
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard-inner,
     body.wifi-modal-open.keyboard-open .touch-keyboard-row {{
-      gap: 1px;
+      gap: 0;
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard button {{
-      min-height: 18px;
-      padding: 0 1px;
-      font-size: 0.52rem;
-      border-radius: 5px;
+      min-height: 16px;
+      padding: 0;
+      font-size: 0.48rem;
+      border-radius: 4px;
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard button.action {{
-      font-size: 0.48rem;
+      font-size: 0.44rem;
     }}
     body.wifi-modal-open.keyboard-open .wifi-entry-panel {{
       padding-top: 0;
       border-top: none;
+    }}
+    body.wifi-modal-open.keyboard-open .wifi-selected-card {{
+      border-left: none;
+      border-right: none;
+      border-top: none;
+      border-radius: 0;
+      padding: 3px 6px;
+    }}
+    body.wifi-modal-open.keyboard-open .wifi-password-shell {{
+      gap: 1px;
+      padding: 0 6px;
+    }}
+    body.wifi-modal-open.keyboard-open .wifi-password-row {{
+      gap: 2px;
+    }}
+    body.wifi-modal-open.keyboard-open .wifi-password-row input,
+    body.wifi-modal-open.keyboard-open .wifi-password-toggle {{
+      min-height: 28px;
     }}
     body.wifi-modal-open.keyboard-open .wifi-actions {{
       display: none;
@@ -8288,6 +8316,7 @@ def home(request: Request) -> HTMLResponse:
       const wifiPasswordShell = document.getElementById("wifi-password-shell");
       const wifiPasswordInput = document.getElementById("wifi-password-input");
       const wifiPasswordToggle = document.getElementById("wifi-password-toggle");
+      const wifiPasswordRow = wifiPasswordInput instanceof HTMLElement ? wifiPasswordInput.closest(".wifi-password-row") : null;
       const wifiCloseButton = document.getElementById("wifi-close-button");
       const wifiConnectButton = document.getElementById("wifi-connect-submit");
       const wifiRefreshButton = document.getElementById("wifi-refresh-button");
@@ -9289,11 +9318,11 @@ def home(request: Request) -> HTMLResponse:
           !touchKeyboard.classList.contains("hidden") &&
           wifiModalIsOpen() &&
           keyboardTarget === wifiPasswordInput &&
-          wifiEntryPanelHost
-            ? Math.ceil(wifiEntryPanelHost.getBoundingClientRect().bottom)
+          wifiPasswordRow instanceof HTMLElement
+            ? Math.max(Math.ceil(wifiPasswordRow.getBoundingClientRect().bottom) - 1, 0)
             : 0;
         documentRoot.style.setProperty("--touch-keyboard-offset", `${{Math.max(keyboardHeight, 0)}}px`);
-        documentRoot.style.setProperty("--wifi-modal-top", `${{Math.max(wifiModalTop, 0)}}px`);
+        documentRoot.style.setProperty("--wifi-modal-top", `${{Math.max(wifiModalTop - 1, 0)}}px`);
         documentRoot.style.setProperty("--wifi-keyboard-top", `${{Math.max(wifiKeyboardTop, 0)}}px`);
       }}
 
