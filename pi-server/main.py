@@ -5471,6 +5471,7 @@ def home(request: Request) -> HTMLResponse:
     }}
     html {{
       --touch-keyboard-offset: 0px;
+      --wifi-modal-top: 0px;
       --wifi-keyboard-top: 0px;
       --bottom-nav-reveal: 0;
       --ui-font-scale: 1;
@@ -5484,7 +5485,6 @@ def home(request: Request) -> HTMLResponse:
       --bottom-nav-height: calc(82px * var(--ui-density-scale));
       --topbar-padding: calc(8px * var(--ui-density-scale)) calc(10px * var(--ui-density-scale));
       --topbar-gap: calc(10px * var(--ui-density-scale));
-      --wifi-modal-top-gap: calc(var(--header-chip-height) + (2 * 6px));
       --brand-gap: calc(8px * var(--ui-density-scale));
       --brand-mark-size: calc(34px * var(--ui-density-scale));
       --brand-mark-radius: calc(8px * var(--ui-density-scale));
@@ -6982,9 +6982,9 @@ def home(request: Request) -> HTMLResponse:
       box-shadow: 0 -6px 16px var(--shadow-strong);
       backdrop-filter: blur(4px);
     }}
-    body.wifi-modal-open.keyboard-open .wifi-modal {{
+    body.wifi-modal-open .wifi-modal {{
       align-items: flex-start;
-      padding-top: calc(var(--wifi-modal-top-gap) + env(safe-area-inset-top, 0px));
+      padding-top: var(--wifi-modal-top, 0px);
       padding-bottom: 4px;
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard {{
@@ -7013,6 +7013,13 @@ def home(request: Request) -> HTMLResponse:
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard button.action {{
       font-size: 0.48rem;
+    }}
+    body.wifi-modal-open.keyboard-open .wifi-entry-panel {{
+      padding-top: 0;
+      border-top: none;
+    }}
+    body.wifi-modal-open.keyboard-open .wifi-actions {{
+      display: none;
     }}
     .touch-keyboard-dock {{
       max-width: 420px;
@@ -8137,16 +8144,6 @@ def home(request: Request) -> HTMLResponse:
     </div>
     <div class="wifi-modal hidden" id="wifi-modal" aria-hidden="true">
       <section class="wifi-dialog" aria-label="Wi-Fi connection panel">
-        <div class="wifi-dialog-head">
-          <div class="wifi-dialog-head-main">
-            <div class="wifi-dialog-icon" aria-hidden="true">&#128246;</div>
-            <div>
-              <div class="wifi-dialog-title">Wi-Fi connection</div>
-              <div class="wifi-dialog-note">Select a network and connect.</div>
-            </div>
-          </div>
-          <button type="button" class="secondary wifi-close-button" id="wifi-close-button" aria-label="Close Wi-Fi panel" title="Close Wi-Fi panel">&#10005;</button>
-        </div>
         <div class="wifi-status-message hidden" id="wifi-modal-message"></div>
         <div class="wifi-network-section">
           <div class="wifi-network-head">
@@ -8173,7 +8170,7 @@ def home(request: Request) -> HTMLResponse:
                 autocapitalize="none"
                 spellcheck="false"
                 data-keyboard-submit-target="wifi-connect-submit"
-                data-keyboard-submit-label="Go">
+                data-keyboard-submit-label="Connect">
                 <button type="button" class="secondary wifi-password-toggle" id="wifi-password-toggle">Show</button>
               </div>
             </div>
@@ -8309,6 +8306,7 @@ def home(request: Request) -> HTMLResponse:
       const touchKeyboard = document.getElementById("touch-keyboard");
       const touchKeyboardDock = document.getElementById("touch-keyboard-dock");
       const touchKeyboardDoneButton = document.getElementById("touch-keyboard-done-button");
+      const topbar = document.querySelector(".topbar");
       const uiStateStorageKey = "gobag-pi-ui-state";
       const keyboardEligibleSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="date"]):not([type="file"]):not([type="radio"]):not([type="range"]):not([disabled]), textarea:not([disabled])';
       const mainScrollContainer = document.scrollingElement || document.documentElement || document.body;
@@ -9282,15 +9280,20 @@ def home(request: Request) -> HTMLResponse:
           touchKeyboard && !touchKeyboard.classList.contains("hidden")
             ? Math.ceil(touchKeyboard.getBoundingClientRect().height)
             : 0;
+        const wifiModalTop =
+          wifiModalIsOpen() && topbar
+            ? Math.ceil(topbar.getBoundingClientRect().bottom)
+            : 0;
         const wifiKeyboardTop =
           touchKeyboard &&
           !touchKeyboard.classList.contains("hidden") &&
           wifiModalIsOpen() &&
           keyboardTarget === wifiPasswordInput &&
           wifiEntryPanelHost
-            ? Math.ceil(wifiEntryPanelHost.getBoundingClientRect().bottom + 4)
+            ? Math.ceil(wifiEntryPanelHost.getBoundingClientRect().bottom)
             : 0;
         documentRoot.style.setProperty("--touch-keyboard-offset", `${{Math.max(keyboardHeight, 0)}}px`);
+        documentRoot.style.setProperty("--wifi-modal-top", `${{Math.max(wifiModalTop, 0)}}px`);
         documentRoot.style.setProperty("--wifi-keyboard-top", `${{Math.max(wifiKeyboardTop, 0)}}px`);
       }}
 
