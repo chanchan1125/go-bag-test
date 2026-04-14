@@ -6970,6 +6970,10 @@ def home(request: Request) -> HTMLResponse:
       padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 4px);
       scroll-padding-bottom: calc(var(--touch-keyboard-offset, 0px) + 8px);
     }}
+    body.wifi-modal-open.keyboard-open {{
+      padding-bottom: 0;
+      scroll-padding-bottom: 0;
+    }}
     .touch-keyboard {{
       position: fixed;
       left: 0;
@@ -6988,11 +6992,11 @@ def home(request: Request) -> HTMLResponse:
       padding-bottom: 0;
     }}
     body.wifi-modal-open.keyboard-open .wifi-dialog {{
-      width: min(100vw, 378px);
+      width: min(100%, 378px);
       gap: 8px;
-      padding: 10px 8px 0;
+      padding: 10px 8px 8px;
       border-radius: 0 0 16px 16px;
-      box-shadow: 0 12px 24px var(--shadow-strong);
+      box-shadow: 0 14px 26px var(--shadow-strong);
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard {{
       left: 50%;
@@ -7848,6 +7852,7 @@ def home(request: Request) -> HTMLResponse:
       cursor: pointer;
       box-shadow: 0 6px 14px var(--shadow);
       transition: transform 150ms ease, filter 150ms ease, background 150ms ease, color 150ms ease;
+      touch-action: manipulation;
     }}
     .wifi-network-button:hover {{
       filter: brightness(0.98);
@@ -10766,6 +10771,9 @@ def home(request: Request) -> HTMLResponse:
         if (!touchKeyboard || touchKeyboard.contains(target)) {{
           return;
         }}
+        if (wifiModalIsOpen() && target instanceof HTMLElement && target.closest("#wifi-modal")) {{
+          return;
+        }}
         if (target instanceof HTMLElement && (target.closest("#wifi-password-toggle") || target.closest("#wifi-connect-submit"))) {{
           return;
         }}
@@ -10778,6 +10786,9 @@ def home(request: Request) -> HTMLResponse:
           return;
         }}
         if (isKeyboardEligible(target)) {{
+          return;
+        }}
+        if (wifiModalIsOpen() && target instanceof HTMLElement && target.closest("#wifi-modal")) {{
           return;
         }}
         if (target instanceof HTMLElement && (target.closest("#wifi-password-toggle") || target.closest("#wifi-connect-submit"))) {{
@@ -10848,11 +10859,6 @@ def home(request: Request) -> HTMLResponse:
       if (wifiPasswordInput) {{
         wifiPasswordInput.addEventListener("input", () => {{
           updateWifiActionButtons();
-          window.requestAnimationFrame(() => {{
-            if (keyboardTarget === wifiPasswordInput) {{
-              wifiPasswordInput.scrollIntoView({{ block: "nearest", inline: "nearest", behavior: "auto" }});
-            }}
-          }});
         }});
         wifiPasswordInput.addEventListener("keydown", (event) => {{
           if (event.key === "Enter") {{
