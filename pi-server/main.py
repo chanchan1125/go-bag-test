@@ -4488,15 +4488,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
             for _, bag_type, label in [(25, "25l", "25L"), (44, "44l", "44L"), (66, "66l", "66L")]
         ]
     )
-    inventory_notice = (
-        (
-            f"USB scan preview is ready. The full-screen scanner uses {USB_STREAM_CMD} streaming for a faster camera view."
-            if usb_stream_available() and usb_scan_available() and qr_decode_available()
-            else f"USB scan preview is ready with {USB_SCAN_CMD}. Open the scanner to align the QR before capture."
-        )
-        if usb_scan_available() and qr_decode_available()
-        else f"USB scan unavailable. {USB_SCAN_CMD}: {'ok' if usb_scan_available() else 'missing'}, {QR_DECODE_CMD}: {'ok' if qr_decode_available() else 'missing'}."
-    )
+    inventory_notice = "This Raspberry Pi stays display-only. Inventory updates appear here after the paired phone syncs them."
     return {
         "bag": bag,
         "bag_record": row_to_bag_record(bag_row),
@@ -4918,8 +4910,8 @@ PI_DASHBOARD_THEME_TOKENS: Dict[str, Dict[str, str]] = {
         "topbar": "rgba(248, 249, 250, 0.92)",
         "hero-start": "#ffffff",
         "hero-end": "#edf1f4",
-        "shadow": "rgba(25, 28, 29, 0.08)",
-        "shadow-strong": "rgba(25, 28, 29, 0.16)",
+        "shadow": "rgba(25, 28, 29, 0.05)",
+        "shadow-strong": "rgba(25, 28, 29, 0.1)",
     },
     "dark": {
         "bg": "#131314",
@@ -4945,8 +4937,8 @@ PI_DASHBOARD_THEME_TOKENS: Dict[str, Dict[str, str]] = {
         "topbar": "rgba(19, 19, 20, 0.92)",
         "hero-start": "#1b1b1c",
         "hero-end": "#0e0e0f",
-        "shadow": "rgba(0, 0, 0, 0.34)",
-        "shadow-strong": "rgba(0, 0, 0, 0.5)",
+        "shadow": "rgba(0, 0, 0, 0.22)",
+        "shadow-strong": "rgba(0, 0, 0, 0.34)",
     },
 }
 
@@ -4972,7 +4964,6 @@ def home(request: Request) -> HTMLResponse:
     readiness = view_model["readiness"]
     notice = request.query_params.get("notice", "").strip()
     error = request.query_params.get("error", "").strip()
-    open_scan = request.query_params.get("scan", "").strip() == "1"
     admin_query = f"?token={ADMIN_TOKEN}" if ADMIN_TOKEN else ""
     inventory_groups = view_model["inventory_groups"]
     readiness_percent = view_model["readiness_percent"]
@@ -5761,8 +5752,7 @@ def home(request: Request) -> HTMLResponse:
     .touch-keyboard,
     .wifi-modal,
     .shutdown-modal,
-    .shutdown-progress,
-    .scan-modal {{
+    .shutdown-progress {{
       filter: brightness(var(--screen-brightness));
     }}
     a {{
@@ -5813,8 +5803,7 @@ def home(request: Request) -> HTMLResponse:
       padding: var(--topbar-padding);
       border-bottom: 1px solid var(--line);
       background: var(--topbar);
-      backdrop-filter: blur(12px);
-      box-shadow: 0 6px 14px var(--shadow);
+      box-shadow: 0 2px 6px var(--shadow);
     }}
     .topbar-brand {{
       display: flex;
@@ -5837,7 +5826,7 @@ def home(request: Request) -> HTMLResponse:
       letter-spacing: 0.08em;
       color: #ffffff;
       background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-      box-shadow: 0 12px 24px rgba(255, 107, 0, 0.18);
+      box-shadow: 0 4px 10px rgba(255, 107, 0, 0.12);
     }}
     .brand-mark img {{
       width: 100%;
@@ -5944,7 +5933,6 @@ def home(request: Request) -> HTMLResponse:
     }}
     .wifi-button.connecting::after {{
       background: var(--warn);
-      animation: wifi-pulse 1.1s ease-in-out infinite;
     }}
     .wifi-button.disconnected::after {{
       background: var(--danger);
@@ -5964,16 +5952,6 @@ def home(request: Request) -> HTMLResponse:
       font-weight: 900;
       line-height: 1;
     }}
-    @keyframes wifi-pulse {{
-      0%, 100% {{
-        transform: scale(1);
-        opacity: 0.72;
-      }}
-      50% {{
-        transform: scale(1.08);
-        opacity: 1;
-      }}
-    }}
     .power-button {{
       display: inline-flex;
       align-items: center;
@@ -5985,7 +5963,7 @@ def home(request: Request) -> HTMLResponse:
       border: 1px solid rgba(255, 180, 171, 0.2);
       background: linear-gradient(180deg, rgba(128, 28, 36, 0.96), rgba(94, 22, 28, 0.96));
       color: #fff4f2;
-      box-shadow: 0 4px 10px rgba(83, 18, 23, 0.24);
+      box-shadow: 0 2px 6px rgba(83, 18, 23, 0.18);
     }}
     .power-button:disabled {{
       opacity: 0.55;
@@ -6748,20 +6726,9 @@ def home(request: Request) -> HTMLResponse:
     }}
     .app-screen {{
       display: none;
-      animation: screen-fade 180ms ease;
     }}
     .app-screen.is-active {{
       display: block;
-    }}
-    @keyframes screen-fade {{
-      from {{
-        opacity: 0;
-        transform: translateY(6px);
-      }}
-      to {{
-        opacity: 1;
-        transform: translateY(0);
-      }}
     }}
     .screen-stack {{
       display: grid;
@@ -7078,20 +7045,18 @@ def home(request: Request) -> HTMLResponse:
       background: var(--topbar);
       border: 1px solid var(--line);
       border-radius: 18px;
-      backdrop-filter: blur(10px);
-      box-shadow: 0 12px 24px var(--shadow-strong);
+      box-shadow: 0 6px 12px var(--shadow-strong);
       opacity: calc(0.02 + (var(--bottom-nav-reveal, 0) * 0.98));
       transform: translate3d(-50%, calc((1 - var(--bottom-nav-reveal, 0)) * 118%), 0);
       transition:
         transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
         opacity 220ms ease,
-        box-shadow 260ms ease,
-        filter 260ms ease;
+        box-shadow 220ms ease;
       will-change: transform, opacity;
       overflow: hidden;
     }}
     .bottom-nav.is-revealed {{
-      box-shadow: 0 16px 30px var(--shadow-strong);
+      box-shadow: 0 8px 16px var(--shadow-strong);
     }}
     .bottom-nav.is-hidden {{
       pointer-events: none;
@@ -7115,7 +7080,7 @@ def home(request: Request) -> HTMLResponse:
       background: var(--accent-soft);
       color: var(--accent);
       border-color: transparent;
-      box-shadow: 0 8px 16px rgba(255, 107, 0, 0.16);
+      box-shadow: 0 4px 8px rgba(255, 107, 0, 0.12);
     }}
     .bottom-nav-icon {{
       font-size: 1rem;
@@ -7147,8 +7112,7 @@ def home(request: Request) -> HTMLResponse:
       padding: var(--touch-keyboard-padding);
       background: var(--topbar);
       border-top: 1px solid var(--line);
-      box-shadow: 0 -6px 16px var(--shadow-strong);
-      backdrop-filter: blur(4px);
+      box-shadow: 0 -4px 10px var(--shadow-strong);
     }}
     body.wifi-modal-open .wifi-modal {{
       align-items: flex-start;
@@ -7160,7 +7124,7 @@ def home(request: Request) -> HTMLResponse:
       gap: 8px;
       padding: 10px 8px 8px;
       border-radius: 0 0 16px 16px;
-      box-shadow: 0 14px 26px var(--shadow-strong);
+      box-shadow: 0 8px 14px var(--shadow-strong);
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard {{
       left: 50%;
@@ -7174,7 +7138,7 @@ def home(request: Request) -> HTMLResponse:
       background: var(--panel-strong);
       border-top: none;
       border-radius: 0 0 16px 16px;
-      box-shadow: 0 16px 24px var(--shadow-strong);
+      box-shadow: 0 8px 14px var(--shadow-strong);
       overflow: hidden;
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard-inner {{
@@ -7334,313 +7298,6 @@ def home(request: Request) -> HTMLResponse:
       max-height: 100vh;
       overflow: hidden;
     }}
-    .scan-modal {{
-      position: fixed;
-      inset: 0;
-      z-index: 50;
-      width: 100vw;
-      height: 100vh;
-      height: 100dvh;
-      background: #050806;
-      display: flex;
-      align-items: stretch;
-      justify-content: stretch;
-      overflow: hidden;
-    }}
-    .scan-dialog {{
-      position: relative;
-      width: 100vw;
-      height: 100vh;
-      height: 100dvh;
-      max-height: 100dvh;
-      margin: 0;
-      background: #050806;
-      overflow: hidden;
-    }}
-    .scan-preview-shell {{
-      position: absolute;
-      inset: 0;
-      min-height: 0;
-    }}
-    .scan-preview-frame {{
-      position: absolute;
-      inset: 0;
-      min-height: 0;
-      height: 100%;
-      background: #050806;
-      overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }}
-    .scan-preview-frame::after {{
-      content: "";
-      position: absolute;
-      inset: 0;
-      background:
-        radial-gradient(circle at center, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.42) 100%),
-        linear-gradient(180deg, rgba(5, 8, 6, 0.5) 0%, rgba(5, 8, 6, 0.05) 32%, rgba(5, 8, 6, 0.05) 68%, rgba(5, 8, 6, 0.55) 100%);
-      pointer-events: none;
-      z-index: 1;
-    }}
-    .scan-preview-frame img {{
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-      background: #050806;
-    }}
-    .scan-preview-placeholder {{
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      text-align: center;
-      color: #f8f4ea;
-      background: #050806;
-      font-size: clamp(0.95rem, 3vw, 1.1rem);
-      line-height: 1.4;
-      z-index: 2;
-    }}
-    .scan-overlay {{
-      position: absolute;
-      inset: 0;
-      z-index: 3;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      gap: 12px;
-      padding: clamp(16px, 3vw, 28px);
-      pointer-events: none;
-    }}
-    .scan-overlay-top {{
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 12px;
-      flex-wrap: wrap;
-    }}
-    .scan-overlay-actions {{
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      justify-content: flex-end;
-      flex-wrap: wrap;
-      pointer-events: auto;
-    }}
-    .scan-hud-chip,
-    .scan-mini-chip,
-    .scan-status-card,
-    .scan-close-button {{
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      background: rgba(12, 14, 15, 0.72);
-      color: #f8f4ea;
-      backdrop-filter: blur(14px);
-      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
-    }}
-    .scan-hud-chip {{
-      min-height: 60px;
-      padding: 12px 16px;
-      border-radius: 16px;
-      max-width: min(100%, 360px);
-    }}
-    .scan-hud-kicker {{
-      font-size: 0.7rem;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      font-weight: 700;
-      color: rgba(248, 244, 234, 0.72);
-    }}
-    .scan-hud-title {{
-      margin-top: 6px;
-      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: clamp(1rem, 2vw, 1.25rem);
-      font-weight: 800;
-      letter-spacing: -0.03em;
-    }}
-    .scan-mini-chip {{
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 48px;
-      padding: 0 14px;
-      border-radius: 999px;
-      font-size: 0.78rem;
-      font-weight: 700;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: #ffb693;
-    }}
-    .scan-close-button {{
-      width: auto !important;
-      min-height: 56px !important;
-      padding: 0 18px !important;
-      border-radius: 16px !important;
-      background: rgba(12, 14, 15, 0.82) !important;
-      color: #f8f4ea !important;
-      font-size: 0.92rem !important;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      pointer-events: auto;
-      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
-    }}
-    .scan-guides {{
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      pointer-events: none;
-    }}
-    .scan-viewfinder {{
-      position: relative;
-      width: min(76vw, 860px);
-      height: min(62vh, 430px);
-      max-width: calc(100vw - 56px);
-      max-height: calc(100vh - 196px);
-      border-radius: 28px;
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-    }}
-    .scan-corner {{
-      position: absolute;
-      width: clamp(38px, 5vw, 58px);
-      height: clamp(38px, 5vw, 58px);
-      border-color: #ff6b00;
-      border-style: solid;
-      filter: drop-shadow(0 0 14px rgba(255, 107, 0, 0.35));
-    }}
-    .scan-corner.tl {{
-      top: 0;
-      left: 0;
-      border-width: 4px 0 0 4px;
-      border-top-left-radius: 20px;
-    }}
-    .scan-corner.tr {{
-      top: 0;
-      right: 0;
-      border-width: 4px 4px 0 0;
-      border-top-right-radius: 20px;
-    }}
-    .scan-corner.bl {{
-      bottom: 0;
-      left: 0;
-      border-width: 0 0 4px 4px;
-      border-bottom-left-radius: 20px;
-    }}
-    .scan-corner.br {{
-      bottom: 0;
-      right: 0;
-      border-width: 0 4px 4px 0;
-      border-bottom-right-radius: 20px;
-    }}
-    .scan-scanline {{
-      position: absolute;
-      left: 8%;
-      right: 8%;
-      top: 50%;
-      height: 2px;
-      background: linear-gradient(90deg, transparent, #ffb693, transparent);
-      box-shadow: 0 0 18px rgba(255, 107, 0, 0.8);
-      animation: scan-sweep 2.8s ease-in-out infinite;
-      opacity: 0.92;
-    }}
-    @keyframes scan-sweep {{
-      0%, 100% {{
-        transform: translateY(-44%);
-        opacity: 0.25;
-      }}
-      50% {{
-        transform: translateY(44%);
-        opacity: 1;
-      }}
-    }}
-    .scan-focus-dot {{
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 18px;
-      height: 18px;
-      border-radius: 999px;
-      border: 2px solid rgba(255, 182, 147, 0.9);
-      transform: translate(-50%, -50%);
-      box-shadow: 0 0 18px rgba(255, 107, 0, 0.26);
-    }}
-    .scan-focus-dot::after {{
-      content: "";
-      position: absolute;
-      inset: 5px;
-      border-radius: 999px;
-      background: #ff6b00;
-    }}
-    .scan-overlay-bottom {{
-      display: flex;
-      justify-content: center;
-      align-items: flex-end;
-    }}
-    .scan-status-card {{
-      min-width: min(100%, 360px);
-      max-width: min(100%, 560px);
-      padding: 14px 18px;
-      border-radius: 18px;
-    }}
-    .scan-status-row {{
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-    }}
-    .scan-status-led {{
-      flex: 0 0 auto;
-      width: 11px;
-      height: 11px;
-      margin-top: 7px;
-      border-radius: 999px;
-      background: #ff6b00;
-      box-shadow: 0 0 14px rgba(255, 107, 0, 0.7);
-    }}
-    .scan-status-card[data-tone="danger"] .scan-status-led {{
-      background: #ffb4ab;
-      box-shadow: 0 0 14px rgba(255, 180, 171, 0.7);
-    }}
-    .scan-status-card[data-tone="success"] .scan-status-led {{
-      background: #78dc77;
-      box-shadow: 0 0 14px rgba(120, 220, 119, 0.7);
-    }}
-    .scan-status-card[data-tone="processing"] .scan-status-led {{
-      background: #ffb693;
-      box-shadow: 0 0 14px rgba(255, 182, 147, 0.7);
-    }}
-    .scan-status-title {{
-      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: clamp(1rem, 2vw, 1.2rem);
-      font-weight: 800;
-      letter-spacing: -0.03em;
-    }}
-    .scan-status-note {{
-      margin-top: 4px;
-      color: rgba(248, 244, 234, 0.72);
-      line-height: 1.45;
-      font-size: 0.92rem;
-    }}
-    @media (max-width: 719px) {{
-      .scan-overlay {{
-        padding: 14px;
-      }}
-      .scan-overlay-top {{
-        align-items: stretch;
-      }}
-      .scan-viewfinder {{
-        width: calc(100vw - 32px);
-        height: min(52vh, 320px);
-        max-height: calc(100vh - 180px);
-      }}
-      .scan-hud-chip {{
-        max-width: 100%;
-      }}
-      .scan-close-button {{
-        flex: 1 1 auto;
-        justify-content: center;
-      }}
-    }}
     .shutdown-modal,
     .shutdown-progress {{
       position: fixed;
@@ -7651,7 +7308,6 @@ def home(request: Request) -> HTMLResponse:
       justify-content: center;
       padding: 16px;
       background: rgba(5, 8, 6, 0.76);
-      backdrop-filter: blur(12px);
     }}
     .shutdown-progress {{
       z-index: 54;
@@ -7665,7 +7321,7 @@ def home(request: Request) -> HTMLResponse:
       border-radius: 18px;
       border: 1px solid var(--line);
       background: var(--panel);
-      box-shadow: 0 18px 32px var(--shadow-strong);
+      box-shadow: 0 8px 16px var(--shadow-strong);
       color: var(--ink);
       padding: 18px;
     }}
@@ -7698,17 +7354,6 @@ def home(request: Request) -> HTMLResponse:
       margin: 0 auto;
       background: rgba(255, 107, 0, 0.16);
       color: #ffb693;
-      animation: shutdown-pulse 1.3s ease-in-out infinite;
-    }}
-    @keyframes shutdown-pulse {{
-      0%, 100% {{
-        transform: scale(1);
-        opacity: 0.72;
-      }}
-      50% {{
-        transform: scale(1.06);
-        opacity: 1;
-      }}
     }}
     .shutdown-title,
     .shutdown-progress-title {{
@@ -8508,7 +8153,7 @@ def home(request: Request) -> HTMLResponse:
     }}
 </style>
 </head>
-<body data-state-version="{escape(view_model['state_version'])}" data-open-scan="{'1' if open_scan else '0'}">
+<body data-state-version="{escape(view_model['state_version'])}">
   <header class="topbar">
     <div class="topbar-brand">
       <div class="brand-mark">{brand_mark_inner}</div>
@@ -8548,52 +8193,6 @@ def home(request: Request) -> HTMLResponse:
       {wifi_screen}
     </div>
 
-    <div class="scan-modal hidden" id="scan-modal" aria-hidden="true">
-      <section class="scan-dialog" aria-label="USB QR scanner">
-        <div class="scan-preview-shell">
-          <div class="scan-preview-frame">
-            <img id="scan-preview-image" class="hidden" alt="USB camera preview">
-            <div class="scan-preview-placeholder" id="scan-preview-placeholder"></div>
-          </div>
-        </div>
-        <div class="scan-overlay" aria-hidden="true">
-          <div class="scan-overlay-top">
-            <div class="scan-hud-chip">
-              <div class="scan-hud-kicker">USB QR scanner</div>
-              <div class="scan-hud-title">{escape(bag.name)}</div>
-            </div>
-            <div class="scan-overlay-actions">
-              <div class="scan-mini-chip" id="scan-live-chip">Auto detect</div>
-              <button type="button" class="scan-close-button" id="scan-close-button">Close</button>
-            </div>
-          </div>
-          <div class="scan-guides">
-            <div class="scan-viewfinder">
-              <div class="scan-corner tl"></div>
-              <div class="scan-corner tr"></div>
-              <div class="scan-corner bl"></div>
-              <div class="scan-corner br"></div>
-              <div class="scan-scanline"></div>
-              <div class="scan-focus-dot"></div>
-            </div>
-          </div>
-          <div class="scan-overlay-bottom">
-            <div class="scan-status-card" id="scan-status-card" data-tone="active">
-              <div class="scan-status-row">
-                <div class="scan-status-led"></div>
-                <div>
-                  <div class="scan-status-title" id="scan-status-title">Starting camera</div>
-                  <div class="scan-status-note" id="scan-status-note">Opening the USB preview for automatic QR detection.</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <form id="scan-capture-form" class="hidden">
-          <input type="hidden" name="bag_id" value="{escape(bag.bag_id)}">
-        </form>
-      </section>
-    </div>
     <div class="shutdown-modal hidden" id="shutdown-modal" aria-hidden="true">
       <section class="shutdown-dialog" aria-label="Confirm Raspberry Pi power action">
         <div class="shutdown-dialog-head">
@@ -8644,29 +8243,9 @@ def home(request: Request) -> HTMLResponse:
   <script>
     (() => {{
       const refreshIntervalMs = {UI_REFRESH_INTERVAL_MS};
-      const previewFallbackIntervalMs = {USB_PREVIEW_INTERVAL_MS};
-      const autoScanFallbackIntervalMs = {USB_AUTO_SCAN_INTERVAL_MS};
+      const passiveWifiRefreshIntervalMs = Math.max(refreshIntervalMs * 6, 30000);
+      const settingsClockRefreshIntervalMs = 15000;
       let lastStateVersion = document.body.dataset.stateVersion || "";
-      let previewTimer = 0;
-      let autoScanTimer = 0;
-      let autoScanStartTimer = 0;
-      let liveDetectTimer = 0;
-      let previewLoading = false;
-      let scanBusy = false;
-      let scanCooldownUntil = 0;
-      let scanIntervalMs = autoScanFallbackIntervalMs;
-      let previewMode = "snapshot";
-      let previewUrl = "/camera/usb/preview.jpg";
-      let snapshotPreviewUrl = "/camera/usb/preview.jpg";
-      let scanSessionId = "";
-      let scanFrameUrl = "/camera/usb/session/frame.jpg";
-      let scanStatusTimer = 0;
-      let latestSessionFrameId = 0;
-      let previewFailureCount = 0;
-      let barcodeDetector = undefined;
-      let detectorFallbackActive = false;
-      let lastDetectedRawContent = "";
-      let lastDetectedAt = 0;
       let mouseCursorTimer = 0;
 
       const pageNotice = document.getElementById("page-notice");
@@ -8729,16 +8308,6 @@ def home(request: Request) -> HTMLResponse:
       const wifiStatusChip = document.getElementById("wifi-status-chip");
       const wifiInlineKeyboard = document.getElementById("wifi-inline-keyboard");
       const wifiInlineConnectButton = document.getElementById("wifi-inline-connect-button");
-      const scanModal = document.getElementById("scan-modal");
-      const scanOpenButtons = Array.from(document.querySelectorAll('[data-open-scan="1"]'));
-      const scanCaptureForm = document.getElementById("scan-capture-form");
-      const scanPreviewImage = document.getElementById("scan-preview-image");
-      const scanPreviewPlaceholder = document.getElementById("scan-preview-placeholder");
-      const scanCloseButton = document.getElementById("scan-close-button");
-      const scanLiveChip = document.getElementById("scan-live-chip");
-      const scanStatusCard = document.getElementById("scan-status-card");
-      const scanStatusTitle = document.getElementById("scan-status-title");
-      const scanStatusNote = document.getElementById("scan-status-note");
       const touchKeyboard = document.getElementById("touch-keyboard");
       const touchKeyboardDock = document.getElementById("touch-keyboard-dock");
       const touchKeyboardDoneButton = document.getElementById("touch-keyboard-done-button");
@@ -8786,6 +8355,8 @@ def home(request: Request) -> HTMLResponse:
       let wifiStatusState = {initial_wifi_json};
       let uiPreferences = initialUiPreferences;
       let dashboardRefreshTimer = 0;
+      let wifiRefreshTimer = 0;
+      let settingsClockTimer = 0;
       let wifiSelectedNetworkSsid = "";
       let wifiSelectedNetworkRequiresPassword = false;
       let wifiPasswordVisible = false;
@@ -8892,6 +8463,51 @@ def home(request: Request) -> HTMLResponse:
         }}
         const nextMs = currentTimeBaseMs + Math.max(Date.now() - currentTimeBaseClientMs, 0);
         settingsCurrentTime.textContent = formatClockLabel(nextMs);
+      }}
+
+      function shouldRefreshDashboard() {{
+        if (document.hidden || powerDialogIsOpen() || shutdownProgressIsOpen()) {{
+          return false;
+        }}
+        if (!uiPreferences.auto_sync) {{
+          return false;
+        }}
+        if (uiPreferences.sync_wifi_only && !wifiStatusState.connected) {{
+          return false;
+        }}
+        return activeScreen !== "wifi";
+      }}
+
+      function syncSettingsClockLoop() {{
+        if (settingsClockTimer) {{
+          window.clearInterval(settingsClockTimer);
+          settingsClockTimer = 0;
+        }}
+        if (document.hidden || activeScreen !== "settings") {{
+          return;
+        }}
+        updateSettingsClock();
+        settingsClockTimer = window.setInterval(updateSettingsClock, settingsClockRefreshIntervalMs);
+      }}
+
+      function syncWifiRefreshLoop() {{
+        if (wifiRefreshTimer) {{
+          window.clearInterval(wifiRefreshTimer);
+          wifiRefreshTimer = 0;
+        }}
+        if (document.hidden || shutdownProgressIsOpen()) {{
+          return;
+        }}
+        const intervalMs = activeScreen === "wifi" ? refreshIntervalMs : passiveWifiRefreshIntervalMs;
+        wifiRefreshTimer = window.setInterval(() => {{
+          void refreshWifiStatus();
+        }}, intervalMs);
+      }}
+
+      function syncBackgroundLoops() {{
+        syncDashboardRefreshLoop();
+        syncWifiRefreshLoop();
+        syncSettingsClockLoop();
       }}
 
       function reminderStorageKey(kind) {{
@@ -9442,7 +9058,7 @@ def home(request: Request) -> HTMLResponse:
             preserveSelection: activeScreen === "wifi",
             showPasswordEntry: wifiSelectedNetworkRequiresPassword,
           }});
-          syncDashboardRefreshLoop();
+          syncBackgroundLoops();
         }} catch (_error) {{
         }}
       }}
@@ -9481,7 +9097,7 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function openWifiModal() {{
-        if (!wifiModal || scanIsOpen() || shutdownProgressIsOpen()) {{
+        if (!wifiModal || shutdownProgressIsOpen()) {{
           return;
         }}
         dismissTouchKeyboard();
@@ -9677,7 +9293,7 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function bottomNavOverlayBlocked() {{
-        return powerDialogIsOpen() || scanIsOpen() || shutdownProgressIsOpen();
+        return powerDialogIsOpen() || shutdownProgressIsOpen();
       }}
 
       function currentMainScrollTop() {{
@@ -9850,6 +9466,7 @@ def home(request: Request) -> HTMLResponse:
             }}, 120);
           }}
         }}
+        syncBackgroundLoops();
         persistUiState();
       }}
 
@@ -10017,7 +9634,7 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function syncModalShellState() {{
-        const anyModalOpen = scanIsOpen() || powerDialogIsOpen() || shutdownProgressIsOpen();
+        const anyModalOpen = powerDialogIsOpen() || shutdownProgressIsOpen();
         documentRoot.classList.toggle("modal-open", anyModalOpen);
         document.body.classList.toggle("modal-open", anyModalOpen);
         documentRoot.classList.remove("wifi-modal-open");
@@ -10025,9 +9642,11 @@ def home(request: Request) -> HTMLResponse:
         if (anyModalOpen) {{
           clearBottomNavHideTimer();
           setBottomNavReveal(0);
+          syncBackgroundLoops();
           return;
         }}
         updateBottomNavScrollBaseline();
+        syncBackgroundLoops();
       }}
 
       function setPowerUiBusy(isBusy) {{
@@ -10074,7 +9693,7 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function openShutdownModal(action = "shutdown") {{
-        if (!shutdownModal || shutdownPending || scanIsOpen()) {{
+        if (!shutdownModal || shutdownPending) {{
           return;
         }}
         currentPowerAction = action === "restart" ? "restart" : "shutdown";
@@ -10230,7 +9849,7 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function showTouchKeyboard(target) {{
-        if (!touchKeyboard || !isKeyboardEligible(target) || scanIsOpen()) return;
+        if (!touchKeyboard || !isKeyboardEligible(target)) return;
         keyboardTarget = target;
         touchKeyboard.classList.remove("hidden");
         touchKeyboard.setAttribute("aria-hidden", "false");
@@ -10371,75 +9990,6 @@ def home(request: Request) -> HTMLResponse:
         }}
       }}
 
-      function setPreviewPlaceholderMessage(message) {{
-        if (!scanPreviewPlaceholder) return;
-        scanPreviewPlaceholder.textContent = message || "";
-      }}
-
-      function setScanUiStatus(title, note = "", tone = "active") {{
-        if (scanStatusTitle) {{
-          scanStatusTitle.textContent = title || "";
-        }}
-        if (scanStatusNote) {{
-          scanStatusNote.textContent = note || "";
-        }}
-        if (scanStatusCard) {{
-          scanStatusCard.dataset.tone = tone || "active";
-        }}
-        if (scanLiveChip) {{
-          scanLiveChip.textContent =
-            tone === "danger"
-              ? "Attention"
-              : tone === "processing"
-              ? "Processing"
-              : tone === "success"
-              ? "Detected"
-              : "Auto detect";
-        }}
-      }}
-
-      function setPreviewVisible(isVisible) {{
-        if (scanPreviewImage) scanPreviewImage.classList.toggle("hidden", !isVisible);
-        if (scanPreviewPlaceholder) scanPreviewPlaceholder.classList.toggle("hidden", isVisible);
-      }}
-
-      function withCacheBust(url) {{
-        const separator = url.includes("?") ? "&" : "?";
-        return `${{url}}${{separator}}t=${{Date.now()}}`;
-      }}
-
-      function stopPreviewLoop() {{
-        if (previewTimer) {{
-          window.clearInterval(previewTimer);
-          previewTimer = 0;
-        }}
-      }}
-
-      function stopScanStatusLoop() {{
-        if (scanStatusTimer) {{
-          window.clearInterval(scanStatusTimer);
-          scanStatusTimer = 0;
-        }}
-      }}
-
-      function stopAutoScanLoop() {{
-        if (autoScanTimer) {{
-          window.clearInterval(autoScanTimer);
-          autoScanTimer = 0;
-        }}
-        if (autoScanStartTimer) {{
-          window.clearTimeout(autoScanStartTimer);
-          autoScanStartTimer = 0;
-        }}
-      }}
-
-      function stopLiveDetectLoop() {{
-        if (liveDetectTimer) {{
-          window.clearInterval(liveDetectTimer);
-          liveDetectTimer = 0;
-        }}
-      }}
-
       function reminderIntervalMs() {{
         return Math.max(Number(uiPreferences.reminder_interval_minutes || 60) * 60 * 1000, 60 * 1000);
       }}
@@ -10509,10 +10059,7 @@ def home(request: Request) -> HTMLResponse:
           window.clearInterval(dashboardRefreshTimer);
           dashboardRefreshTimer = 0;
         }}
-        if (!uiPreferences.auto_sync) {{
-          return;
-        }}
-        if (uiPreferences.sync_wifi_only && !wifiStatusState.connected) {{
+        if (!shouldRefreshDashboard()) {{
           return;
         }}
         dashboardRefreshTimer = window.setInterval(refreshDashboard, refreshIntervalMs);
@@ -10580,66 +10127,6 @@ def home(request: Request) -> HTMLResponse:
             setBanner("error", "Could not refresh the Raspberry Pi clock.");
           }}
         }}
-      }}
-
-      function startPreviewLoop(intervalMs) {{
-        stopPreviewLoop();
-        previewTimer = window.setInterval(() => {{
-          void refreshPreviewFrame();
-        }}, intervalMs || previewFallbackIntervalMs);
-      }}
-
-      function startAutoScanLoop(intervalMs) {{
-        stopAutoScanLoop();
-        scanIntervalMs = intervalMs || autoScanFallbackIntervalMs;
-        autoScanStartTimer = window.setTimeout(() => {{
-          void submitUsbScan(null, true);
-        }}, Math.min(scanIntervalMs, 1100));
-        autoScanTimer = window.setInterval(() => {{
-          void submitUsbScan(null, true);
-        }}, scanIntervalMs);
-      }}
-
-      async function getBarcodeDetector() {{
-        if (barcodeDetector !== undefined) {{
-          return barcodeDetector;
-        }}
-        if (!("BarcodeDetector" in window)) {{
-          barcodeDetector = null;
-          return barcodeDetector;
-        }}
-        try {{
-          barcodeDetector = new BarcodeDetector({{ formats: ["qr_code"] }});
-        }} catch (_error) {{
-          barcodeDetector = null;
-        }}
-        return barcodeDetector;
-      }}
-
-      function scanIsOpen() {{
-        return !!(scanModal && !scanModal.classList.contains("hidden"));
-      }}
-
-      function resetScannerState() {{
-        stopPreviewLoop();
-        stopScanStatusLoop();
-        stopAutoScanLoop();
-        stopLiveDetectLoop();
-        previewLoading = false;
-        previewFailureCount = 0;
-        scanBusy = false;
-        scanCooldownUntil = 0;
-        scanSessionId = "";
-        latestSessionFrameId = 0;
-        detectorFallbackActive = false;
-        lastDetectedRawContent = "";
-        lastDetectedAt = 0;
-        setPreviewPlaceholderMessage("");
-        setScanUiStatus(
-          "Align QR inside frame",
-          "The Pi will process the code automatically when the camera locks on.",
-          "active",
-        );
       }}
 
       async function refreshDashboard() {{
@@ -10757,278 +10244,6 @@ def home(request: Request) -> HTMLResponse:
         }}
       }}
 
-      function closeScannerWithError(message) {{
-        setBanner("error", message || "USB camera scan failed.");
-        closeScanModal();
-      }}
-
-      function startScanStatusLoop(intervalMs) {{
-        stopScanStatusLoop();
-        const effectiveInterval = Math.max(Math.min(intervalMs || scanIntervalMs || autoScanFallbackIntervalMs, 900), 250);
-        scanStatusTimer = window.setInterval(() => {{
-          void pollScanSessionStatus();
-        }}, effectiveInterval);
-      }}
-
-      async function stopScanSession() {{
-        const activeSessionId = scanSessionId;
-        if (!activeSessionId) {{
-          return;
-        }}
-        scanSessionId = "";
-        stopScanStatusLoop();
-        try {{
-          await fetch("/camera/usb/session/stop", {{
-            method: "POST",
-            headers: {{ "Accept": "application/json" }},
-            cache: "no-store",
-            keepalive: true,
-          }});
-        }} catch (_error) {{
-        }}
-      }}
-
-      async function loadSessionFrame(frameId) {{
-        if (!scanPreviewImage || !scanIsOpen() || !scanSessionId || previewLoading || !frameId) {{
-          return;
-        }}
-        previewLoading = true;
-        scanPreviewImage.onload = () => {{
-          previewLoading = false;
-          previewFailureCount = 0;
-          setPreviewVisible(true);
-          if (!scanBusy) {{
-            setScanUiStatus(
-              "Searching for QR code",
-              "Hold the label inside the frame. Detection runs automatically.",
-              "active",
-            );
-          }}
-        }};
-        scanPreviewImage.onerror = () => {{
-          previewLoading = false;
-          setPreviewVisible(false);
-          setPreviewPlaceholderMessage("USB camera preview unavailable.");
-          setScanUiStatus(
-            "Preview unavailable",
-            "Check the USB camera connection and reopen the scanner.",
-            "danger",
-          );
-          previewFailureCount += 1;
-          if (previewFailureCount >= 3) {{
-            closeScannerWithError("USB camera preview failed. Check the USB camera connection.");
-          }}
-        }};
-        const frameUrl = `${{scanFrameUrl}}?session_id=${{encodeURIComponent(scanSessionId)}}&frame_id=${{frameId}}`;
-        scanPreviewImage.src = withCacheBust(frameUrl);
-      }}
-
-      async function pollScanSessionStatus() {{
-        if (!scanIsOpen() || !scanSessionId) {{
-          return;
-        }}
-        try {{
-          const response = await fetch(`/camera/usb/session/status?session_id=${{encodeURIComponent(scanSessionId)}}`, {{
-            headers: {{ "Accept": "application/json" }},
-            cache: "no-store",
-          }});
-          const payload = await response.json().catch(() => ({{ ok: false, code: "CAMERA_PREVIEW_FAILED", message: "USB camera preview failed." }}));
-          if (!response.ok || payload.ok === false) {{
-            closeScannerWithError(payload.message || "USB camera preview failed.");
-            return;
-          }}
-          if (payload.session_id && payload.session_id !== scanSessionId) {{
-            return;
-          }}
-          scanIntervalMs = payload.interval_ms || scanIntervalMs || autoScanFallbackIntervalMs;
-          scanFrameUrl = payload.frame_url || "/camera/usb/session/frame.jpg";
-          if (payload.frame_id && payload.frame_id !== latestSessionFrameId) {{
-            latestSessionFrameId = payload.frame_id;
-            await loadSessionFrame(latestSessionFrameId);
-          }}
-          if (payload.decoded_content && !scanBusy) {{
-            setScanUiStatus(
-              "QR detected",
-              "Processing the decoded label and preparing the inventory update.",
-              "processing",
-            );
-            await submitDecodedUsbScan(payload.decoded_content, true);
-          }}
-        }} catch (_error) {{
-          closeScannerWithError("USB camera preview failed.");
-        }}
-      }}
-
-      async function preparePreview() {{
-        setPreviewVisible(false);
-        setPreviewPlaceholderMessage("Opening USB camera...");
-        setScanUiStatus(
-          "Starting camera",
-          "Opening the USB preview for automatic QR detection.",
-          "processing",
-        );
-        previewFailureCount = 0;
-        try {{
-          const response = await fetch("/camera/usb/session/start", {{
-            method: "POST",
-            headers: {{ "Accept": "application/json" }},
-            body: new URLSearchParams(new FormData(scanCaptureForm)),
-            cache: "no-store",
-          }});
-          const payload = await response.json().catch(() => ({{ ok: false, code: "CAMERA_PREVIEW_FAILED", message: "USB camera preview failed." }}));
-          if (!response.ok || payload.ok === false) {{
-            closeScannerWithError(payload.message || "USB camera preview failed.");
-            return;
-          }}
-          scanSessionId = payload.session_id || "";
-          scanFrameUrl = payload.frame_url || "/camera/usb/session/frame.jpg";
-          scanIntervalMs = payload.interval_ms || autoScanFallbackIntervalMs;
-          latestSessionFrameId = 0;
-          startScanStatusLoop(scanIntervalMs);
-          await pollScanSessionStatus();
-        }} catch (_error) {{
-          closeScannerWithError("USB camera preview failed.");
-        }}
-      }}
-
-      function openScanModal() {{
-        if (!scanModal) return;
-        dismissTouchKeyboard();
-        resetScannerState();
-        scanModal.classList.remove("hidden");
-        scanModal.setAttribute("aria-hidden", "false");
-        syncModalShellState();
-        void preparePreview();
-      }}
-
-      function closeScanModal() {{
-        void stopScanSession();
-        resetScannerState();
-        if (scanModal) {{
-          scanModal.classList.add("hidden");
-          scanModal.setAttribute("aria-hidden", "true");
-        }}
-        syncModalShellState();
-        if (scanPreviewImage) {{
-          scanPreviewImage.removeAttribute("src");
-        }}
-        previewMode = "snapshot";
-        previewUrl = "/camera/usb/preview.jpg";
-        snapshotPreviewUrl = "/camera/usb/preview.jpg";
-        previewFailureCount = 0;
-        setPreviewVisible(false);
-        setPreviewPlaceholderMessage("");
-      }}
-
-      function handleScanFailure(payload, automatic = false) {{
-        const code = payload.code || "SCAN_FAILED";
-        const message = payload.message || "USB camera scan failed.";
-        if (automatic && code === "NO_QR_DETECTED") {{
-          scanCooldownUntil = 0;
-          return;
-        }}
-        closeScannerWithError(message);
-      }}
-
-      async function handleScanSuccess(payload) {{
-        setScanUiStatus(
-          "Inventory updated",
-          "The scanned item was accepted and added to this GO BAG.",
-          "success",
-        );
-        setBanner("notice", payload.message || "QR code detected and item added.");
-        await refreshDashboard();
-        closeScanModal();
-      }}
-
-      async function submitUsbScan(event, automatic = false) {{
-        if (event) {{
-          event.preventDefault();
-        }}
-        if (!scanCaptureForm || scanBusy || !scanIsOpen()) {{
-          return;
-        }}
-        scanBusy = true;
-        scanCooldownUntil = Date.now() + 1000;
-        setScanUiStatus(
-          "Processing scan",
-          "Decoding the current camera frame and validating the QR payload.",
-          "processing",
-        );
-        stopScanStatusLoop();
-        stopPreviewLoop();
-        stopAutoScanLoop();
-        stopLiveDetectLoop();
-        try {{
-          const response = await fetch("/camera/usb/scan", {{
-            method: "POST",
-            headers: {{ "Accept": "application/json" }},
-            body: new URLSearchParams(new FormData(scanCaptureForm)),
-            cache: "no-store",
-          }});
-          const payload = await response.json().catch(() => ({{ ok: false, code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}));
-          if (!response.ok || payload.ok === false) {{
-            handleScanFailure(payload, automatic);
-            return;
-          }}
-          await handleScanSuccess(payload);
-          return;
-        }} catch (_error) {{
-          handleScanFailure({{ code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}, automatic);
-        }} finally {{
-          scanBusy = false;
-          if (scanIsOpen() && scanSessionId) {{
-            startScanStatusLoop(scanIntervalMs);
-            await pollScanSessionStatus();
-          }}
-        }}
-      }}
-
-      async function submitDecodedUsbScan(rawContent, automatic = false) {{
-        if (!scanCaptureForm || scanBusy || !scanIsOpen()) {{
-          return;
-        }}
-        const content = (rawContent || "").trim();
-        if (!content) {{
-          return;
-        }}
-        scanBusy = true;
-        scanCooldownUntil = Date.now() + 1400;
-        setScanUiStatus(
-          "Processing scan",
-          "Applying the decoded QR content to the inventory manager.",
-          "processing",
-        );
-        stopScanStatusLoop();
-        stopPreviewLoop();
-        stopAutoScanLoop();
-        stopLiveDetectLoop();
-        try {{
-          const requestBody = new URLSearchParams(new FormData(scanCaptureForm));
-          requestBody.set("content", content);
-          const response = await fetch("/camera/usb/scan/decoded", {{
-            method: "POST",
-            headers: {{ "Accept": "application/json" }},
-            body: requestBody,
-            cache: "no-store",
-          }});
-          const payload = await response.json().catch(() => ({{ ok: false, code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}));
-          if (!response.ok || payload.ok === false) {{
-            handleScanFailure(payload, automatic);
-            return;
-          }}
-          await handleScanSuccess(payload);
-        }} catch (_error) {{
-          handleScanFailure({{ code: "SCAN_FAILED", message: "USB camera scan failed unexpectedly." }}, automatic);
-        }} finally {{
-          scanBusy = false;
-          if (scanIsOpen() && scanSessionId) {{
-            startScanStatusLoop(scanIntervalMs);
-            await pollScanSessionStatus();
-          }}
-        }}
-      }}
-
       if (themeToggle) {{
         themeToggle.addEventListener("click", () => {{
           applyTheme(currentTheme() === "dark" ? "light" : "dark");
@@ -11084,19 +10299,10 @@ def home(request: Request) -> HTMLResponse:
           }}
         }});
       }}
-      if (scanCloseButton) {{
-        scanCloseButton.addEventListener("click", closeScanModal);
-      }}
-      scanOpenButtons.forEach((button) => {{
-        button.addEventListener("click", openScanModal);
-      }});
-      if (scanCaptureForm) {{
-        scanCaptureForm.addEventListener("submit", submitUsbScan);
-      }}
 
       document.addEventListener("submit", (event) => {{
         const form = event.target;
-        if (!(form instanceof HTMLFormElement) || form === scanCaptureForm) {{
+        if (!(form instanceof HTMLFormElement)) {{
           return;
         }}
         captureCurrentScreenScroll();
@@ -11274,12 +10480,21 @@ def home(request: Request) -> HTMLResponse:
       applyWifiStatusPayload(wifiStatusState, {{ focusPassword: false }});
       updatePowerDialogCopy();
       updateSettingsClock();
-      window.setInterval(updateSettingsClock, 1000);
       hideKioskCursor();
       if (uiPreferences.sync_on_startup) {{
         void runManualSyncCheck(false);
       }}
       void refreshWifiStatus();
+      syncBackgroundLoops();
+      document.addEventListener("visibilitychange", () => {{
+        syncBackgroundLoops();
+        if (!document.hidden) {{
+          void refreshWifiStatus();
+          if (shouldRefreshDashboard()) {{
+            void refreshDashboard();
+          }}
+        }}
+      }});
       window.addEventListener("resize", syncTouchKeyboardOffset);
       document.addEventListener("mousemove", (event) => {{
         if (
@@ -11326,16 +10541,7 @@ def home(request: Request) -> HTMLResponse:
           closeShutdownModal();
           return;
         }}
-        if (scanIsOpen()) {{
-          closeScanModal();
-        }}
       }});
-
-      syncDashboardRefreshLoop();
-      window.setInterval(refreshWifiStatus, refreshIntervalMs);
-      if (document.body.dataset.openScan === "1") {{
-        openScanModal();
-      }}
     }})();
   </script>
 </body>
