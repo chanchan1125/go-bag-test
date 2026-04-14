@@ -409,6 +409,20 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn('id="wifi-password-toggle"', body)
         self.assertIn('id="wifi-close-button"', body)
         self.assertIn('data-keyboard-submit-target="wifi-connect-submit"', body)
+        self.assertIn('id="settings-preferences-form"', body)
+        self.assertIn("Appearance", body)
+        self.assertIn("Alerts & reminders", body)
+        self.assertIn("Sync behavior", body)
+        self.assertIn("Date & time", body)
+        self.assertIn("System actions", body)
+        self.assertIn('id="settings-manual-sync-button"', body)
+        self.assertIn('id="settings-refresh-clock-button"', body)
+        self.assertIn('id="settings-restart-button"', body)
+        self.assertIn('id="settings-shutdown-button"', body)
+        self.assertIn('name="high_contrast"', body)
+        self.assertIn('name="large_text"', body)
+        self.assertIn('name="low_stock_alerts"', body)
+        self.assertIn('name="reminder_interval_minutes"', body)
         self.assertIn("window.scrollTo({ top, left: 0, behavior: \"auto\" })", body)
         self.assertIn("data-keyboard-action=\"done\"", body)
         self.assertIn(".hero-shell {", body)
@@ -739,6 +753,51 @@ class PiServerApiTests(unittest.TestCase):
         bag = self.client.get("/device/bag")
         self.assertEqual(bag.status_code, 200)
         self.assertEqual(bag.json()["bag_type"], "66l")
+
+    def test_ui_preferences_save_persists_kiosk_preferences(self):
+        response = self.client.post(
+            "/ui/preferences",
+            data={
+                "brightness": "high",
+                "high_contrast": "1",
+                "large_text": "1",
+                "large_buttons": "1",
+                "expiry_alerts": "1",
+                "low_stock_alerts": "1",
+                "sync_notifications": "1",
+                "reminder_interval_minutes": "30",
+                "auto_sync": "1",
+                "sync_on_startup": "1",
+                "network_time": "1",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("Settings%20updated", response.headers["location"])
+        with self.module.db_conn() as conn:
+            preferences = self.module.load_kiosk_preferences(conn)
+        self.assertEqual(preferences["brightness"], "high")
+        self.assertTrue(preferences["high_contrast"])
+        self.assertTrue(preferences["large_text"])
+        self.assertTrue(preferences["large_buttons"])
+        self.assertTrue(preferences["expiry_alerts"])
+        self.assertTrue(preferences["low_stock_alerts"])
+        self.assertTrue(preferences["sync_notifications"])
+        self.assertEqual(preferences["reminder_interval_minutes"], 30)
+        self.assertTrue(preferences["auto_sync"])
+        self.assertTrue(preferences["sync_on_startup"])
+        self.assertFalse(preferences["sync_wifi_only"])
+        self.assertTrue(preferences["network_time"])
+
+    def test_ui_restart_system_returns_structured_status(self):
+        with mock.patch.object(self.module, "require_restart_ready", return_value=["systemctl", "reboot"]), mock.patch.object(
+            self.module, "trigger_safe_restart"
+        ) as mocked_restart:
+            response = self.client.post("/ui/system/restart")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.assertIn("Restart in progress", response.json()["message"])
+        mocked_restart.assert_called_once()
 
     def test_ui_manual_add_saves_item_and_reports_validation_errors(self):
         bag_id = self.client.get("/bags").json()[0]["id"]

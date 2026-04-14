@@ -81,6 +81,9 @@ WIFI_CMD = os.getenv("GOBAG_WIFI_CMD", "nmcli").strip() or "nmcli"
 WIFI_STATUS_TIMEOUT_S = max(float(os.getenv("GOBAG_WIFI_STATUS_TIMEOUT_S", "4")), 1.0)
 WIFI_SCAN_TIMEOUT_S = max(float(os.getenv("GOBAG_WIFI_SCAN_TIMEOUT_S", "12")), 2.0)
 WIFI_CONNECT_TIMEOUT_S = max(float(os.getenv("GOBAG_WIFI_CONNECT_TIMEOUT_S", "25")), 4.0)
+KIOSK_PREFERENCES_META_KEY = "pi_kiosk_preferences_v1"
+KIOSK_BRIGHTNESS_OPTIONS = {"low", "medium", "high"}
+KIOSK_REMINDER_INTERVAL_OPTIONS = (15, 30, 60, 180)
 SINGLE_BAG_META_KEY = "single_bag_id"
 CHECKLIST_CATEGORIES = [
     "Water & Food",
@@ -613,6 +616,87 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
         "INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),
     )
+
+
+def parse_meta_bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return default
+
+
+def default_kiosk_preferences(*, notifications_enabled: bool = True) -> dict:
+    return {
+        "brightness": "medium",
+        "high_contrast": False,
+        "large_text": False,
+        "large_buttons": False,
+        "simple_mode": False,
+        "expiry_alerts": bool(notifications_enabled),
+        "low_stock_alerts": True,
+        "sync_notifications": bool(notifications_enabled),
+        "reminder_interval_minutes": 60,
+        "auto_sync": True,
+        "sync_on_startup": True,
+        "sync_wifi_only": False,
+        "network_time": True,
+    }
+
+
+def sanitize_kiosk_preferences(raw: object, *, notifications_enabled: bool = True) -> dict:
+    defaults = default_kiosk_preferences(notifications_enabled=notifications_enabled)
+    values = raw if isinstance(raw, dict) else {}
+    brightness = str(values.get("brightness") or defaults["brightness"]).strip().lower()
+    if brightness not in KIOSK_BRIGHTNESS_OPTIONS:
+        brightness = defaults["brightness"]
+    try:
+        reminder_interval = int(str(values.get("reminder_interval_minutes") or defaults["reminder_interval_minutes"]).strip())
+    except (TypeError, ValueError):
+        reminder_interval = int(defaults["reminder_interval_minutes"])
+    if reminder_interval not in KIOSK_REMINDER_INTERVAL_OPTIONS:
+        reminder_interval = int(defaults["reminder_interval_minutes"])
+    return {
+        "brightness": brightness,
+        "high_contrast": parse_meta_bool(values.get("high_contrast"), defaults["high_contrast"]),
+        "large_text": parse_meta_bool(values.get("large_text"), defaults["large_text"]),
+        "large_buttons": parse_meta_bool(values.get("large_buttons"), defaults["large_buttons"]),
+        "simple_mode": parse_meta_bool(values.get("simple_mode"), defaults["simple_mode"]),
+        "expiry_alerts": parse_meta_bool(values.get("expiry_alerts"), defaults["expiry_alerts"]),
+        "low_stock_alerts": parse_meta_bool(values.get("low_stock_alerts"), defaults["low_stock_alerts"]),
+        "sync_notifications": parse_meta_bool(values.get("sync_notifications"), defaults["sync_notifications"]),
+        "reminder_interval_minutes": reminder_interval,
+        "auto_sync": parse_meta_bool(values.get("auto_sync"), defaults["auto_sync"]),
+        "sync_on_startup": parse_meta_bool(values.get("sync_on_startup"), defaults["sync_on_startup"]),
+        "sync_wifi_only": parse_meta_bool(values.get("sync_wifi_only"), defaults["sync_wifi_only"]),
+        "network_time": parse_meta_bool(values.get("network_time"), defaults["network_time"]),
+    }
+
+
+def load_kiosk_preferences(conn: sqlite3.Connection) -> dict:
+    settings_row = conn.execute("SELECT notifications_enabled FROM settings WHERE id = 'primary'").fetchone()
+    notifications_enabled = bool(settings_row["notifications_enabled"]) if settings_row else True
+    raw_value = get_meta(conn, KIOSK_PREFERENCES_META_KEY)
+    if not raw_value:
+        return default_kiosk_preferences(notifications_enabled=notifications_enabled)
+    try:
+        parsed = json.loads(raw_value)
+    except (TypeError, ValueError):
+        return default_kiosk_preferences(notifications_enabled=notifications_enabled)
+    return sanitize_kiosk_preferences(parsed, notifications_enabled=notifications_enabled)
+
+
+def save_kiosk_preferences(conn: sqlite3.Connection, preferences: object) -> dict:
+    sanitized = sanitize_kiosk_preferences(preferences)
+    set_meta(conn, KIOSK_PREFERENCES_META_KEY, json.dumps(sanitized, separators=(",", ":")))
+    return sanitized
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -1740,42 +1824,69 @@ def connect_wifi_network(ssid: str, password: str = "") -> dict:
     return payload
 
 
-def resolve_shutdown_command() -> List[str]:
+def resolve_system_command(action: str) -> List[str]:
+    normalized_action = (action or "").strip().lower()
+    if normalized_action not in {"poweroff", "reboot"}:
+        raise RuntimeError("Unsupported Raspberry Pi power action.")
     systemctl_path = shutil.which("systemctl") or "/usr/bin/systemctl"
     if not systemctl_path or not os.path.exists(systemctl_path):
         raise RuntimeError("systemctl is not available on this Raspberry Pi.")
     if hasattr(os, "geteuid") and os.geteuid() == 0:
-        return [systemctl_path, "poweroff"]
+        return [systemctl_path, normalized_action]
     sudo_path = shutil.which("sudo") or "/usr/bin/sudo"
     if not sudo_path or not os.path.exists(sudo_path):
-        raise PermissionError("sudo is not available for backend-triggered shutdown.")
+        raise PermissionError("sudo is not available for backend-triggered power actions.")
     if not os.path.exists(SHUTDOWN_SUDOERS_FILE):
         raise PermissionError(
-            "Shutdown permission is not installed yet. Re-run pi-server/install.sh to enable the Power button."
+            "Power action permission is not installed yet. Re-run pi-server/install.sh to enable restart and shutdown controls."
         )
-    return [sudo_path, "-n", systemctl_path, "poweroff"]
+    return [sudo_path, "-n", systemctl_path, normalized_action]
 
 
-def require_shutdown_ready() -> List[str]:
+def resolve_shutdown_command() -> List[str]:
+    return resolve_system_command("poweroff")
+
+
+def resolve_restart_command() -> List[str]:
+    return resolve_system_command("reboot")
+
+
+def require_system_action_ready(action: str) -> List[str]:
     try:
-        return resolve_shutdown_command()
+        return resolve_system_command(action)
     except PermissionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-def trigger_safe_shutdown(command: List[str]) -> None:
+def require_shutdown_ready() -> List[str]:
+    return require_system_action_ready("poweroff")
+
+
+def require_restart_ready() -> List[str]:
+    return require_system_action_ready("reboot")
+
+
+def trigger_safe_system_action(command: List[str], action_label: str) -> None:
     try:
         time.sleep(SHUTDOWN_DELAY_S)
-        logger.warning("Shutdown requested from GO BAG dashboard via %s", shlex.join(command))
+        logger.warning("%s requested from GO BAG dashboard via %s", action_label, shlex.join(command))
         subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
     except Exception:
-        logger.exception("Failed to trigger Raspberry Pi shutdown")
+        logger.exception("Failed to trigger Raspberry Pi %s", action_label.lower())
+
+
+def trigger_safe_shutdown(command: List[str]) -> None:
+    trigger_safe_system_action(command, "Shutdown")
+
+
+def trigger_safe_restart(command: List[str]) -> None:
+    trigger_safe_system_action(command, "Restart")
 
 
 def diff_item(server: Item, phone: Item) -> DiffResult:
@@ -1840,6 +1951,27 @@ def compute_alerts(conn: sqlite3.Connection, current_time_ms: int) -> List[Alert
                 )
             )
     return alerts
+
+
+def compute_low_stock_items(conn: sqlite3.Connection) -> List[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT
+          items.id,
+          items.bag_id,
+          items.name AS item_name,
+          bags.name AS bag_name,
+          items.quantity,
+          items.minimum_quantity,
+          items.unit
+        FROM items
+        LEFT JOIN bags ON bags.bag_id = items.bag_id
+        WHERE items.deleted = 0
+          AND COALESCE(items.minimum_quantity, 0) > 0
+          AND COALESCE(items.quantity, 0) < COALESCE(items.minimum_quantity, 0)
+        ORDER BY items.name ASC
+        """
+    ).fetchall()
 
 
 def size_liters_for_bag_type(bag_type: str) -> int:
@@ -4035,6 +4167,8 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         category_rows = conn.execute("SELECT * FROM categories ORDER BY name").fetchall()
         current_time = now_ms()
         alerts = compute_alerts(conn, current_time)
+        low_stock_items = compute_low_stock_items(conn)
+        preferences = load_kiosk_preferences(conn)
         pi_device_id = get_meta(conn, "pi_device_id") or ""
         paired_rows = conn.execute(
             "SELECT phone_device_id, issued_at FROM tokens WHERE revoked = 0 ORDER BY issued_at DESC"
@@ -4058,6 +4192,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
     expired_items = [a for a in alerts if a.type == "expired"]
     readiness_percent = round((checked_count / readiness["checklist_total"]) * 100) if readiness["checklist_total"] else 0
     paired_phone_count = len(paired_rows)
+    low_stock_count = len(low_stock_items)
     batch_count = len(items)
     inventory_group_count = len(inventory_groups)
     sync_status_label = format_time_ms(last_sync_time_ms) if last_sync_time_ms else "Awaiting first sync"
@@ -4123,10 +4258,14 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         "batch_count": batch_count,
         "expired_count": len(expired_items),
         "expiring_count": len(expiring_items),
+        "low_stock_count": low_stock_count,
         "missing_count": len(missing_categories),
         "phone_rows_html": render_phone_rows_html(paired_rows),
         "inventory_notice": inventory_notice,
         "bag_size_options": bag_size_options,
+        "preferences": preferences,
+        "current_time_ms": current_time,
+        "timezone_label": (time.tzname[0] if time.tzname else "Local time"),
         "state_version": str(
             max(
                 int(bag.updated_at or 0),
@@ -4187,6 +4326,7 @@ def ui_state(request: Request) -> dict:
         "paired_phone_count": view_model["paired_phone_count"],
         "expired_count": view_model["expired_count"],
         "expiring_count": view_model["expiring_count"],
+        "low_stock_count": view_model["low_stock_count"],
         "missing_count": view_model["missing_count"],
         "inventory_group_count": view_model["inventory_group_count"],
         "batch_count": view_model["batch_count"],
@@ -4252,6 +4392,33 @@ async def ui_save_bag_settings(request: Request) -> RedirectResponse:
         return RedirectResponse(ui_redirect_url(error=unexpected_ui_error_message("Bag size save", exc)), status_code=303)
 
 
+@app.post("/ui/preferences")
+async def ui_save_preferences(request: Request) -> RedirectResponse:
+    try:
+        form = await read_ui_form(request)
+        submitted = {
+            "brightness": str(form.get("brightness", "") or ""),
+            "high_contrast": form.get("high_contrast"),
+            "large_text": form.get("large_text"),
+            "large_buttons": form.get("large_buttons"),
+            "simple_mode": form.get("simple_mode"),
+            "expiry_alerts": form.get("expiry_alerts"),
+            "low_stock_alerts": form.get("low_stock_alerts"),
+            "sync_notifications": form.get("sync_notifications"),
+            "reminder_interval_minutes": str(form.get("reminder_interval_minutes", "") or ""),
+            "auto_sync": form.get("auto_sync"),
+            "sync_on_startup": form.get("sync_on_startup"),
+            "sync_wifi_only": form.get("sync_wifi_only"),
+            "network_time": form.get("network_time"),
+        }
+        with db_conn() as conn:
+            save_kiosk_preferences(conn, submitted)
+            conn.commit()
+        return RedirectResponse(ui_redirect_url(notice="Settings updated."), status_code=303)
+    except Exception as exc:
+        return RedirectResponse(ui_redirect_url(error=unexpected_ui_error_message("Settings save", exc)), status_code=303)
+
+
 @app.post("/ui/pair-code/new")
 def ui_new_pair_code(request: Request) -> RedirectResponse:
     require_admin_access(request)
@@ -4283,6 +4450,19 @@ def ui_shutdown_system(request: Request, background_tasks: BackgroundTasks) -> J
         {
             "ok": True,
             "message": "Shutdown in progress. Wait until the screen turns off before disconnecting power.",
+        }
+    )
+
+
+@app.post("/ui/system/restart")
+def ui_restart_system(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
+    require_admin_access(request)
+    command = require_restart_ready()
+    background_tasks.add_task(trigger_safe_restart, command)
+    return JSONResponse(
+        {
+            "ok": True,
+            "message": "Restart in progress. Wait for GO BAG services to come back online.",
         }
     )
 
@@ -4551,6 +4731,26 @@ def home(request: Request) -> HTMLResponse:
             "networks": [],
         }
     )
+    initial_wifi_summary = str(initial_wifi.get("ssid") or initial_wifi.get("message") or "Wi-Fi status unavailable.")
+    preferences = view_model["preferences"]
+    kiosk_preferences_json = json.dumps(preferences)
+    brightness_choices_html = "".join(
+        [
+            f"""
+            <label class="settings-choice-pill">
+              <input type="radio" name="brightness" value="{level}" {"checked" if preferences["brightness"] == level else ""}>
+              <span>{label}</span>
+            </label>
+            """
+            for level, label in [("low", "Low"), ("medium", "Medium"), ("high", "High")]
+        ]
+    )
+    reminder_options_html = "".join(
+        [
+            f'<option value="{minutes}" {"selected" if int(preferences["reminder_interval_minutes"]) == minutes else ""}>Every {minutes} min</option>'
+            for minutes in KIOSK_REMINDER_INTERVAL_OPTIONS
+        ]
+    )
     dashboard_screen = f"""
     <section class="app-screen is-active" data-screen="dashboard" aria-labelledby="dashboard-title">
       <div class="screen-stack">
@@ -4799,7 +4999,7 @@ def home(request: Request) -> HTMLResponse:
           <div class="panel-head">
             <div>
               <div class="panel-title" id="settings-title">Settings</div>
-              <div class="panel-note">Device details and bag profile for this embedded touchscreen.</div>
+              <div class="panel-note">Convenience controls for the Raspberry Pi kiosk, synced layout preferences, and quick system actions.</div>
             </div>
           </div>
           <div class="settings-grid-compact">
@@ -4818,14 +5018,238 @@ def home(request: Request) -> HTMLResponse:
               <div class="status-card-value">{escape(bag_size_label(bag.size_liters))}</div>
               <div class="status-card-note">{escape(bag.name)} is displayed here read-only</div>
             </div>
+            <div class="subpanel status-cluster-card">
+              <div class="panel-subtitle">Last sync</div>
+              <div class="status-card-value" id="settings-last-sync-value">{escape(view_model['sync_status_label'])}</div>
+              <div class="status-card-note"><span id="settings-paired-count">{view_model['paired_phone_count']}</span> paired phone(s)</div>
+            </div>
           </div>
         </section>
+
+        <form method="post" action="/ui/preferences" id="settings-preferences-form">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Appearance</div>
+                <div class="panel-note">Readable presets for the 3.5-inch touchscreen without duplicating the top-bar zoom controls.</div>
+              </div>
+              <div class="pill neutral" id="settings-theme-status">Theme in header</div>
+            </div>
+            <div class="settings-control-grid">
+              <div class="subpanel settings-option-card">
+                <div class="panel-subtitle">Brightness</div>
+                <div class="settings-choice-row">
+                  {brightness_choices_html}
+                </div>
+                <div class="status-card-note">Low for night use, medium for indoor use, high for outdoor visibility.</div>
+              </div>
+              <div class="subpanel settings-option-card">
+                <div class="panel-subtitle">Theme control</div>
+                <div class="status-card-value" id="settings-theme-summary">Use the header toggle</div>
+                <div class="status-card-note">Light and dark mode stays in the top bar so it is always one tap away.</div>
+              </div>
+            </div>
+            <div class="settings-toggle-grid">
+              <label class="settings-toggle-card">
+                <input type="checkbox" name="high_contrast" value="1" {"checked" if preferences["high_contrast"] else ""}>
+                <div>
+                  <strong>High-contrast mode</strong>
+                  <span>Boost text and edge separation for brighter environments.</span>
+                </div>
+              </label>
+              <label class="settings-toggle-card">
+                <input type="checkbox" name="large_text" value="1" {"checked" if preferences["large_text"] else ""}>
+                <div>
+                  <strong>Larger text mode</strong>
+                  <span>Increase labels and values without changing the top header zoom.</span>
+                </div>
+              </label>
+              <label class="settings-toggle-card">
+                <input type="checkbox" name="large_buttons" value="1" {"checked" if preferences["large_buttons"] else ""}>
+                <div>
+                  <strong>Large buttons mode</strong>
+                  <span>Give touch actions more room for gloves or quick taps.</span>
+                </div>
+              </label>
+              <label class="settings-toggle-card">
+                <input type="checkbox" name="simple_mode" value="1" {"checked" if preferences["simple_mode"] else ""}>
+                <div>
+                  <strong>Simple mode</strong>
+                  <span>Hide extra helper text to keep the kiosk interface calmer.</span>
+                </div>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Alerts & reminders</div>
+                <div class="panel-note">Choose which operational reminders the kiosk should surface during daily use.</div>
+              </div>
+            </div>
+            <div class="settings-control-grid">
+              <div class="subpanel settings-option-card">
+                <div class="panel-subtitle">Current watchlist</div>
+                <div class="settings-mini-grid">
+                  <div class="settings-mini-stat">
+                    <span>Expiry</span>
+                    <strong id="settings-expiry-count">{view_model['expired_count'] + view_model['expiring_count']}</strong>
+                  </div>
+                  <div class="settings-mini-stat">
+                    <span>Low stock</span>
+                    <strong id="settings-low-stock-count">{view_model['low_stock_count']}</strong>
+                  </div>
+                </div>
+                <div class="status-card-note">Reminder cadence is currently set to every {preferences["reminder_interval_minutes"]} minutes.</div>
+              </div>
+              <div class="subpanel settings-option-card">
+                <div class="panel-subtitle">Reminder frequency</div>
+                <select name="reminder_interval_minutes" id="settings-reminder-interval">
+                  {reminder_options_html}
+                </select>
+                <div class="status-card-note">Applies to kiosk reminder banners for expiry, low stock, and sync nudges.</div>
+              </div>
+            </div>
+            <div class="settings-toggle-grid">
+              <label class="settings-toggle-card">
+                <input type="checkbox" name="expiry_alerts" value="1" {"checked" if preferences["expiry_alerts"] else ""}>
+                <div>
+                  <strong>Expiry alerts</strong>
+                  <span>Warn when items are expired or nearing expiry.</span>
+                </div>
+              </label>
+              <label class="settings-toggle-card">
+                <input type="checkbox" name="low_stock_alerts" value="1" {"checked" if preferences["low_stock_alerts"] else ""}>
+                <div>
+                  <strong>Low-stock alerts</strong>
+                  <span>Surface items that fall below their saved minimum quantity.</span>
+                </div>
+              </label>
+              <label class="settings-toggle-card">
+                <input type="checkbox" name="sync_notifications" value="1" {"checked" if preferences["sync_notifications"] else ""}>
+                <div>
+                  <strong>Sync status notifications</strong>
+                  <span>Show pairing and stale-sync reminders in kiosk mode.</span>
+                </div>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Sync behavior</div>
+                <div class="panel-note">The phone still performs the actual sync. These options control how the kiosk refreshes and reports that status.</div>
+              </div>
+              <div class="pill {"ok" if view_model['paired'] else "warn"}" id="settings-sync-chip">{escape(view_model['readiness']['device_status'])}</div>
+            </div>
+            <div class="settings-control-grid">
+              <div class="subpanel settings-option-card">
+                <div class="panel-subtitle">Connection view</div>
+                <div class="status-card-value" id="settings-sync-summary">{escape(view_model['sync_status_label'])}</div>
+                <div class="status-card-note">Use <strong>Sync now</strong> to refresh the latest kiosk state on demand.</div>
+              </div>
+              <div class="subpanel settings-option-card">
+                <div class="panel-subtitle">Network state</div>
+                <div class="status-card-value" id="settings-wifi-summary">{escape(initial_wifi_summary)}</div>
+                <div class="status-card-note" id="settings-manual-sync-status">The Pi listens for phone-driven sync updates and can refresh its local status here.</div>
+              </div>
+            </div>
+            <div class="settings-toggle-grid">
+              <label class="settings-toggle-card">
+                <input type="checkbox" name="auto_sync" value="1" {"checked" if preferences["auto_sync"] else ""}>
+                <div>
+                  <strong>Auto-refresh sync state</strong>
+                  <span>Keep the kiosk polling for fresh bag status in the background.</span>
+                </div>
+              </label>
+              <label class="settings-toggle-card">
+                <input type="checkbox" name="sync_on_startup" value="1" {"checked" if preferences["sync_on_startup"] else ""}>
+                <div>
+                  <strong>Refresh on startup</strong>
+                  <span>Check sync status as soon as the kiosk view opens.</span>
+                </div>
+              </label>
+              <label class="settings-toggle-card">
+                <input type="checkbox" name="sync_wifi_only" value="1" {"checked" if preferences["sync_wifi_only"] else ""}>
+                <div>
+                  <strong>Refresh only on Wi-Fi</strong>
+                  <span>Pause automatic sync checks until the Raspberry Pi is connected.</span>
+                </div>
+              </label>
+            </div>
+            <div class="button-row compact settings-action-row">
+              <button type="button" class="secondary" id="settings-manual-sync-button">Sync now</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Date & time</div>
+                <div class="panel-note">Use the Pi clock as the kiosk reference and prefer network time whenever Wi-Fi is available.</div>
+              </div>
+            </div>
+            <div class="settings-control-grid">
+              <div class="subpanel settings-option-card">
+                <div class="panel-subtitle">Current time</div>
+                <div class="status-card-value" id="settings-current-time">{escape(format_time_ms(int(view_model["current_time_ms"])))}</div>
+                <div class="status-card-note" id="settings-timezone-note">{escape(view_model["timezone_label"])}</div>
+              </div>
+              <label class="subpanel settings-toggle-card settings-toggle-card-inline">
+                <input type="checkbox" name="network_time" value="1" {"checked" if preferences["network_time"] else ""}>
+                <div>
+                  <strong>Use network time when online</strong>
+                  <span>Manual offline time changes remain managed by the Raspberry Pi OS.</span>
+                </div>
+              </label>
+            </div>
+            <div class="button-row compact settings-action-row">
+              <button type="button" class="secondary" id="settings-refresh-clock-button">Refresh clock</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">System actions</div>
+                <div class="panel-note">Restart and shutdown stay confirmed before anything happens. Battery warnings appear only if your hardware setup exposes telemetry.</div>
+              </div>
+            </div>
+            <div class="settings-control-grid">
+              <div class="subpanel settings-option-card">
+                <div class="panel-subtitle">Power</div>
+                <div class="status-card-value">Protected actions</div>
+                <div class="status-card-note">The kiosk asks for confirmation before restart or shutdown.</div>
+              </div>
+              <div class="subpanel settings-option-card">
+                <div class="panel-subtitle">Battery</div>
+                <div class="status-card-value">Unavailable</div>
+                <div class="status-card-note">No low-battery telemetry is exposed by the current Raspberry Pi setup.</div>
+              </div>
+            </div>
+            <div class="button-row compact settings-action-row">
+              <button type="button" class="secondary" id="settings-restart-button">Restart Pi</button>
+              <button type="button" class="secondary danger" id="settings-shutdown-button">Shut down Pi</button>
+            </div>
+          </section>
+
+          <div class="button-row compact settings-save-row">
+            <button type="submit">Save settings</button>
+          </div>
+        </form>
       </div>
     </section>
     """
     html = f"""
 <!doctype html>
-<html>
+<html
+  data-brightness="{escape(preferences['brightness'])}"
+  data-high-contrast="{"1" if preferences['high_contrast'] else "0"}"
+  data-large-text="{"1" if preferences['large_text'] else "0"}"
+  data-large-buttons="{"1" if preferences['large_buttons'] else "0"}"
+  data-simple-mode="{"1" if preferences['simple_mode'] else "0"}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -4856,6 +5280,8 @@ def home(request: Request) -> HTMLResponse:
       --touch-keyboard-offset: 0px;
       --ui-font-scale: 1;
       --ui-density-scale: 1;
+      --access-font-scale: 1;
+      --screen-brightness: 1;
       --page-padding:
         calc(14px * var(--ui-density-scale))
         calc(12px * var(--ui-density-scale))
@@ -4887,7 +5313,7 @@ def home(request: Request) -> HTMLResponse:
       --touch-keyboard-button-height: calc(24px * var(--ui-density-scale));
       --touch-keyboard-button-padding: calc(2px * var(--ui-density-scale)) calc(2px * var(--ui-density-scale));
       --touch-keyboard-button-font-size: calc(0.68rem * var(--ui-font-scale));
-      font-size: calc(16px * var(--ui-font-scale));
+      font-size: calc(16px * var(--ui-font-scale) * var(--access-font-scale));
     }}
     html[data-ui-scale="0"] {{
       --ui-font-scale: 0.78;
@@ -4909,6 +5335,32 @@ def home(request: Request) -> HTMLResponse:
       --ui-font-scale: 1.14;
       --ui-density-scale: 1.14;
     }}
+    html[data-brightness="low"] {{
+      --screen-brightness: 0.82;
+    }}
+    html[data-brightness="medium"] {{
+      --screen-brightness: 0.94;
+    }}
+    html[data-brightness="high"] {{
+      --screen-brightness: 1;
+    }}
+    html[data-large-text="1"] {{
+      --access-font-scale: 1.12;
+    }}
+    html[data-theme="light"][data-high-contrast="1"] {{
+      --line: #838a92;
+      --muted: #2f3439;
+      --panel-strong: #d7dde2;
+      --shadow: rgba(25, 28, 29, 0.14);
+      --shadow-strong: rgba(25, 28, 29, 0.24);
+    }}
+    html[data-theme="dark"][data-high-contrast="1"] {{
+      --line: #8e9196;
+      --muted: #f0f2f4;
+      --panel-strong: #36383a;
+      --shadow: rgba(0, 0, 0, 0.42);
+      --shadow-strong: rgba(0, 0, 0, 0.6);
+    }}
     @media (max-width: 520px), (max-height: 360px) {{
       html {{
         --topbar-padding: 5px 8px;
@@ -4926,6 +5378,11 @@ def home(request: Request) -> HTMLResponse:
         --touch-keyboard-button-padding: 1px 1px;
         --touch-keyboard-button-font-size: 0.56rem;
       }}
+      .settings-grid-compact,
+      .settings-control-grid,
+      .settings-mini-grid {{
+        grid-template-columns: 1fr;
+      }}
     }}
     body {{
       margin: 0;
@@ -4938,6 +5395,16 @@ def home(request: Request) -> HTMLResponse:
         var(--bg);
       color: var(--ink);
     }}
+    main,
+    .topbar,
+    .bottom-nav,
+    .touch-keyboard,
+    .wifi-modal,
+    .shutdown-modal,
+    .shutdown-progress,
+    .scan-modal {{
+      filter: brightness(var(--screen-brightness));
+    }}
     a {{
       color: inherit;
     }}
@@ -4949,6 +5416,30 @@ def home(request: Request) -> HTMLResponse:
       padding-bottom: calc(var(--bottom-nav-height) + 18px + var(--touch-keyboard-offset));
     }}
     h1, h2, h3, p {{ margin: 0; }}
+    html[data-large-buttons="1"] button,
+    html[data-large-buttons="1"] input,
+    html[data-large-buttons="1"] select,
+    html[data-large-buttons="1"] textarea {{
+      min-height: calc(42px * var(--ui-density-scale));
+    }}
+    html[data-large-buttons="1"] .bottom-nav-button {{
+      min-height: 68px;
+    }}
+    html[data-large-buttons="1"] .theme-toggle,
+    html[data-large-buttons="1"] .zoom-toggle,
+    html[data-large-buttons="1"] .power-button,
+    html[data-large-buttons="1"] .wifi-button {{
+      min-height: calc(34px * var(--ui-density-scale));
+    }}
+    html[data-simple-mode="1"] .panel-note,
+    html[data-simple-mode="1"] .hero-note,
+    html[data-simple-mode="1"] .inventory-note-banner,
+    html[data-simple-mode="1"] .inventory-groups-caption,
+    html[data-simple-mode="1"] .status-card-note,
+    html[data-simple-mode="1"] .wifi-dialog-note,
+    html[data-simple-mode="1"] .wifi-selected-note {{
+      display: none !important;
+    }}
     .topbar {{
       position: sticky;
       top: 0;
@@ -5498,6 +5989,14 @@ def home(request: Request) -> HTMLResponse:
       background: var(--input-bg);
       caret-color: var(--ink);
     }}
+    input[type="checkbox"],
+    input[type="radio"] {{
+      width: auto;
+      padding: 0;
+      border: none;
+      background: transparent;
+      border-radius: 0;
+    }}
     input::placeholder, textarea::placeholder {{
       color: var(--placeholder);
       opacity: 1;
@@ -5919,6 +6418,10 @@ def home(request: Request) -> HTMLResponse:
       display: grid;
       gap: 12px;
     }}
+    .settings-grid-compact,
+    .settings-control-grid {{
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }}
     .status-card-value {{
       margin-top: 8px;
       font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
@@ -6091,6 +6594,115 @@ def home(request: Request) -> HTMLResponse:
       font-size: 1rem;
       line-height: 1.2;
       word-break: break-word;
+    }}
+    .settings-control-grid,
+    .settings-toggle-grid,
+    .settings-mini-grid {{
+      display: grid;
+      gap: 12px;
+    }}
+    .settings-option-card {{
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }}
+    .settings-choice-row {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }}
+    .settings-choice-pill {{
+      position: relative;
+      display: block;
+      cursor: pointer;
+    }}
+    .settings-choice-pill input {{
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      pointer-events: none;
+    }}
+    .settings-choice-pill span {{
+      display: grid;
+      place-items: center;
+      min-height: 42px;
+      padding: 10px 8px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--panel-muted);
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }}
+    .settings-choice-pill input:checked + span {{
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: transparent;
+      box-shadow: 0 10px 18px rgba(255, 107, 0, 0.16);
+    }}
+    .settings-toggle-card {{
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 12px;
+      align-items: start;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--panel-muted);
+      cursor: pointer;
+    }}
+    .settings-toggle-card-inline {{
+      height: 100%;
+    }}
+    .settings-toggle-card input {{
+      width: 18px;
+      min-height: 18px;
+      margin: 2px 0 0;
+      accent-color: var(--accent);
+    }}
+    .settings-toggle-card strong {{
+      display: block;
+      font-size: 0.92rem;
+      line-height: 1.3;
+    }}
+    .settings-toggle-card span {{
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      line-height: 1.4;
+      font-size: 0.85rem;
+    }}
+    .settings-mini-grid {{
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }}
+    .settings-mini-stat {{
+      display: grid;
+      gap: 4px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }}
+    .settings-mini-stat span {{
+      color: var(--muted);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }}
+    .settings-mini-stat strong {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.2rem;
+      line-height: 1;
+    }}
+    .settings-action-row,
+    .settings-save-row {{
+      justify-content: flex-start;
+    }}
+    .settings-save-row button {{
+      min-width: 160px;
     }}
     .bottom-nav {{
       position: fixed;
@@ -7277,12 +7889,12 @@ def home(request: Request) -> HTMLResponse:
       </section>
     </div>
     <div class="shutdown-modal hidden" id="shutdown-modal" aria-hidden="true">
-      <section class="shutdown-dialog" aria-label="Confirm Raspberry Pi shutdown">
+      <section class="shutdown-dialog" aria-label="Confirm Raspberry Pi power action">
         <div class="shutdown-dialog-head">
           <div class="shutdown-icon" aria-hidden="true">&#x23FB;</div>
           <div>
-            <div class="shutdown-title">Shut down Raspberry Pi?</div>
-            <div class="shutdown-note">This safely stops GO BAG services and powers off the Pi. Wait until the screen turns off before disconnecting power.</div>
+            <div class="shutdown-title" id="power-dialog-title">Shut down Raspberry Pi?</div>
+            <div class="shutdown-note" id="power-dialog-note">This safely stops GO BAG services and powers off the Pi. Wait until the screen turns off before disconnecting power.</div>
           </div>
         </div>
         <div class="shutdown-error hidden" id="shutdown-error"></div>
@@ -7344,9 +7956,9 @@ def home(request: Request) -> HTMLResponse:
       </section>
     </div>
     <div class="shutdown-progress hidden" id="shutdown-progress" aria-hidden="true">
-      <section class="shutdown-progress-card" aria-label="Raspberry Pi shutdown in progress">
+      <section class="shutdown-progress-card" aria-label="Raspberry Pi power action in progress">
         <div class="shutdown-progress-icon" aria-hidden="true">&#x23FB;</div>
-        <div class="shutdown-progress-title">Shutdown in progress</div>
+        <div class="shutdown-progress-title" id="shutdown-progress-title">Shutdown in progress</div>
         <div class="shutdown-progress-note" id="shutdown-progress-note">Wait until the screen turns off before disconnecting power.</div>
       </section>
     </div>
@@ -7383,9 +7995,11 @@ def home(request: Request) -> HTMLResponse:
       const pageNotice = document.getElementById("page-notice");
       const pageError = document.getElementById("page-error");
       const documentRoot = document.documentElement;
+      const initialUiPreferences = {kiosk_preferences_json};
       const themeStorageKey = "gobag-pi-theme";
       const uiScaleStorageKey = "gobag-pi-ui-scale";
       const shutdownRequestUrl = "/ui/system/shutdown{admin_query}";
+      const restartRequestUrl = "/ui/system/restart{admin_query}";
       const wifiStatusUrl = "/ui/wifi/status";
       const wifiNetworksUrl = "/ui/wifi/networks";
       const wifiConnectUrl = "/ui/wifi/connect{admin_query}";
@@ -7412,7 +8026,10 @@ def home(request: Request) -> HTMLResponse:
       const shutdownConfirmButton = document.getElementById("shutdown-confirm-button");
       const shutdownError = document.getElementById("shutdown-error");
       const shutdownProgress = document.getElementById("shutdown-progress");
+      const shutdownProgressTitle = document.getElementById("shutdown-progress-title");
       const shutdownProgressNote = document.getElementById("shutdown-progress-note");
+      const powerDialogTitle = document.getElementById("power-dialog-title");
+      const powerDialogNote = document.getElementById("power-dialog-note");
       const wifiModal = document.getElementById("wifi-modal");
       const wifiModalMessage = document.getElementById("wifi-modal-message");
       const wifiEntryPanelHost = document.getElementById("wifi-entry-panel-host");
@@ -7446,19 +8063,59 @@ def home(request: Request) -> HTMLResponse:
       const inventorySearch = document.getElementById("inventory-search");
       const inventoryFilterBar = document.getElementById("inventory-filter-bar");
       const inventoryEmpty = document.getElementById("inventory-empty");
+      const settingsManualSyncButton = document.getElementById("settings-manual-sync-button");
+      const settingsManualSyncStatus = document.getElementById("settings-manual-sync-status");
+      const settingsRestartButton = document.getElementById("settings-restart-button");
+      const settingsShutdownButton = document.getElementById("settings-shutdown-button");
+      const settingsRefreshClockButton = document.getElementById("settings-refresh-clock-button");
+      const settingsThemeStatus = document.getElementById("settings-theme-status");
+      const settingsThemeSummary = document.getElementById("settings-theme-summary");
+      const settingsLastSyncValue = document.getElementById("settings-last-sync-value");
+      const settingsPairedCount = document.getElementById("settings-paired-count");
+      const settingsSyncChip = document.getElementById("settings-sync-chip");
+      const settingsSyncSummary = document.getElementById("settings-sync-summary");
+      const settingsWifiSummary = document.getElementById("settings-wifi-summary");
+      const settingsCurrentTime = document.getElementById("settings-current-time");
+      const settingsTimezoneNote = document.getElementById("settings-timezone-note");
+      const settingsExpiryCount = document.getElementById("settings-expiry-count");
+      const settingsLowStockCount = document.getElementById("settings-low-stock-count");
       let keyboardTarget = null;
       let keyboardShift = false;
       let shutdownPending = false;
+      let currentPowerAction = "shutdown";
       let activeScreen = "dashboard";
       let screenScrollPositions = {{}};
       let inventoryCategoryFilter = "all";
       let inventorySearchQuery = "";
       let pendingInventoryFocusItemId = "";
       let wifiStatusState = {initial_wifi_json};
+      let uiPreferences = initialUiPreferences;
+      let dashboardRefreshTimer = 0;
       let wifiSelectedNetworkSsid = "";
       let wifiSelectedNetworkRequiresPassword = false;
       let wifiPasswordVisible = false;
       let wifiConnecting = false;
+      let currentTimeBaseMs = {int(view_model["current_time_ms"])};
+      let currentTimeBaseClientMs = Date.now();
+
+      const powerActionConfig = {{
+        shutdown: {{
+          title: "Shut down Raspberry Pi?",
+          note: "This safely stops GO BAG services and powers off the Pi. Wait until the screen turns off before disconnecting power.",
+          confirm: "Shut down now",
+          progressTitle: "Shutdown in progress",
+          progressNote: "Wait until the screen turns off before disconnecting power.",
+          requestUrl: shutdownRequestUrl,
+        }},
+        restart: {{
+          title: "Restart Raspberry Pi?",
+          note: "This restarts GO BAG services and reopens the kiosk after the Raspberry Pi boots back up.",
+          confirm: "Restart now",
+          progressTitle: "Restart in progress",
+          progressNote: "Wait for the Raspberry Pi to finish rebooting and reopen the GO BAG kiosk.",
+          requestUrl: restartRequestUrl,
+        }},
+      }};
 
       function currentTheme() {{
         return documentRoot.dataset.theme === "dark" ? "dark" : "light";
@@ -7487,6 +8144,67 @@ def home(request: Request) -> HTMLResponse:
             themeToggleIcon.textContent = darkMode ? "\\u2600" : "\\u263D";
           }}
         }}
+        if (settingsThemeStatus) {{
+          settingsThemeStatus.textContent = darkMode ? "Dark active" : "Light active";
+        }}
+        if (settingsThemeSummary) {{
+          settingsThemeSummary.textContent = darkMode ? "Dark mode from header" : "Light mode from header";
+        }}
+      }}
+
+      function applyUiPreferences(preferences) {{
+        const nextPreferences = {{
+          brightness: "medium",
+          high_contrast: false,
+          large_text: false,
+          large_buttons: false,
+          simple_mode: false,
+          expiry_alerts: true,
+          low_stock_alerts: true,
+          sync_notifications: true,
+          reminder_interval_minutes: 60,
+          auto_sync: true,
+          sync_on_startup: true,
+          sync_wifi_only: false,
+          network_time: true,
+          ...(preferences && typeof preferences === "object" ? preferences : {{}}),
+        }};
+        uiPreferences = nextPreferences;
+        documentRoot.dataset.brightness = nextPreferences.brightness || "medium";
+        documentRoot.dataset.highContrast = nextPreferences.high_contrast ? "1" : "0";
+        documentRoot.dataset.largeText = nextPreferences.large_text ? "1" : "0";
+        documentRoot.dataset.largeButtons = nextPreferences.large_buttons ? "1" : "0";
+        documentRoot.dataset.simpleMode = nextPreferences.simple_mode ? "1" : "0";
+      }}
+
+      function formatClockLabel(epochMs) {{
+        const date = new Date(Number(epochMs || Date.now()));
+        return date.toLocaleString([], {{
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        }});
+      }}
+
+      function updateSettingsClock() {{
+        if (!settingsCurrentTime) {{
+          return;
+        }}
+        const nextMs = currentTimeBaseMs + Math.max(Date.now() - currentTimeBaseClientMs, 0);
+        settingsCurrentTime.textContent = formatClockLabel(nextMs);
+      }}
+
+      function reminderStorageKey(kind) {{
+        return `gobag-pi-reminder-${{kind}}`;
+      }}
+
+      function markReminderBanner(target, isReminder) {{
+        if (!(target instanceof HTMLElement)) {{
+          return;
+        }}
+        target.dataset.reminder = isReminder ? "1" : "0";
       }}
 
       function safeSelectorValue(rawValue) {{
@@ -7737,6 +8455,13 @@ def home(request: Request) -> HTMLResponse:
           }}
           const payload = await response.json();
           applyWifiStatusPayload(payload);
+          if (settingsWifiSummary) {{
+            settingsWifiSummary.textContent =
+              payload.connected && payload.ssid
+                ? payload.ssid
+                : String(payload.message || wifiStateLabel(payload.status || "unavailable"));
+          }}
+          syncDashboardRefreshLoop();
         }} catch (_error) {{
         }}
       }}
@@ -8112,22 +8837,54 @@ def home(request: Request) -> HTMLResponse:
         if (powerButton) {{
           powerButton.disabled = isBusy;
         }}
+        if (settingsRestartButton) {{
+          settingsRestartButton.disabled = isBusy;
+        }}
+        if (settingsShutdownButton) {{
+          settingsShutdownButton.disabled = isBusy;
+        }}
         if (shutdownCancelButton) {{
           shutdownCancelButton.disabled = isBusy;
         }}
         if (shutdownConfirmButton) {{
+          const powerConfig = powerActionConfig[currentPowerAction] || powerActionConfig.shutdown;
           shutdownConfirmButton.disabled = isBusy;
-          shutdownConfirmButton.textContent = isBusy ? "Shutting down..." : "Shut down now";
+          shutdownConfirmButton.textContent = isBusy ? `${{powerConfig.confirm.replace(" now", "")}}...` : powerConfig.confirm;
         }}
       }}
 
-      function openShutdownModal() {{
+      function currentPowerConfig() {{
+        return powerActionConfig[currentPowerAction] || powerActionConfig.shutdown;
+      }}
+
+      function updatePowerDialogCopy() {{
+        const powerConfig = currentPowerConfig();
+        if (powerDialogTitle) {{
+          powerDialogTitle.textContent = powerConfig.title;
+        }}
+        if (powerDialogNote) {{
+          powerDialogNote.textContent = powerConfig.note;
+        }}
+        if (shutdownProgressTitle) {{
+          shutdownProgressTitle.textContent = powerConfig.progressTitle;
+        }}
+        if (shutdownProgressNote && shutdownProgress.classList.contains("hidden")) {{
+          shutdownProgressNote.textContent = powerConfig.progressNote;
+        }}
+        if (shutdownConfirmButton && !shutdownPending) {{
+          shutdownConfirmButton.textContent = powerConfig.confirm;
+        }}
+      }}
+
+      function openShutdownModal(action = "shutdown") {{
         if (!shutdownModal || shutdownPending || scanIsOpen()) {{
           return;
         }}
+        currentPowerAction = action === "restart" ? "restart" : "shutdown";
         dismissTouchKeyboard();
         setShutdownError("");
         setPowerUiBusy(false);
+        updatePowerDialogCopy();
         shutdownModal.classList.remove("hidden");
         shutdownModal.setAttribute("aria-hidden", "false");
         syncModalShellState();
@@ -8144,8 +8901,12 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function showShutdownProgress(message) {{
+        const powerConfig = currentPowerConfig();
+        if (shutdownProgressTitle) {{
+          shutdownProgressTitle.textContent = powerConfig.progressTitle;
+        }}
         if (shutdownProgressNote) {{
-          shutdownProgressNote.textContent = message || "Wait until the screen turns off before disconnecting power.";
+          shutdownProgressNote.textContent = message || powerConfig.progressNote;
         }}
         if (shutdownProgress) {{
           shutdownProgress.classList.remove("hidden");
@@ -8161,26 +8922,27 @@ def home(request: Request) -> HTMLResponse:
         shutdownPending = true;
         setShutdownError("");
         setPowerUiBusy(true);
+        const powerConfig = currentPowerConfig();
         try {{
-          const response = await fetch(shutdownRequestUrl, {{
+          const response = await fetch(powerConfig.requestUrl, {{
             method: "POST",
             headers: {{ "Accept": "application/json" }},
             cache: "no-store",
           }});
-          const payload = await response.json().catch(() => ({{ ok: false, detail: "Shutdown request failed." }}));
+          const payload = await response.json().catch(() => ({{ ok: false, detail: "Power action request failed." }}));
           if (!response.ok || payload.ok === false) {{
-            throw new Error(String(payload.detail || payload.message || "Shutdown request failed."));
+            throw new Error(String(payload.detail || payload.message || "Power action request failed."));
           }}
           if (shutdownModal) {{
             shutdownModal.classList.add("hidden");
             shutdownModal.setAttribute("aria-hidden", "true");
           }}
-          showShutdownProgress(payload.message || "Shutdown in progress. Wait until the screen turns off before disconnecting power.");
-          setBanner("notice", payload.message || "Shutdown in progress.");
+          showShutdownProgress(payload.message || powerConfig.progressNote);
+          setBanner("notice", payload.message || powerConfig.progressTitle);
         }} catch (error) {{
           shutdownPending = false;
           setPowerUiBusy(false);
-          setShutdownError(error instanceof Error ? error.message : "Shutdown request failed.");
+          setShutdownError(error instanceof Error ? error.message : "Power action request failed.");
           syncModalShellState();
         }}
       }}
@@ -8416,14 +9178,17 @@ def home(request: Request) -> HTMLResponse:
           if (text) {{
             target.textContent = text;
             target.classList.remove("hidden");
+            markReminderBanner(target, false);
           }} else {{
             target.textContent = "";
             target.classList.add("hidden");
+            markReminderBanner(target, false);
           }}
         }}
         if (text && other) {{
           other.textContent = "";
           other.classList.add("hidden");
+          markReminderBanner(other, false);
         }}
       }}
 
@@ -8496,6 +9261,148 @@ def home(request: Request) -> HTMLResponse:
         }}
       }}
 
+      function reminderIntervalMs() {{
+        return Math.max(Number(uiPreferences.reminder_interval_minutes || 60) * 60 * 1000, 60 * 1000);
+      }}
+
+      function showReminderBanner(kind, text, reminderKey) {{
+        const target = kind === "error" ? pageError : pageNotice;
+        const other = kind === "error" ? pageNotice : pageError;
+        if (!(target instanceof HTMLElement)) {{
+          return;
+        }}
+        if (
+          other instanceof HTMLElement &&
+          !other.classList.contains("hidden") &&
+          other.dataset.reminder !== "1"
+        ) {{
+          return;
+        }}
+        if (!target.classList.contains("hidden") && target.dataset.reminder !== "1") {{
+          return;
+        }}
+        const now = Date.now();
+        try {{
+          const lastShown = Number(localStorage.getItem(reminderStorageKey(reminderKey)) || "0");
+          if (now - lastShown < reminderIntervalMs()) {{
+            return;
+          }}
+          localStorage.setItem(reminderStorageKey(reminderKey), String(now));
+        }} catch (_error) {{
+        }}
+        target.textContent = text;
+        target.classList.remove("hidden");
+        markReminderBanner(target, true);
+        if (other instanceof HTMLElement) {{
+          other.textContent = "";
+          other.classList.add("hidden");
+          markReminderBanner(other, false);
+        }}
+      }}
+
+      function maybeShowOperationalReminder(state) {{
+        if (!state || typeof state !== "object") {{
+          return;
+        }}
+        const expiredCount = Number(state.expired_count || 0);
+        const expiringCount = Number(state.expiring_count || 0);
+        const lowStockCount = Number(state.low_stock_count || 0);
+        const pairedPhoneCount = Number(state.paired_phone_count || 0);
+        if (uiPreferences.expiry_alerts && expiredCount > 0) {{
+          showReminderBanner("error", `${{expiredCount}} item${{expiredCount === 1 ? "" : "s"}} expired. Review the alerts watchlist.`, "expired");
+          return;
+        }}
+        if (uiPreferences.expiry_alerts && expiringCount > 0) {{
+          showReminderBanner("notice", `${{expiringCount}} item${{expiringCount === 1 ? "" : "s"}} nearing expiry.`, "expiring");
+          return;
+        }}
+        if (uiPreferences.low_stock_alerts && lowStockCount > 0) {{
+          showReminderBanner("notice", `${{lowStockCount}} item${{lowStockCount === 1 ? "" : "s"}} below the saved minimum quantity.`, "low-stock");
+          return;
+        }}
+        if (uiPreferences.sync_notifications && pairedPhoneCount === 0) {{
+          showReminderBanner("notice", "Pair a phone to enable GO BAG sync updates on this kiosk.", "pairing");
+        }}
+      }}
+
+      function syncDashboardRefreshLoop() {{
+        if (dashboardRefreshTimer) {{
+          window.clearInterval(dashboardRefreshTimer);
+          dashboardRefreshTimer = 0;
+        }}
+        if (!uiPreferences.auto_sync) {{
+          return;
+        }}
+        if (uiPreferences.sync_wifi_only && !wifiStatusState.connected) {{
+          return;
+        }}
+        dashboardRefreshTimer = window.setInterval(refreshDashboard, refreshIntervalMs);
+      }}
+
+      async function runManualSyncCheck(triggeredByUser = true) {{
+        if (settingsManualSyncButton) {{
+          settingsManualSyncButton.disabled = true;
+          settingsManualSyncButton.textContent = "Checking...";
+        }}
+        const blockedByWifi = uiPreferences.sync_wifi_only && !wifiStatusState.connected;
+        if (blockedByWifi) {{
+          const message = "Connect Wi-Fi first to refresh sync status.";
+          if (settingsManualSyncStatus) {{
+            settingsManualSyncStatus.textContent = message;
+          }}
+          if (triggeredByUser && uiPreferences.sync_notifications) {{
+            setBanner("error", message);
+          }}
+          if (settingsManualSyncButton) {{
+            settingsManualSyncButton.disabled = false;
+            settingsManualSyncButton.textContent = "Sync now";
+          }}
+          return null;
+        }}
+        if (settingsManualSyncStatus) {{
+          settingsManualSyncStatus.textContent = "Checking the latest phone-to-Pi sync state...";
+        }}
+        const state = await refreshDashboard();
+        await refreshWifiStatus();
+        const message = state
+          ? `Sync status refreshed. Last sync: ${{state.sync_status_label || "Awaiting first sync"}}.`
+          : "Could not refresh sync status right now.";
+        if (settingsManualSyncStatus) {{
+          settingsManualSyncStatus.textContent = message;
+        }}
+        if (triggeredByUser && uiPreferences.sync_notifications) {{
+          setBanner(state ? "notice" : "error", message);
+        }}
+        if (settingsManualSyncButton) {{
+          settingsManualSyncButton.disabled = false;
+          settingsManualSyncButton.textContent = "Sync now";
+        }}
+        return state;
+      }}
+
+      async function refreshClockFromPi(triggeredByUser = false) {{
+        try {{
+          const response = await fetch("/time", {{
+            headers: {{ "Accept": "application/json" }},
+            cache: "no-store",
+          }});
+          if (!response.ok) {{
+            throw new Error("Clock refresh failed.");
+          }}
+          const payload = await response.json();
+          currentTimeBaseMs = Number(payload.server_time_ms || Date.now());
+          currentTimeBaseClientMs = Date.now();
+          updateSettingsClock();
+          if (triggeredByUser) {{
+            setBanner("notice", "Clock refreshed from the Raspberry Pi.");
+          }}
+        }} catch (_error) {{
+          if (triggeredByUser) {{
+            setBanner("error", "Could not refresh the Raspberry Pi clock.");
+          }}
+        }}
+      }}
+
       function startPreviewLoop(intervalMs) {{
         stopPreviewLoop();
         previewTimer = window.setInterval(() => {{
@@ -8563,11 +9470,22 @@ def home(request: Request) -> HTMLResponse:
             cache: "no-store",
           }});
           if (!response.ok) {{
-            return;
+            return null;
           }}
           const state = await response.json();
+          if (settingsLastSyncValue) settingsLastSyncValue.textContent = state.sync_status_label || "";
+          if (settingsSyncSummary) settingsSyncSummary.textContent = state.sync_status_label || "";
+          if (settingsPairedCount) settingsPairedCount.textContent = String(state.paired_phone_count || 0);
+          if (settingsExpiryCount) settingsExpiryCount.textContent = String((Number(state.expired_count || 0) + Number(state.expiring_count || 0)) || 0);
+          if (settingsLowStockCount) settingsLowStockCount.textContent = String(state.low_stock_count || 0);
+          if (settingsSyncChip) {{
+            const syncTone = Number(state.paired_phone_count || 0) > 0 ? "ok" : "warn";
+            settingsSyncChip.className = `pill ${{syncTone}}`;
+            settingsSyncChip.textContent = Number(state.paired_phone_count || 0) > 0 ? "Paired" : "Pair phone";
+          }}
           if (state.state_version === lastStateVersion) {{
-            return;
+            maybeShowOperationalReminder(state);
+            return state;
           }}
           lastStateVersion = state.state_version || "";
           document.body.dataset.stateVersion = lastStateVersion;
@@ -8644,6 +9562,7 @@ def home(request: Request) -> HTMLResponse:
             coverageProgress.style.width = `${{state.readiness_percent || 0}}%`;
             coverageProgress.style.setProperty("--score-color", readinessColorForPercent(Number(state.readiness_percent || 0)));
           }}
+          maybeShowOperationalReminder(state);
           applyInventoryFilters();
           if (pendingInventoryFocusItemId && activeScreen === "inventory") {{
             window.setTimeout(() => {{
@@ -8653,7 +9572,9 @@ def home(request: Request) -> HTMLResponse:
           if (keyboardTarget && !document.contains(keyboardTarget)) {{
             dismissTouchKeyboard();
           }}
+          return state;
         }} catch (_error) {{
+          return null;
         }}
       }}
 
@@ -8945,7 +9866,9 @@ def home(request: Request) -> HTMLResponse:
         }});
       }}
       if (powerButton) {{
-        powerButton.addEventListener("click", openShutdownModal);
+        powerButton.addEventListener("click", () => {{
+          openShutdownModal("shutdown");
+        }});
       }}
       if (shutdownCancelButton) {{
         shutdownCancelButton.addEventListener("click", closeShutdownModal);
@@ -8953,6 +9876,26 @@ def home(request: Request) -> HTMLResponse:
       if (shutdownConfirmButton) {{
         shutdownConfirmButton.addEventListener("click", () => {{
           void requestShutdown();
+        }});
+      }}
+      if (settingsRestartButton) {{
+        settingsRestartButton.addEventListener("click", () => {{
+          openShutdownModal("restart");
+        }});
+      }}
+      if (settingsShutdownButton) {{
+        settingsShutdownButton.addEventListener("click", () => {{
+          openShutdownModal("shutdown");
+        }});
+      }}
+      if (settingsManualSyncButton) {{
+        settingsManualSyncButton.addEventListener("click", () => {{
+          void runManualSyncCheck(true);
+        }});
+      }}
+      if (settingsRefreshClockButton) {{
+        settingsRefreshClockButton.addEventListener("click", () => {{
+          void refreshClockFromPi(true);
         }});
       }}
       if (shutdownModal) {{
@@ -9125,11 +10068,18 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       initializeTheme();
+      applyUiPreferences(initialUiPreferences);
       initializeUiScale();
       initializeScreenState();
       applyInventoryFilters();
       applyWifiStatusPayload(wifiStatusState, {{ focusPassword: false }});
+      updatePowerDialogCopy();
+      updateSettingsClock();
+      window.setInterval(updateSettingsClock, 1000);
       hideKioskCursor();
+      if (uiPreferences.sync_on_startup) {{
+        void runManualSyncCheck(false);
+      }}
       void refreshWifiStatus();
       window.addEventListener("resize", syncTouchKeyboardOffset);
       document.addEventListener("mousemove", (event) => {{
@@ -9173,7 +10123,7 @@ def home(request: Request) -> HTMLResponse:
         }}
       }});
 
-      window.setInterval(refreshDashboard, refreshIntervalMs);
+      syncDashboardRefreshLoop();
       window.setInterval(refreshWifiStatus, refreshIntervalMs);
       if (document.body.dataset.openScan === "1") {{
         openScanModal();
