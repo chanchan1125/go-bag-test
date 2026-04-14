@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Pi Hub | Network Management</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "surface-tint": "#ffb693",
+                    "secondary-fixed-dim": "#8ccdff",
+                    "surface-dim": "#131314",
+                    "secondary-fixed": "#cae6ff",
+                    "inverse-surface": "#e5e2e3",
+                    "on-primary": "#561f00",
+                    "secondary": "#8ccdff",
+                    "on-tertiary-fixed": "#002204",
+                    "on-secondary": "#00344e",
+                    "secondary-container": "#2899d8",
+                    "surface-container-highest": "#353436",
+                    "outline": "#a98a7d",
+                    "primary-fixed-dim": "#ffb693",
+                    "surface": "#131314",
+                    "on-error-container": "#ffdad6",
+                    "surface-container-high": "#2a2a2b",
+                    "tertiary-fixed-dim": "#78dc77",
+                    "error": "#ffb4ab",
+                    "on-tertiary-container": "#003a0b",
+                    "on-surface": "#e5e2e3",
+                    "on-primary-fixed": "#351000",
+                    "on-primary-container": "#572000",
+                    "primary-container": "#ff6b00",
+                    "inverse-primary": "#a04100",
+                    "on-secondary-fixed": "#001e2f",
+                    "tertiary-fixed": "#94f990",
+                    "on-primary-fixed-variant": "#7a3000",
+                    "surface-container-low": "#1b1b1c",
+                    "primary-fixed": "#ffdbcc",
+                    "error-container": "#93000a",
+                    "on-secondary-container": "#002d44",
+                    "surface-bright": "#39393a",
+                    "on-surface-variant": "#e2bfb0",
+                    "surface-container-lowest": "#0e0e0f",
+                    "on-background": "#e5e2e3",
+                    "on-tertiary": "#00390a",
+                    "on-error": "#690005",
+                    "surface-container": "#1f1f20",
+                    "on-tertiary-fixed-variant": "#005313",
+                    "on-secondary-fixed-variant": "#004b6f",
+                    "inverse-on-surface": "#303031",
+                    "tertiary": "#78dc77",
+                    "primary": "#ffb693",
+                    "surface-variant": "#353436",
+                    "outline-variant": "#5a4136",
+                    "tertiary-container": "#4aad4e",
+                    "background": "#131314"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "fontFamily": {
+                    "headline": ["Space Grotesk"],
+                    "body": ["Inter"],
+                    "label": ["Inter"]
+            }
+          },
+        }
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #131314;
+            color: #e5e2e3;
+            overflow: hidden;
+        }
+        .headline-font {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+    </style>
+</head>
+<body class="flex h-screen w-screen selection:bg-primary-container selection:text-on-primary-container">
+<!-- SideNavBar (Shared Component) -->
+<aside class="fixed left-0 top-0 h-full w-20 border-r border-zinc-800/20 bg-[#131314] flex flex-col items-center py-4 gap-6 z-50">
+<div class="mb-4">
+<span class="text-orange-500 font-black headline-font text-xl">π</span>
+</div>
+<!-- Network Tab (Active) -->
+<nav class="flex flex-col items-center gap-6 w-full">
+<button class="w-full flex flex-col items-center py-3 gap-1 bg-orange-500/10 text-orange-500 border-r-2 border-orange-500 active:bg-orange-900/20 transition-all">
+<span class="material-symbols-outlined" data-icon="wifi">wifi</span>
+<span class="font-['Space_Grotesk'] text-[10px] font-bold uppercase tracking-wider">Network</span>
+</button>
+<button class="w-full flex flex-col items-center py-3 gap-1 text-zinc-500 hover:bg-[#1B1B1C] active:bg-orange-900/20 transition-all">
+<span class="material-symbols-outlined" data-icon="router">router</span>
+<span class="font-['Space_Grotesk'] text-[10px] font-bold uppercase tracking-wider">Devices</span>
+</button>
+<button class="w-full flex flex-col items-center py-3 gap-1 text-zinc-500 hover:bg-[#1B1B1C] active:bg-orange-900/20 transition-all">
+<span class="material-symbols-outlined" data-icon="terminal">terminal</span>
+<span class="font-['Space_Grotesk'] text-[10px] font-bold uppercase tracking-wider">Logs</span>
+</button>
+<button class="w-full flex flex-col items-center py-3 gap-1 text-zinc-500 hover:bg-[#1B1B1C] active:bg-orange-900/20 transition-all">
+<span class="material-symbols-outlined" data-icon="security">security</span>
+<span class="font-['Space_Grotesk'] text-[10px] font-bold uppercase tracking-wider">Shield</span>
+</button>
+</nav>
+<div class="mt-auto pb-4">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-outline-variant/10">
+<span class="material-symbols-outlined text-zinc-500 text-sm" data-icon="settings">settings</span>
+</div>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="flex-1 ml-20 h-full flex flex-col relative overflow-hidden">
+<!-- TopAppBar (Shared Component) -->
+<header class="fixed top-0 left-20 right-0 h-14 flex justify-between items-center px-6 z-50 bg-[#1B1B1C] shadow-[0_4px_24px_rgba(255,107,0,0.12)]">
+<div class="flex items-center gap-4">
+<h1 class="font-['Space_Grotesk'] tracking-tight text-xl font-bold text-white uppercase tracking-widest">Pi Hub</h1>
+<div class="h-4 w-px bg-zinc-700/50"></div>
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-tertiary animate-pulse"></span>
+<span class="font-['Space_Grotesk'] text-xs font-bold text-zinc-400 uppercase tracking-tighter">Tactical OS v2.4.1</span>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<button class="w-10 h-10 flex items-center justify-center text-zinc-500 hover:bg-[#2A2A2B] transition-colors rounded-lg active:scale-95 duration-100">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center text-orange-500 hover:bg-[#2A2A2B] transition-colors rounded-lg active:scale-95 duration-100">
+<span class="material-symbols-outlined" data-icon="power_settings_new">power_settings_new</span>
+</button>
+</div>
+</header>
+<!-- Content Area -->
+<div class="mt-14 p-6 grid grid-cols-12 gap-6 h-[calc(100vh-3.5rem)] overflow-y-auto">
+<!-- Section 1: Currently Connected (Hero Bento) -->
+<section class="col-span-12 lg:col-span-7 space-y-6">
+<div class="bg-surface-container-low rounded-xl p-8 relative overflow-hidden border border-outline-variant/5">
+<!-- Background Decor -->
+<div class="absolute -top-24 -right-24 w-64 h-64 bg-primary/5 rounded-full blur-3xl"></div>
+<div class="relative z-10">
+<div class="flex justify-between items-start mb-10">
+<div>
+<span class="text-xs font-bold uppercase tracking-[0.2em] text-orange-500 mb-2 block headline-font">Currently Connected</span>
+<h2 class="text-4xl font-bold headline-font text-on-surface">Tactical_Node_04</h2>
+<p class="text-zinc-500 font-mono text-sm mt-1">Status: Stable connection maintained for 14h 22m</p>
+</div>
+<div class="bg-surface-container-high p-4 rounded-xl flex items-center gap-3">
+<div class="flex items-end gap-1 h-8">
+<div class="w-1.5 h-3 bg-tertiary rounded-full"></div>
+<div class="w-1.5 h-5 bg-tertiary rounded-full"></div>
+<div class="w-1.5 h-7 bg-tertiary rounded-full"></div>
+<div class="w-1.5 h-8 bg-tertiary rounded-full"></div>
+</div>
+<div class="text-right">
+<div class="text-xl font-bold headline-font text-tertiary">-42 dBm</div>
+<div class="text-[10px] uppercase font-bold text-zinc-500 tracking-widest">Excellent</div>
+</div>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-4 mb-8">
+<div class="bg-surface-container-highest/40 p-4 rounded-lg">
+<span class="text-[10px] text-zinc-500 uppercase font-bold tracking-widest block mb-1">Local IP Address</span>
+<span class="text-lg font-mono font-medium text-secondary">192.168.1.144</span>
+</div>
+<div class="bg-surface-container-highest/40 p-4 rounded-lg">
+<span class="text-[10px] text-zinc-500 uppercase font-bold tracking-widest block mb-1">Data Rate</span>
+<span class="text-lg font-mono font-medium text-on-surface">866.7 Mbps</span>
+</div>
+</div>
+<button class="w-full h-16 bg-gradient-to-r from-error-container to-on-error/20 text-on-error-container rounded-xl flex items-center justify-center gap-3 font-bold headline-font uppercase tracking-widest hover:brightness-110 active:scale-[0.98] transition-all">
+<span class="material-symbols-outlined" data-icon="link_off">link_off</span>
+                            Disconnect from Node
+                        </button>
+</div>
+</div>
+<!-- Section 3: Advanced Details -->
+<div class="bg-surface-container-low rounded-xl p-6 border border-outline-variant/5">
+<h3 class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500 mb-6 headline-font">Advanced Interface Details</h3>
+<div class="grid grid-cols-3 gap-6">
+<div class="space-y-1">
+<span class="text-[10px] text-zinc-500 uppercase font-bold tracking-tighter block">MAC Address</span>
+<span class="font-mono text-sm text-on-surface-variant">B8:27:EB:54:12:AA</span>
+</div>
+<div class="space-y-1">
+<span class="text-[10px] text-zinc-500 uppercase font-bold tracking-tighter block">Gateway</span>
+<span class="font-mono text-sm text-on-surface-variant">192.168.1.1</span>
+</div>
+<div class="space-y-1">
+<span class="text-[10px] text-zinc-500 uppercase font-bold tracking-tighter block">Subnet Mask</span>
+<span class="font-mono text-sm text-on-surface-variant">255.255.255.0</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Section 2: Available Networks -->
+<section class="col-span-12 lg:col-span-5 h-full flex flex-col gap-4">
+<div class="flex items-center justify-between px-2">
+<h3 class="text-xs font-bold uppercase tracking-[0.2em] text-orange-500 headline-font">Available Networks</h3>
+<div class="flex items-center gap-2">
+<span class="text-[10px] font-bold text-zinc-500">SCANNING...</span>
+<span class="material-symbols-outlined text-sm animate-spin text-orange-500" data-icon="sync">sync</span>
+</div>
+</div>
+<div class="flex-1 space-y-3 overflow-y-auto pr-2 custom-scrollbar">
+<!-- Network Item 1 -->
+<div class="bg-surface-container-high rounded-xl p-4 flex items-center justify-between group hover:bg-surface-bright transition-all">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-surface-container-highest flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined" data-icon="wifi">wifi</span>
+</div>
+<div>
+<h4 class="font-bold headline-font text-on-surface">Deep_Field_Secure</h4>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-xs text-zinc-500" data-icon="lock" style="font-variation-settings: 'FILL' 1;">lock</span>
+<span class="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">WPA3-SAE</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="text-right">
+<div class="text-sm font-bold headline-font text-zinc-400">-58 dBm</div>
+</div>
+<button class="h-16 px-8 bg-surface-container-highest text-on-surface rounded-xl font-bold headline-font uppercase tracking-widest hover:bg-primary-container hover:text-on-primary-container transition-all active:scale-95">
+                                Connect
+                            </button>
+</div>
+</div>
+<!-- Network Item 2 -->
+<div class="bg-surface-container-high rounded-xl p-4 flex items-center justify-between group hover:bg-surface-bright transition-all">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-surface-container-highest flex items-center justify-center text-zinc-500">
+<span class="material-symbols-outlined" data-icon="wifi_2_bar">wifi_2_bar</span>
+</div>
+<div>
+<h4 class="font-bold headline-font text-on-surface">Emergency_Mesh_01</h4>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-xs text-zinc-500" data-icon="lock_open">lock_open</span>
+<span class="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">Unsecured</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="text-right">
+<div class="text-sm font-bold headline-font text-zinc-400">-74 dBm</div>
+</div>
+<button class="h-16 px-8 bg-surface-container-highest text-on-surface rounded-xl font-bold headline-font uppercase tracking-widest hover:bg-primary-container hover:text-on-primary-container transition-all active:scale-95">
+                                Connect
+                            </button>
+</div>
+</div>
+<!-- Network Item 3 -->
+<div class="bg-surface-container-high rounded-xl p-4 flex items-center justify-between group hover:bg-surface-bright transition-all">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-surface-container-highest flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined" data-icon="wifi">wifi</span>
+</div>
+<div>
+<h4 class="font-bold headline-font text-on-surface">Sat_Uplink_Primary</h4>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-xs text-zinc-500" data-icon="lock" style="font-variation-settings: 'FILL' 1;">lock</span>
+<span class="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">WPA2 Enterprise</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="text-right">
+<div class="text-sm font-bold headline-font text-zinc-400">-62 dBm</div>
+</div>
+<button class="h-16 px-8 bg-surface-container-highest text-on-surface rounded-xl font-bold headline-font uppercase tracking-widest hover:bg-primary-container hover:text-on-primary-container transition-all active:scale-95">
+                                Connect
+                            </button>
+</div>
+</div>
+<!-- Network Item 4 -->
+<div class="bg-surface-container-high rounded-xl p-4 flex items-center justify-between group hover:bg-surface-bright transition-all opacity-60">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-surface-container-highest flex items-center justify-center text-zinc-700">
+<span class="material-symbols-outlined" data-icon="wifi_1_bar">wifi_1_bar</span>
+</div>
+<div>
+<h4 class="font-bold headline-font text-zinc-500 italic">Hidden Network...</h4>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-xs text-zinc-700" data-icon="lock">lock</span>
+<span class="text-[10px] text-zinc-700 font-bold tracking-widest uppercase">Protected</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="text-right">
+<div class="text-sm font-bold headline-font text-zinc-600">-89 dBm</div>
+</div>
+<button class="h-16 px-8 bg-surface-container-highest text-zinc-600 rounded-xl font-bold headline-font uppercase tracking-widest cursor-not-allowed">
+                                Weak
+                            </button>
+</div>
+</div>
+</div>
+</section>
+</div>
+<!-- Global Status Bar (Bottom) -->
+<footer class="mt-auto h-10 bg-surface-container-lowest border-t border-zinc-800/20 px-6 flex items-center justify-between">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">RF Interference:</span>
+<span class="text-[10px] font-bold text-tertiary">LOW</span>
+</div>
+<div class="w-px h-3 bg-zinc-800"></div>
+<div class="flex items-center gap-2">
+<span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">VPN:</span>
+<span class="text-[10px] font-bold text-orange-500">ACTIVE (WireGuard)</span>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Uptime:</span>
+<span class="text-[10px] font-mono text-on-surface">142:22:18</span>
+</div>
+</footer>
+</main>
+<!-- FAB Overlay (If applicable for "Add Network") -->
+<button class="fixed bottom-14 right-6 w-14 h-14 bg-gradient-to-br from-primary to-primary-container text-on-primary-container rounded-xl shadow-[0_0_20px_rgba(255,107,0,0.3)] flex items-center justify-center active:scale-95 transition-transform">
+<span class="material-symbols-outlined text-3xl" data-icon="add">add</span>
+</button>
+</body></html>

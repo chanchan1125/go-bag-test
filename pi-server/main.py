@@ -6989,12 +6989,10 @@ def home(request: Request) -> HTMLResponse:
     }}
     body.wifi-modal-open.keyboard-open .wifi-dialog {{
       width: min(100vw, 378px);
-      gap: 0;
-      padding: 0;
-      border-top: none;
-      border-top-left-radius: 0;
-      border-top-right-radius: 0;
-      box-shadow: 0 6px 14px var(--shadow);
+      gap: 8px;
+      padding: 10px 8px 0;
+      border-radius: 0 0 16px 16px;
+      box-shadow: 0 12px 24px var(--shadow-strong);
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard {{
       left: 50%;
@@ -7004,47 +7002,57 @@ def home(request: Request) -> HTMLResponse:
       transform: translateX(-50%);
       width: min(calc(100vw - 8px), 378px);
       max-height: calc(100dvh - var(--wifi-keyboard-top, 0px));
-      padding: 0 1px calc(2px + env(safe-area-inset-bottom, 0px));
+      padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+      background: var(--panel-strong);
       border-top: none;
-      border-top-left-radius: 0;
-      border-top-right-radius: 0;
-      box-shadow: 0 8px 16px var(--shadow-strong);
+      border-radius: 0 0 16px 16px;
+      box-shadow: 0 16px 24px var(--shadow-strong);
       overflow: hidden;
     }}
-    body.wifi-modal-open.keyboard-open .touch-keyboard-inner,
+    body.wifi-modal-open.keyboard-open .touch-keyboard-inner {{
+      max-width: none;
+      gap: 3px;
+    }}
     body.wifi-modal-open.keyboard-open .touch-keyboard-row {{
-      gap: 1px;
+      gap: 3px;
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard button {{
-      min-height: 18px;
-      padding: 0 1px;
-      font-size: 0.52rem;
-      border-radius: 5px;
+      min-height: 24px;
+      padding: 0 2px;
+      font-size: 0.62rem;
+      border-radius: 8px;
+      background: var(--panel);
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: none;
+      box-shadow: none;
     }}
     body.wifi-modal-open.keyboard-open .touch-keyboard button.action {{
-      font-size: 0.48rem;
+      font-size: 0.56rem;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+    }}
+    body.wifi-modal-open.keyboard-open .touch-keyboard button.done {{
+      background: linear-gradient(90deg, var(--accent-strong), var(--accent));
+      color: #351000;
+      letter-spacing: 0.16em;
     }}
     body.wifi-modal-open.keyboard-open .wifi-entry-panel {{
       padding-top: 0;
       border-top: none;
     }}
-    body.wifi-modal-open.keyboard-open .wifi-selected-card {{
-      border-left: none;
-      border-right: none;
-      border-top: none;
-      border-radius: 0;
-      padding: 3px 6px;
-    }}
     body.wifi-modal-open.keyboard-open .wifi-password-shell {{
-      gap: 1px;
-      padding: 0 6px;
+      gap: 4px;
+      padding: 0;
     }}
     body.wifi-modal-open.keyboard-open .wifi-password-row {{
-      gap: 2px;
+      gap: 6px;
     }}
     body.wifi-modal-open.keyboard-open .wifi-password-row input,
     body.wifi-modal-open.keyboard-open .wifi-password-toggle {{
-      min-height: 28px;
+      min-height: 42px;
     }}
     body.wifi-modal-open.keyboard-open .wifi-actions {{
       display: none;
@@ -7570,7 +7578,7 @@ def home(request: Request) -> HTMLResponse:
       display: flex;
       align-items: flex-start;
       justify-content: center;
-      padding: 4px;
+      padding: 0 4px 4px;
       background: rgba(5, 8, 6, 0.76);
       backdrop-filter: blur(12px);
       overflow: hidden;
@@ -7579,99 +7587,51 @@ def home(request: Request) -> HTMLResponse:
     .wifi-dialog {{
       width: min(100%, 378px);
       min-height: 0;
-      max-height: calc(100dvh - var(--touch-keyboard-offset, 0px) - 4px);
+      max-height: calc(100dvh - var(--wifi-modal-top, 0px));
       display: grid;
-      grid-template-rows: auto auto auto auto;
-      gap: 5px;
-      border-radius: 14px;
-      border: 1px solid var(--line);
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 8px;
+      border-radius: 0 0 16px 16px;
       background: var(--panel);
-      box-shadow: 0 12px 22px var(--shadow-strong);
+      box-shadow: 0 14px 26px var(--shadow-strong);
       color: var(--ink);
-      padding: 6px;
+      padding: 10px 8px 8px;
       overflow: hidden;
     }}
-    .wifi-dialog-head {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 6px;
-    }}
-    .wifi-dialog-head-main {{
-      min-width: 0;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }}
-    .wifi-dialog-icon {{
-      width: 28px;
-      height: 28px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 8px;
-      background: var(--accent-soft);
-      color: var(--accent);
-      font-size: 0.82rem;
-      line-height: 1;
-    }}
-    .wifi-close-button {{
-      width: 28px !important;
-      min-width: 28px;
-      min-height: 28px !important;
-      padding: 0 !important;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 8px !important;
-      font-size: 0.88rem !important;
-      line-height: 1;
-      flex: 0 0 auto;
-    }}
-    .wifi-dialog-title {{
-      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: 0.84rem;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-    }}
-    .wifi-dialog-note,
     .wifi-network-meta,
-    .wifi-empty-state {{
+    .wifi-empty-state,
+    .wifi-selected-detail,
+    .wifi-selected-signal-note {{
       color: var(--muted);
       line-height: 1.2;
       font-size: 0.7rem;
     }}
     .wifi-dialog .panel-subtitle {{
-      font-size: 0.54rem;
-      letter-spacing: 0.14em;
+      font-size: 0.52rem;
+      letter-spacing: 0.18em;
     }}
     .wifi-status-message {{
       min-height: 1.2em;
-      border-radius: 9px;
-      padding: 5px 7px;
-      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 7px 10px;
       background: var(--panel-muted);
       color: var(--muted);
-      font-size: 0.68rem;
+      font-size: 0.72rem;
       line-height: 1.2;
     }}
     .wifi-status-message.notice {{
       background: var(--success-soft);
       color: var(--success);
-      border-color: transparent;
     }}
     .wifi-status-message.error {{
       background: var(--danger-soft);
       color: var(--danger);
-      border-color: transparent;
     }}
     .wifi-entry-panel {{
       display: grid;
-      gap: 3px;
+      gap: 6px;
       min-height: 0;
-      padding-top: 3px;
-      border-top: 1px solid var(--line);
-      background: var(--panel);
+      background: transparent;
     }}
     .wifi-entry-panel-host {{
       min-height: 0;
@@ -7680,81 +7640,195 @@ def home(request: Request) -> HTMLResponse:
       display: none !important;
     }}
     .wifi-selected-card {{
+      position: relative;
       display: grid;
-      gap: 1px;
-      padding: 4px 6px;
-      border-radius: 10px;
-      border: 1px solid var(--line);
-      background: var(--panel-muted);
+      gap: 10px;
+      padding: 12px 12px 10px 16px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, var(--panel-muted), var(--panel));
+      box-shadow: 0 10px 18px var(--shadow);
+      overflow: hidden;
+    }}
+    .wifi-selected-card-accent {{
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: var(--accent);
+    }}
+    .wifi-selected-card-main {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: start;
+    }}
+    .wifi-selected-copy {{
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }}
+    .wifi-selected-kicker {{
+      font-size: 0.52rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 800;
+      color: var(--accent);
     }}
     .wifi-selected-name {{
       font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-      font-size: 0.82rem;
+      font-size: 1rem;
       font-weight: 800;
       letter-spacing: -0.03em;
       word-break: break-word;
     }}
+    .wifi-selected-detail {{
+      font-size: 0.68rem;
+      line-height: 1.3;
+    }}
+    .wifi-selected-signal {{
+      min-width: 78px;
+      display: grid;
+      gap: 1px;
+      align-content: center;
+      justify-items: end;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: var(--panel-strong);
+      text-align: right;
+    }}
+    .wifi-selected-signal-value {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1rem;
+      font-weight: 800;
+      line-height: 1;
+    }}
+    .wifi-selected-card[data-state="connected"] .wifi-selected-card-accent {{
+      background: var(--success);
+    }}
+    .wifi-selected-card[data-state="connected"] .wifi-selected-kicker {{
+      color: var(--success);
+    }}
+    .wifi-selected-card[data-state="connected"] .wifi-selected-signal {{
+      background: var(--success-soft);
+      color: var(--success);
+    }}
+    .wifi-selected-card[data-state="connecting"] .wifi-selected-signal,
+    .wifi-selected-card[data-state="entry"] .wifi-selected-signal {{
+      background: var(--accent-soft);
+      color: var(--accent);
+    }}
+    .wifi-selected-card[data-state="offline"] .wifi-selected-card-accent {{
+      background: var(--danger);
+    }}
+    .wifi-selected-card[data-state="offline"] .wifi-selected-kicker {{
+      color: var(--danger);
+    }}
     .wifi-password-shell {{
       display: grid;
-      gap: 3px;
+      gap: 4px;
+      padding: 0 2px;
     }}
     .wifi-password-row {{
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
-      gap: 4px;
+      gap: 6px;
       align-items: stretch;
     }}
     .wifi-password-row input {{
       min-width: 0;
-      min-height: 32px;
-      font-size: 0.82rem;
-      padding: 0 8px;
+      min-height: 42px;
+      font-size: 0.92rem;
+      padding: 0 12px;
+      border-radius: 12px;
+      border: none;
+      background: var(--panel-strong);
+      color: var(--ink);
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      letter-spacing: 0.08em;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+    }}
+    .wifi-password-row input::placeholder {{
+      color: var(--muted);
+      letter-spacing: 0.08em;
+    }}
+    .wifi-password-row input:focus {{
+      outline: none;
+      box-shadow: inset 0 0 0 2px rgba(255, 107, 0, 0.26);
     }}
     .wifi-password-toggle {{
-      min-width: 44px;
-      min-height: 32px;
-      padding: 0 6px;
-      font-size: 0.72rem;
+      min-width: 52px;
+      min-height: 42px;
+      padding: 0 10px;
+      font-size: 0.68rem;
+      border-radius: 12px !important;
+      background: var(--panel-muted) !important;
     }}
     .wifi-actions {{
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 4px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
     }}
     .wifi-actions button {{
-      min-height: 34px;
-      padding: 0 8px;
-      font-size: 0.76rem;
+      min-height: 44px;
+      padding: 0 12px;
+      font-size: 0.72rem;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      border-radius: 12px !important;
     }}
     .wifi-network-section {{
       display: grid;
-      gap: 4px;
+      gap: 8px;
       min-height: 0;
-      grid-template-rows: auto auto;
+      grid-template-rows: auto minmax(0, 1fr);
       overflow: hidden;
     }}
     .wifi-network-head {{
       display: flex;
-      align-items: center;
+      align-items: end;
       justify-content: space-between;
+      gap: 8px;
+    }}
+    .wifi-network-title {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 0.98rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+    }}
+    .wifi-network-head-actions {{
+      display: flex;
+      align-items: center;
       gap: 6px;
-      flex-wrap: wrap;
     }}
     .wifi-network-head .micro-chip {{
-      min-height: 20px;
-      padding: 0 6px;
-      font-size: 0.58rem;
+      min-height: 26px;
+      padding: 0 8px;
+      font-size: 0.56rem;
       letter-spacing: 0.08em;
+    }}
+    .wifi-refresh-button {{
+      min-height: 26px !important;
+      padding: 0 10px !important;
+      font-size: 0.58rem !important;
+      border-radius: 10px !important;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-weight: 800;
     }}
     .wifi-network-list {{
       display: grid;
-      gap: 3px;
+      gap: 8px;
       min-height: 0;
       padding-bottom: 2px;
-      max-height: 102px;
+      max-height: 126px;
       overflow-x: hidden;
       overflow-y: auto;
-      padding-right: 2px;
+      padding-right: 1px;
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
       touch-action: pan-y;
@@ -7762,48 +7836,58 @@ def home(request: Request) -> HTMLResponse:
     .wifi-network-button {{
       width: 100%;
       display: grid;
-      gap: 2px;
-      justify-items: start;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
       text-align: left;
-      padding: 5px 7px;
-      border-radius: 10px;
-      border: 1px solid var(--line);
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: none;
       background: var(--panel-muted);
       color: var(--ink);
       cursor: pointer;
       box-shadow: 0 6px 14px var(--shadow);
-      transition: transform 150ms ease, filter 150ms ease, background 150ms ease, border-color 150ms ease;
+      transition: transform 150ms ease, filter 150ms ease, background 150ms ease, color 150ms ease;
     }}
     .wifi-network-button:hover {{
       filter: brightness(0.98);
     }}
-    .wifi-network-name {{
-      font-size: 0.82rem;
-      line-height: 1.12;
-    }}
-    body.keyboard-open .wifi-dialog-note {{
-      display: none;
-    }}
-    body.keyboard-open .wifi-dialog {{
-      grid-template-rows: auto auto auto;
-    }}
-    body.keyboard-open .wifi-network-section {{
-      display: none;
-    }}
-    .wifi-network-button:active {{
-      transform: translateY(1px);
-    }}
-    .wifi-network-button.active {{
-      background: var(--accent-soft);
-      border-color: transparent;
+    .wifi-network-badge {{
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      background: var(--panel-strong);
       color: var(--accent);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
     }}
-    .wifi-network-button.selected {{
-      border-color: var(--accent);
+    .wifi-network-badge.active {{
+      background: var(--success-soft);
+      color: var(--success);
+      box-shadow: none;
+    }}
+    .wifi-network-badge.open {{
+      background: rgba(82, 168, 255, 0.14);
+      color: var(--secondary);
+      box-shadow: none;
+    }}
+    .wifi-network-copy {{
+      min-width: 0;
+      display: grid;
+      gap: 3px;
     }}
     .wifi-network-name {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 0.88rem;
       font-weight: 700;
-      line-height: 1.3;
+      line-height: 1.18;
       word-break: break-word;
     }}
     .wifi-network-meta {{
@@ -7811,12 +7895,51 @@ def home(request: Request) -> HTMLResponse:
       flex-wrap: wrap;
       gap: 6px;
       align-items: center;
+      font-size: 0.62rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }}
+    .wifi-network-signal {{
+      min-width: 48px;
+      display: grid;
+      gap: 2px;
+      justify-items: end;
+      text-align: right;
+      color: var(--muted);
+    }}
+    .wifi-network-signal-value {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 0.86rem;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--ink);
+    }}
+    .wifi-network-signal-note {{
+      font-size: 0.58rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-network-section,
+    .wifi-modal[data-view="connecting"] .wifi-network-section,
+    body.keyboard-open .wifi-network-section {{
+      display: none;
+    }}
+    .wifi-network-button:active {{
+      transform: translateY(1px);
+    }}
+    .wifi-network-button.active {{
+      background: linear-gradient(180deg, var(--success-soft), var(--panel-muted));
+    }}
+    .wifi-network-button.selected {{
+      box-shadow: inset 0 0 0 2px rgba(255, 107, 0, 0.24), 0 6px 14px var(--shadow);
     }}
     .wifi-empty-state {{
-      padding: 14px 12px;
-      border-radius: 12px;
-      border: 1px dashed var(--line);
+      padding: 16px 14px;
+      border-radius: 14px;
       background: var(--panel-muted);
+      text-align: center;
     }}
     .content-grid {{
       display: grid;
@@ -8172,20 +8295,21 @@ def home(request: Request) -> HTMLResponse:
     </div>
     <div class="wifi-modal hidden" id="wifi-modal" aria-hidden="true">
       <section class="wifi-dialog" aria-label="Wi-Fi connection panel">
-        <div class="wifi-status-message hidden" id="wifi-modal-message"></div>
-        <div class="wifi-network-section">
-          <div class="wifi-network-head">
-            <div class="panel-subtitle">Available networks</div>
-            <div class="micro-chip" id="wifi-status-chip">Checking</div>
-          </div>
-          <div class="wifi-network-list" id="wifi-network-list">
-            <div class="wifi-empty-state">Scanning nearby Wi-Fi networks...</div>
-          </div>
-        </div>
         <div class="wifi-entry-panel-host" id="wifi-entry-panel-host">
           <div class="wifi-entry-panel" id="wifi-entry-panel">
-            <div class="wifi-selected-card">
-              <div class="wifi-selected-name" id="wifi-selected-name">Choose a network</div>
+            <div class="wifi-selected-card" id="wifi-selected-card">
+              <div class="wifi-selected-card-accent" aria-hidden="true"></div>
+              <div class="wifi-selected-card-main">
+                <div class="wifi-selected-copy">
+                  <div class="wifi-selected-kicker" id="wifi-selected-kicker">Status: Offline</div>
+                  <div class="wifi-selected-name" id="wifi-selected-name">Choose a network</div>
+                  <div class="wifi-selected-detail" id="wifi-selected-detail">Tap an available network to connect.</div>
+                </div>
+                <div class="wifi-selected-signal">
+                  <div class="wifi-selected-signal-value" id="wifi-selected-signal-value">--</div>
+                  <div class="wifi-selected-signal-note" id="wifi-selected-signal-note">Waiting</div>
+                </div>
+              </div>
             </div>
             <div class="wifi-password-shell hidden" id="wifi-password-shell">
               <div class="panel-subtitle">Password</div>
@@ -8202,10 +8326,25 @@ def home(request: Request) -> HTMLResponse:
                 <button type="button" class="secondary wifi-password-toggle" id="wifi-password-toggle">Show</button>
               </div>
             </div>
-            <div class="wifi-actions">
+            <div class="wifi-actions hidden" id="wifi-hero-actions">
               <button type="button" id="wifi-connect-submit">Connect</button>
-              <button type="button" class="secondary" id="wifi-refresh-button">Refresh</button>
             </div>
+          </div>
+        </div>
+        <div class="wifi-status-message hidden" id="wifi-modal-message"></div>
+        <div class="wifi-network-section">
+          <div class="wifi-network-head">
+            <div>
+              <div class="panel-subtitle">Nearby transmissions</div>
+              <div class="wifi-network-title">Available networks</div>
+            </div>
+            <div class="wifi-network-head-actions">
+              <div class="micro-chip" id="wifi-status-chip">Checking</div>
+              <button type="button" class="secondary wifi-refresh-button" id="wifi-refresh-button">Refresh</button>
+            </div>
+          </div>
+          <div class="wifi-network-list" id="wifi-network-list">
+            <div class="wifi-empty-state">Scanning nearby Wi-Fi networks...</div>
           </div>
         </div>
       </section>
@@ -8312,13 +8451,19 @@ def home(request: Request) -> HTMLResponse:
       const wifiModalMessage = document.getElementById("wifi-modal-message");
       const wifiEntryPanelHost = document.getElementById("wifi-entry-panel-host");
       const wifiEntryPanel = document.getElementById("wifi-entry-panel");
+      const wifiSelectedCard = document.getElementById("wifi-selected-card");
+      const wifiSelectedKicker = document.getElementById("wifi-selected-kicker");
       const wifiSelectedName = document.getElementById("wifi-selected-name");
+      const wifiSelectedDetail = document.getElementById("wifi-selected-detail");
+      const wifiSelectedSignalValue = document.getElementById("wifi-selected-signal-value");
+      const wifiSelectedSignalNote = document.getElementById("wifi-selected-signal-note");
       const wifiPasswordShell = document.getElementById("wifi-password-shell");
       const wifiPasswordInput = document.getElementById("wifi-password-input");
       const wifiPasswordToggle = document.getElementById("wifi-password-toggle");
       const wifiPasswordRow = wifiPasswordInput instanceof HTMLElement ? wifiPasswordInput.closest(".wifi-password-row") : null;
       const wifiCloseButton = document.getElementById("wifi-close-button");
       const wifiConnectButton = document.getElementById("wifi-connect-submit");
+      const wifiHeroActions = document.getElementById("wifi-hero-actions");
       const wifiRefreshButton = document.getElementById("wifi-refresh-button");
       const wifiNetworkList = document.getElementById("wifi-network-list");
       const wifiStatusChip = document.getElementById("wifi-status-chip");
@@ -8592,6 +8737,126 @@ def home(request: Request) -> HTMLResponse:
         return !!(network && network.active && wifiStatusState.connected);
       }}
 
+      function normalizeWifiSignal(rawSignal) {{
+        const signal = Number(rawSignal || 0);
+        if (!Number.isFinite(signal)) {{
+          return 0;
+        }}
+        return Math.min(Math.max(Math.round(signal), 0), 100);
+      }}
+
+      function wifiSignalDescriptor(rawSignal) {{
+        const signal = normalizeWifiSignal(rawSignal);
+        if (signal >= 80) return "Excellent";
+        if (signal >= 65) return "Strong";
+        if (signal >= 45) return "Fair";
+        if (signal > 0) return "Weak";
+        return "Waiting";
+      }}
+
+      function wifiSignalValueLabel(rawSignal) {{
+        const signal = normalizeWifiSignal(rawSignal);
+        return signal > 0 ? `${{signal}}%` : "--";
+      }}
+
+      function wifiSecurityLabel(network) {{
+        if (!network || typeof network !== "object") {{
+          return "Unavailable";
+        }}
+        const security = String(network.security || "").trim();
+        if (!network.requires_password) {{
+          return security && security.toLowerCase() !== "open" ? security : "Open access";
+        }}
+        return security || "Secured";
+      }}
+
+      function wifiNetworkBadgeLabel(network) {{
+        if (!network || typeof network !== "object") {{
+          return "WI";
+        }}
+        if (network.active) {{
+          return "LIVE";
+        }}
+        return network.requires_password ? "LOCK" : "OPEN";
+      }}
+
+      function currentWifiModalView() {{
+        if (wifiConnecting && wifiBusyAction === "connect") {{
+          return "connecting";
+        }}
+        if (selectedWifiUsesDisconnectAction()) {{
+          return "connected";
+        }}
+        if (wifiSelectedNetworkRequiresPassword) {{
+          return "entry";
+        }}
+        return "browse";
+      }}
+
+      function updateWifiSelectedCard() {{
+        if (
+          !wifiSelectedCard ||
+          !wifiSelectedKicker ||
+          !wifiSelectedName ||
+          !wifiSelectedDetail ||
+          !wifiSelectedSignalValue ||
+          !wifiSelectedSignalNote
+        ) {{
+          return;
+        }}
+        const selectedNetwork = selectedWifiNetwork();
+        const activeNetwork = Array.isArray(wifiStatusState.networks)
+          ? wifiStatusState.networks.find((network) => network && network.active) || null
+          : null;
+        const showDisconnect = !!(selectedNetwork && selectedNetwork.active && wifiStatusState.connected);
+        const displayNetwork = selectedNetwork || activeNetwork || null;
+        const selectedName = String(wifiSelectedNetworkSsid || wifiStatusState.ssid || "").trim();
+        const networkName = displayNetwork && displayNetwork.ssid ? String(displayNetwork.ssid).trim() : selectedName || "Choose a network";
+        const securityLabel = displayNetwork ? wifiSecurityLabel(displayNetwork) : "";
+        let state = "offline";
+        let kicker = wifiStatusState.connected ? "Current connection" : "Status: Offline";
+        let detail = displayNetwork
+          ? `${{securityLabel}} network. Choose another signal below to switch.`
+          : "Tap an available network to connect.";
+        let signalValue = wifiSignalValueLabel(displayNetwork ? displayNetwork.signal : wifiStatusState.signal);
+        let signalNote = wifiSignalDescriptor(displayNetwork ? displayNetwork.signal : wifiStatusState.signal);
+        if (wifiConnecting && wifiBusyAction === "connect") {{
+          state = "connecting";
+          kicker = "Connecting to network";
+          detail = selectedName ? `Trying to join ${{selectedName}}.` : "Starting Wi-Fi connection.";
+          signalNote = "Working";
+        }} else if (wifiSelectedNetworkRequiresPassword && selectedNetwork) {{
+          state = "entry";
+          kicker = "Connecting to network";
+          detail = `${{wifiSecurityLabel(selectedNetwork)}}. Enter the password below to continue.`;
+          signalValue = wifiSignalValueLabel(selectedNetwork.signal);
+          signalNote = wifiSignalDescriptor(selectedNetwork.signal);
+        }} else if (showDisconnect) {{
+          state = "connected";
+          kicker = "Currently connected";
+          detail = `${{wifiSecurityLabel(selectedNetwork)}}. Disconnect only if you want to leave this network.`;
+          signalValue = wifiSignalValueLabel(selectedNetwork.signal);
+          signalNote = wifiSignalDescriptor(selectedNetwork.signal);
+        }} else if (selectedNetwork) {{
+          detail = wifiSelectedNetworkRequiresPassword
+            ? `${{wifiSecurityLabel(selectedNetwork)}}. Enter the password below to connect.`
+            : selectedNetwork.requires_password
+              ? `${{wifiSecurityLabel(selectedNetwork)}}. Tap the network again when you're ready to reconnect.`
+              : `${{wifiSecurityLabel(selectedNetwork)}}. Tap the network to start connecting.`;
+          signalValue = wifiSignalValueLabel(selectedNetwork.signal);
+          signalNote = wifiSignalDescriptor(selectedNetwork.signal);
+        }}
+        wifiSelectedCard.dataset.state = state;
+        wifiSelectedKicker.textContent = kicker;
+        wifiSelectedName.textContent = networkName;
+        wifiSelectedDetail.textContent = detail;
+        wifiSelectedSignalValue.textContent = signalValue;
+        wifiSelectedSignalNote.textContent = signalNote;
+        if (wifiModal) {{
+          wifiModal.dataset.view = currentWifiModalView();
+        }}
+      }}
+
       function updateSettingsWifiSummary() {{
         if (!settingsWifiSummary) {{
           return;
@@ -8603,33 +8868,39 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function updateWifiActionButtons() {{
-        if (!wifiConnectButton) {{
-          return;
-        }}
         const selectedNetwork = selectedWifiNetwork();
         const selectedName = String(wifiSelectedNetworkSsid || "").trim();
         const showDisconnect = !!(selectedNetwork && selectedNetwork.active && wifiStatusState.connected);
         const busyAction = wifiBusyAction || (showDisconnect ? "disconnect" : "connect");
         const requiresPassword = !!(selectedNetwork && selectedNetwork.requires_password && !showDisconnect);
         const passwordValue = String(wifiPasswordInput && wifiPasswordInput.value ? wifiPasswordInput.value : "").trim();
-        wifiConnectButton.textContent = wifiConnecting
-          ? busyAction === "disconnect"
-            ? "Disconnecting..."
-            : "Connecting..."
-          : showDisconnect
-            ? "Disconnect"
-            : "Connect";
-        wifiConnectButton.classList.toggle("secondary", showDisconnect);
-        wifiConnectButton.classList.toggle("danger", showDisconnect);
-        wifiConnectButton.disabled =
-          wifiConnecting ||
-          (showDisconnect
-            ? !wifiStatusState.connected
-            : !selectedName || (requiresPassword && !passwordValue));
+        const showHeroActions = showDisconnect || (wifiConnecting && busyAction === "disconnect");
+        if (wifiHeroActions) {{
+          wifiHeroActions.classList.toggle("hidden", !showHeroActions);
+        }}
+        if (wifiConnectButton) {{
+          wifiConnectButton.textContent = wifiConnecting
+            ? busyAction === "disconnect"
+              ? "Disconnecting..."
+              : "Connecting..."
+            : showDisconnect
+              ? "Disconnect"
+              : "Connect";
+          wifiConnectButton.classList.toggle("secondary", showDisconnect);
+          wifiConnectButton.classList.toggle("danger", showDisconnect);
+          wifiConnectButton.disabled =
+            wifiConnecting ||
+            (showDisconnect
+              ? !wifiStatusState.connected
+              : !selectedName || (requiresPassword && !passwordValue));
+        }}
         if (wifiRefreshButton) {{
+          const showRefresh = !showDisconnect && !wifiSelectedNetworkRequiresPassword && !(wifiConnecting && busyAction === "connect");
+          wifiRefreshButton.classList.toggle("hidden", !showRefresh);
           wifiRefreshButton.textContent = wifiRefreshing ? "Refreshing..." : "Refresh";
           wifiRefreshButton.disabled = wifiConnecting || wifiRefreshing;
         }}
+        updateWifiSelectedCard();
       }}
 
       function renderWifiNetworks(networks) {{
@@ -8647,11 +8918,10 @@ def home(request: Request) -> HTMLResponse:
           .map((network) => {{
             const activeClass = network.active ? " active" : "";
             const selectedClass = network.ssid === wifiSelectedNetworkSsid ? " selected" : "";
-            const securityLabel = network.requires_password ? "Secured" : "Open";
-            const activeLabel = network.active ? "Connected" : "";
-            const metaParts = [securityLabel, `${{Number(network.signal || 0)}}% signal`];
-            if (activeLabel) {{
-              metaParts.unshift(activeLabel);
+            const badgeClass = network.active ? " active" : network.requires_password ? "" : " open";
+            const metaParts = [wifiSecurityLabel(network)];
+            if (network.active) {{
+              metaParts.unshift("Connected");
             }}
             return `
               <button
@@ -8659,8 +8929,15 @@ def home(request: Request) -> HTMLResponse:
                 class="wifi-network-button${{activeClass}}${{selectedClass}}"
                 data-wifi-ssid="${{escapeHtml(network.ssid)}}"
                 data-wifi-secured="${{network.requires_password ? "1" : "0"}}">
-                <span class="wifi-network-name">${{escapeHtml(network.ssid)}}</span>
-                <span class="wifi-network-meta">${{escapeHtml(metaParts.join(" | "))}}</span>
+                <span class="wifi-network-badge${{badgeClass}}">${{escapeHtml(wifiNetworkBadgeLabel(network))}}</span>
+                <span class="wifi-network-copy">
+                  <span class="wifi-network-name">${{escapeHtml(network.ssid)}}</span>
+                  <span class="wifi-network-meta">${{escapeHtml(metaParts.join(" / "))}}</span>
+                </span>
+                <span class="wifi-network-signal">
+                  <span class="wifi-network-signal-value">${{escapeHtml(wifiSignalValueLabel(network.signal))}}</span>
+                  <span class="wifi-network-signal-note">${{escapeHtml(wifiSignalDescriptor(network.signal))}}</span>
+                </span>
               </button>
             `;
           }})
@@ -8710,7 +8987,12 @@ def home(request: Request) -> HTMLResponse:
         wifiSelectedNetworkSsid = nextSsid;
         const network = selectedWifiNetwork();
         const selectedNetworkIsActive = !!(network && network.active && wifiStatusState.connected);
-        wifiSelectedNetworkRequiresPassword = !!(network && network.requires_password && !selectedNetworkIsActive);
+        wifiSelectedNetworkRequiresPassword = !!(
+          options.showPasswordEntry !== false &&
+          network &&
+          network.requires_password &&
+          !selectedNetworkIsActive
+        );
         if (wifiSelectedName) {{
           wifiSelectedName.textContent = nextSsid || "Choose a network";
         }}
@@ -8762,6 +9044,8 @@ def home(request: Request) -> HTMLResponse:
             selectWifiNetwork(preferredSsid, {{
               focusPassword: options.focusPassword === true,
               clearPassword: options.clearPassword,
+              showPasswordEntry:
+                options.showPasswordEntry !== undefined ? options.showPasswordEntry : wifiSelectedNetworkRequiresPassword,
             }});
           }} else {{
             clearWifiSelection({{ clearPassword: options.clearPassword }});
@@ -8798,7 +9082,10 @@ def home(request: Request) -> HTMLResponse:
             return;
           }}
           const payload = await response.json();
-          applyWifiStatusPayload(payload, {{ preserveSelection: wifiModalIsOpen() }});
+          applyWifiStatusPayload(payload, {{
+            preserveSelection: wifiModalIsOpen(),
+            showPasswordEntry: wifiSelectedNetworkRequiresPassword,
+          }});
           syncDashboardRefreshLoop();
         }} catch (_error) {{
         }}
@@ -8821,6 +9108,8 @@ def home(request: Request) -> HTMLResponse:
             focusPassword: options.focusPassword === true,
             preserveSelection: options.preserveSelection === true,
             clearPassword: options.clearPassword,
+            showPasswordEntry:
+              options.showPasswordEntry !== undefined ? options.showPasswordEntry : wifiSelectedNetworkRequiresPassword,
           }});
           if (wifiModalIsOpen()) {{
             setWifiModalMessage(payload.message || "", payload.ok === false ? "error" : "");
@@ -8848,6 +9137,7 @@ def home(request: Request) -> HTMLResponse:
           preferredSsid: wifiStatusState.connected ? wifiStatusState.ssid : "",
           focusPassword: false,
           preserveSelection: false,
+          showPasswordEntry: false,
         }});
         syncModalShellState();
         void loadWifiNetworks({{
@@ -8855,6 +9145,7 @@ def home(request: Request) -> HTMLResponse:
           focusPassword: false,
           preserveSelection: false,
           clearPassword: true,
+          showPasswordEntry: false,
         }});
       }}
 
@@ -8892,6 +9183,7 @@ def home(request: Request) -> HTMLResponse:
             focusPassword: false,
             preserveSelection: true,
             clearPassword: false,
+            showPasswordEntry: false,
           }});
           if (!response.ok || payload.ok === false) {{
             throw new Error(payload.message || "Wi-Fi disconnect failed.");
