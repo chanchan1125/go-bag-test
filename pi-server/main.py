@@ -5471,6 +5471,7 @@ def home(request: Request) -> HTMLResponse:
     }}
     html {{
       --touch-keyboard-offset: 0px;
+      --wifi-keyboard-top: 0px;
       --bottom-nav-reveal: 0;
       --ui-font-scale: 1;
       --ui-density-scale: 1;
@@ -5483,6 +5484,7 @@ def home(request: Request) -> HTMLResponse:
       --bottom-nav-height: calc(82px * var(--ui-density-scale));
       --topbar-padding: calc(8px * var(--ui-density-scale)) calc(10px * var(--ui-density-scale));
       --topbar-gap: calc(10px * var(--ui-density-scale));
+      --wifi-modal-top-gap: calc(var(--header-chip-height) + (2 * 6px));
       --brand-gap: calc(8px * var(--ui-density-scale));
       --brand-mark-size: calc(34px * var(--ui-density-scale));
       --brand-mark-radius: calc(8px * var(--ui-density-scale));
@@ -6979,6 +6981,38 @@ def home(request: Request) -> HTMLResponse:
       border-top: 1px solid var(--line);
       box-shadow: 0 -6px 16px var(--shadow-strong);
       backdrop-filter: blur(4px);
+    }}
+    body.wifi-modal-open.keyboard-open .wifi-modal {{
+      align-items: flex-start;
+      padding-top: calc(var(--wifi-modal-top-gap) + env(safe-area-inset-top, 0px));
+      padding-bottom: 4px;
+    }}
+    body.wifi-modal-open.keyboard-open .touch-keyboard {{
+      left: 50%;
+      right: auto;
+      bottom: auto;
+      top: var(--wifi-keyboard-top, 0px);
+      transform: translateX(-50%);
+      width: min(calc(100vw - 8px), 378px);
+      max-height: calc(100dvh - var(--wifi-keyboard-top, 0px) - 2px);
+      padding: 1px 2px calc(2px + env(safe-area-inset-bottom, 0px));
+      border-top-left-radius: 10px;
+      border-top-right-radius: 10px;
+      box-shadow: 0 -2px 10px var(--shadow), 0 8px 18px var(--shadow-strong);
+      overflow: hidden;
+    }}
+    body.wifi-modal-open.keyboard-open .touch-keyboard-inner,
+    body.wifi-modal-open.keyboard-open .touch-keyboard-row {{
+      gap: 1px;
+    }}
+    body.wifi-modal-open.keyboard-open .touch-keyboard button {{
+      min-height: 18px;
+      padding: 0 1px;
+      font-size: 0.52rem;
+      border-radius: 5px;
+    }}
+    body.wifi-modal-open.keyboard-open .touch-keyboard button.action {{
+      font-size: 0.48rem;
     }}
     .touch-keyboard-dock {{
       max-width: 420px;
@@ -9248,7 +9282,16 @@ def home(request: Request) -> HTMLResponse:
           touchKeyboard && !touchKeyboard.classList.contains("hidden")
             ? Math.ceil(touchKeyboard.getBoundingClientRect().height)
             : 0;
+        const wifiKeyboardTop =
+          touchKeyboard &&
+          !touchKeyboard.classList.contains("hidden") &&
+          wifiModalIsOpen() &&
+          keyboardTarget === wifiPasswordInput &&
+          wifiEntryPanelHost
+            ? Math.ceil(wifiEntryPanelHost.getBoundingClientRect().bottom + 4)
+            : 0;
         documentRoot.style.setProperty("--touch-keyboard-offset", `${{Math.max(keyboardHeight, 0)}}px`);
+        documentRoot.style.setProperty("--wifi-keyboard-top", `${{Math.max(wifiKeyboardTop, 0)}}px`);
       }}
 
       function applyUiScale(scale, persist = true) {{
