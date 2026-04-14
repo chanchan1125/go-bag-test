@@ -7716,13 +7716,10 @@ def home(request: Request) -> HTMLResponse:
       display: none;
     }}
     body.keyboard-open .wifi-dialog {{
-      grid-template-rows: auto auto 0fr auto;
+      grid-template-rows: auto auto auto;
     }}
     body.keyboard-open .wifi-network-section {{
-      opacity: 0;
-      pointer-events: none;
-      min-height: 0;
-      overflow: hidden;
+      display: none;
     }}
     .wifi-network-button:active {{
       transform: translateY(1px);
@@ -9252,16 +9249,6 @@ def home(request: Request) -> HTMLResponse:
             ? Math.ceil(touchKeyboard.getBoundingClientRect().height)
             : 0;
         documentRoot.style.setProperty("--touch-keyboard-offset", `${{Math.max(keyboardHeight, 0)}}px`);
-        if (keyboardTarget === wifiPasswordInput && wifiPasswordInput) {{
-          window.requestAnimationFrame(() => {{
-            if (keyboardTarget === wifiPasswordInput) {{
-              if (wifiEntryPanel) {{
-                wifiEntryPanel.scrollIntoView({{ block: "end", inline: "nearest", behavior: "auto" }});
-              }}
-              wifiPasswordInput.scrollIntoView({{ block: "center", inline: "nearest", behavior: "auto" }});
-            }}
-          }});
-        }}
       }}
 
       function applyUiScale(scale, persist = true) {{
@@ -9476,29 +9463,13 @@ def home(request: Request) -> HTMLResponse:
         if (!wifiEntryPanel || !wifiEntryPanelHost || !touchKeyboardDock || !touchKeyboard) {{
           return;
         }}
-        const shouldDockWifiEntryPanel =
-          wifiModalIsOpen() &&
-          keyboardTarget === wifiPasswordInput &&
-          document.body.classList.contains("keyboard-open") &&
-          !touchKeyboard.classList.contains("hidden");
-        if (shouldDockWifiEntryPanel) {{
-          if (wifiEntryPanel.parentElement !== touchKeyboardDock) {{
-            touchKeyboardDock.appendChild(wifiEntryPanel);
-          }}
-          touchKeyboardDock.classList.remove("hidden");
-          touchKeyboardDock.setAttribute("aria-hidden", "false");
-          wifiEntryPanelHost.classList.add("hidden");
-          touchKeyboard.classList.add("wifi-entry-docked");
-        }} else {{
-          if (wifiEntryPanel.parentElement !== wifiEntryPanelHost) {{
-            wifiEntryPanelHost.appendChild(wifiEntryPanel);
-          }}
-          touchKeyboardDock.classList.add("hidden");
-          touchKeyboardDock.setAttribute("aria-hidden", "true");
-          wifiEntryPanelHost.classList.remove("hidden");
-          touchKeyboard.classList.remove("wifi-entry-docked");
+        if (wifiEntryPanel.parentElement !== wifiEntryPanelHost) {{
+          wifiEntryPanelHost.appendChild(wifiEntryPanel);
         }}
-        window.requestAnimationFrame(syncTouchKeyboardOffset);
+        touchKeyboardDock.classList.add("hidden");
+        touchKeyboardDock.setAttribute("aria-hidden", "true");
+        wifiEntryPanelHost.classList.remove("hidden");
+        touchKeyboard.classList.remove("wifi-entry-docked");
       }}
 
       function updateTouchKeyboard() {{
@@ -9541,7 +9512,7 @@ def home(request: Request) -> HTMLResponse:
         window.requestAnimationFrame(syncTouchKeyboardOffset);
         window.setTimeout(syncTouchKeyboardOffset, 40);
         window.setTimeout(() => {{
-          if (keyboardTarget === target) {{
+          if (keyboardTarget === target && !(target === wifiPasswordInput && wifiModalIsOpen())) {{
             target.scrollIntoView({{ block: "center", inline: "nearest", behavior: "auto" }});
           }}
         }}, 80);
