@@ -4368,8 +4368,6 @@ def render_wifi_inline_keyboard_html() -> str:
         <button type="button" data-wifi-key="@">@</button>
         <button type="button" class="action space" data-wifi-keyboard-action="space">Space</button>
         <button type="button" data-wifi-key=".">.</button>
-      </div>
-      <div class="wifi-inline-keyboard-footer">
         <button type="button" class="connect" data-wifi-keyboard-action="connect" id="wifi-inline-connect-button">Connect</button>
       </div>
     </div>
@@ -8065,15 +8063,15 @@ def home(request: Request) -> HTMLResponse:
     }}
     .wifi-inline-keyboard {{
       display: grid;
-      gap: 8px;
-      padding: 12px;
+      gap: 4px;
+      padding: 10px;
       border-radius: 18px;
       background: linear-gradient(180deg, var(--panel-strong), var(--panel));
       box-shadow: 0 12px 22px var(--shadow);
     }}
     .wifi-inline-keyboard-row {{
       display: grid;
-      gap: 6px;
+      gap: 3px;
     }}
     .wifi-inline-keyboard-row.ten {{
       grid-template-columns: repeat(10, minmax(0, 1fr));
@@ -8085,18 +8083,14 @@ def home(request: Request) -> HTMLResponse:
       grid-template-columns: 1.35fr repeat(7, minmax(0, 1fr)) 1.35fr;
     }}
     .wifi-inline-keyboard-row.bottom {{
-      grid-template-columns: 1fr minmax(0, 3.5fr) 1fr;
+      grid-template-columns: 0.9fr minmax(0, 3.25fr) 0.9fr 1.95fr;
     }}
     .wifi-inline-keyboard-spacer {{
       display: block;
     }}
-    .wifi-inline-keyboard-footer {{
-      display: grid;
-      padding-top: 2px;
-    }}
     .wifi-inline-keyboard button {{
       min-height: 38px;
-      padding: 0 4px;
+      padding: 0 3px;
       border: none;
       border-radius: 12px;
       background: var(--panel);

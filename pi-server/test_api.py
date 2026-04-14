@@ -438,7 +438,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn("const highlightedScreen = activeScreen === \"wifi\" ? lastPrimaryScreen || \"dashboard\" : activeScreen;", body)
         self.assertIn("return !!wifiModal && activeScreen === \"wifi\";", body)
         self.assertIn("documentRoot.classList.remove(\"wifi-modal-open\");", body)
-        self.assertIn("wifi-inline-keyboard-footer", body)
+        self.assertIn("grid-template-columns: 0.9fr minmax(0, 3.25fr) 0.9fr 1.95fr;", body)
         self.assertIn("const wifiPasswordRow = wifiPasswordInput instanceof HTMLElement ? wifiPasswordInput.closest(\".wifi-password-row\") : null;", body)
         self.assertIn("target.closest(\"#wifi-modal\")", body)
         self.assertNotIn("touchKeyboardDock.appendChild(wifiEntryPanel)", body)
