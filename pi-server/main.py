@@ -4350,6 +4350,18 @@ def render_wifi_inline_keyboard_html() -> str:
     return """
     <div class="wifi-inline-keyboard hidden" id="wifi-inline-keyboard" aria-label="Wi-Fi password keyboard">
       <div class="wifi-inline-keyboard-row ten">
+        <button type="button" data-wifi-key="1">1</button>
+        <button type="button" data-wifi-key="2">2</button>
+        <button type="button" data-wifi-key="3">3</button>
+        <button type="button" data-wifi-key="4">4</button>
+        <button type="button" data-wifi-key="5">5</button>
+        <button type="button" data-wifi-key="6">6</button>
+        <button type="button" data-wifi-key="7">7</button>
+        <button type="button" data-wifi-key="8">8</button>
+        <button type="button" data-wifi-key="9">9</button>
+        <button type="button" data-wifi-key="0">0</button>
+      </div>
+      <div class="wifi-inline-keyboard-row ten">
         <button type="button" data-wifi-key="q">Q</button>
         <button type="button" data-wifi-key="w">W</button>
         <button type="button" data-wifi-key="e">E</button>
