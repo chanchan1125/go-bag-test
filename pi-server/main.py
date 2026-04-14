@@ -1847,7 +1847,7 @@ def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_sup
         "sudo is unavailable",
     )
     if any(marker in lowered for marker in helper_setup_markers):
-        return "Wi-Fi setup requires Raspberry Pi admin setup. Re-run pi-server/install.sh, then try again."
+        return "Wi-Fi admin setup is incomplete on this Raspberry Pi. Ask an admin to rerun pi-server/install.sh, then try again."
     permission_markers = (
         "insufficient privileges",
         "not authorized",
@@ -1859,7 +1859,7 @@ def normalize_wifi_connect_error_message(detail: str, *, ssid: str, password_sup
         "wifi helper",
     )
     if any(marker in lowered for marker in permission_markers):
-        return "Wi-Fi save is blocked by Raspberry Pi permissions. Re-run pi-server/install.sh, then try again."
+        return "Wi-Fi save needs Raspberry Pi admin permission. Ask an admin to rerun pi-server/install.sh, then try again."
     if "802-11-wireless-security.key-mgmt" in lowered or "key-mgmt: property is missing" in lowered:
         return "Security settings missing. Could not connect to Wi-Fi."
     authentication_markers = (
@@ -6827,7 +6827,7 @@ def home(request: Request) -> HTMLResponse:
       box-shadow: 0 -10px 22px var(--shadow);
       opacity: calc(0.04 + (var(--bottom-nav-reveal, 0) * 0.96));
       transform: translateY(calc((1 - var(--bottom-nav-reveal, 0)) * 108%));
-      transition: transform 160ms ease-out, opacity 160ms ease-out, box-shadow 160ms ease-out;
+      transition: transform 320ms ease, opacity 320ms ease, box-shadow 320ms ease;
       will-change: transform, opacity;
     }}
     .bottom-nav.is-revealed {{
@@ -7406,7 +7406,7 @@ def home(request: Request) -> HTMLResponse:
       display: flex;
       align-items: flex-start;
       justify-content: center;
-      padding: 4px 4px calc(var(--touch-keyboard-offset, 0px) + 4px);
+      padding: 4px;
       background: rgba(5, 8, 6, 0.76);
       backdrop-filter: blur(12px);
       overflow: hidden;
@@ -7509,6 +7509,9 @@ def home(request: Request) -> HTMLResponse:
       padding-top: 4px;
       border-top: 1px solid var(--line);
       background: var(--panel);
+    }}
+    .wifi-entry-panel-host {{
+      min-height: 0;
     }}
     .wifi-entry-panel-host.hidden {{
       display: none !important;
@@ -7618,6 +7621,15 @@ def home(request: Request) -> HTMLResponse:
     body.keyboard-open .wifi-dialog-note,
     body.keyboard-open .wifi-selected-note {{
       display: none;
+    }}
+    body.keyboard-open .wifi-dialog {{
+      grid-template-rows: auto auto 0fr auto;
+    }}
+    body.keyboard-open .wifi-network-section {{
+      opacity: 0;
+      pointer-events: none;
+      min-height: 0;
+      overflow: hidden;
     }}
     .wifi-network-button:active {{
       transform: translateY(1px);
@@ -8176,7 +8188,6 @@ def home(request: Request) -> HTMLResponse:
       const touchKeyboardDoneButton = document.getElementById("touch-keyboard-done-button");
       const uiStateStorageKey = "gobag-pi-ui-state";
       const keyboardEligibleSelector = 'input:not([type="hidden"]):not([type="checkbox"]):not([type="date"]):not([type="file"]):not([type="radio"]):not([type="range"]):not([disabled]), textarea:not([disabled])';
-      const mainScrollContainer = document.scrollingElement || document.documentElement;
       const screenElements = Array.from(document.querySelectorAll(".app-screen"));
       const bottomNav = document.querySelector(".bottom-nav");
       const bottomNavButtons = Array.from(document.querySelectorAll(".bottom-nav-button"));
@@ -8206,9 +8217,7 @@ def home(request: Request) -> HTMLResponse:
       let activeScreen = "dashboard";
       let screenScrollPositions = {{}};
       let bottomNavReveal = 0;
-      let lastScrollY = 0;
       let bottomNavHideTimer = 0;
-      let bottomNavScrollAccumulator = 0;
       let inventoryCategoryFilter = "all";
       let inventorySearchQuery = "";
       let pendingInventoryFocusItemId = "";
@@ -8474,8 +8483,48 @@ def home(request: Request) -> HTMLResponse:
           .join("");
       }}
 
+      function resetWifiPasswordField(options = {{}}) {{
+        const clearValue = options.clearValue !== false;
+        if (wifiPasswordInput) {{
+          try {{
+            wifiPasswordInput.blur();
+          }} catch (_error) {{
+          }}
+          if (clearValue) {{
+            wifiPasswordInput.value = "";
+          }}
+          wifiPasswordInput.type = "password";
+        }}
+        wifiPasswordVisible = false;
+        if (wifiPasswordToggle) {{
+          wifiPasswordToggle.textContent = "Show";
+        }}
+      }}
+
+      function clearWifiSelection(options = {{}}) {{
+        const clearPassword = options.clearPassword !== false;
+        wifiSelectedNetworkSsid = "";
+        wifiSelectedNetworkRequiresPassword = false;
+        resetWifiPasswordField({{ clearValue: clearPassword }});
+        if (wifiSelectedName) {{
+          wifiSelectedName.textContent = "Choose a network";
+        }}
+        if (wifiSelectedNote) {{
+          wifiSelectedNote.textContent = "Tap a network below.";
+        }}
+        if (wifiPasswordShell) {{
+          wifiPasswordShell.classList.add("hidden");
+        }}
+        renderWifiNetworks(wifiStatusState.networks);
+        updateWifiConnectButton();
+      }}
+
       function selectWifiNetwork(rawSsid, options = {{}}) {{
         const nextSsid = String(rawSsid || "").trim();
+        if (!nextSsid) {{
+          clearWifiSelection({{ clearPassword: options.clearPassword !== false }});
+          return;
+        }}
         const previousSsid = wifiSelectedNetworkSsid;
         wifiSelectedNetworkSsid = nextSsid;
         const network = selectedWifiNetwork();
@@ -8495,15 +8544,10 @@ def home(request: Request) -> HTMLResponse:
             wifiSelectedNote.textContent = "Open network. Tap Connect.";
           }}
         }}
-        if (wifiPasswordInput && previousSsid !== nextSsid) {{
-          wifiPasswordInput.value = "";
-        }}
-        if (wifiPasswordInput) {{
-          wifiPasswordInput.type = "password";
-        }}
-        wifiPasswordVisible = false;
-        if (wifiPasswordToggle) {{
-          wifiPasswordToggle.textContent = "Show";
+        if (previousSsid !== nextSsid) {{
+          resetWifiPasswordField({{ clearValue: true }});
+        }} else {{
+          resetWifiPasswordField({{ clearValue: false }});
         }}
         if (wifiPasswordShell) {{
           wifiPasswordShell.classList.toggle("hidden", !wifiSelectedNetworkRequiresPassword);
@@ -8514,7 +8558,7 @@ def home(request: Request) -> HTMLResponse:
         syncWifiKeyboardDock();
         renderWifiNetworks(wifiStatusState.networks);
         updateWifiConnectButton();
-        if (wifiSelectedNetworkRequiresPassword && !wifiConnecting && options.focusPassword !== false && wifiPasswordInput) {{
+        if (wifiSelectedNetworkRequiresPassword && !wifiConnecting && options.focusPassword === true && wifiPasswordInput) {{
           window.setTimeout(() => {{
             if (wifiModalIsOpen() && wifiPasswordInput) {{
               try {{
@@ -8540,13 +8584,17 @@ def home(request: Request) -> HTMLResponse:
         if (Array.isArray(wifiStatusState.networks)) {{
           const preferredSsid =
             String(options.preferredSsid || "").trim() ||
-            String(wifiSelectedNetworkSsid || "").trim() ||
+            (options.preserveSelection ? String(wifiSelectedNetworkSsid || "").trim() : "") ||
             String(wifiStatusState.ssid || "").trim() ||
-            String((wifiStatusState.networks.find((network) => network.active) || {{}}).ssid || "").trim() ||
-            String((wifiStatusState.networks[0] || {{}}).ssid || "").trim();
-          selectWifiNetwork(preferredSsid, {{
-            focusPassword: options.focusPassword,
-          }});
+            String((wifiStatusState.networks.find((network) => network.active) || {{}}).ssid || "").trim();
+          if (preferredSsid) {{
+            selectWifiNetwork(preferredSsid, {{
+              focusPassword: options.focusPassword === true,
+              clearPassword: options.clearPassword,
+            }});
+          }} else {{
+            clearWifiSelection({{ clearPassword: options.clearPassword }});
+          }}
         }} else {{
           updateWifiConnectButton();
         }}
@@ -8578,7 +8626,7 @@ def home(request: Request) -> HTMLResponse:
             return;
           }}
           const payload = await response.json();
-          applyWifiStatusPayload(payload);
+          applyWifiStatusPayload(payload, {{ preserveSelection: wifiModalIsOpen() }});
           if (settingsWifiSummary) {{
             settingsWifiSummary.textContent =
               payload.connected && payload.ssid
@@ -8602,7 +8650,9 @@ def home(request: Request) -> HTMLResponse:
           const payload = await response.json();
           applyWifiStatusPayload(payload, {{
             preferredSsid: options.preferredSsid || "",
-            focusPassword: options.focusPassword,
+            focusPassword: options.focusPassword === true,
+            preserveSelection: options.preserveSelection === true,
+            clearPassword: options.clearPassword,
           }});
           if (wifiModalIsOpen()) {{
             setWifiModalMessage(payload.message || "", payload.ok === false ? "error" : "");
@@ -8619,14 +8669,21 @@ def home(request: Request) -> HTMLResponse:
           return;
         }}
         dismissTouchKeyboard();
+        clearWifiSelection();
         wifiModal.classList.remove("hidden");
         wifiModal.setAttribute("aria-hidden", "false");
         setWifiModalMessage("");
-        applyWifiStatusPayload(wifiStatusState, {{ focusPassword: false }});
+        applyWifiStatusPayload(wifiStatusState, {{
+          preferredSsid: wifiStatusState.connected ? wifiStatusState.ssid : "",
+          focusPassword: false,
+          preserveSelection: false,
+        }});
         syncModalShellState();
         void loadWifiNetworks({{
-          preferredSsid: wifiSelectedNetworkSsid || wifiStatusState.ssid || "",
-          focusPassword: wifiSelectedNetworkRequiresPassword,
+          preferredSsid: wifiStatusState.connected ? wifiStatusState.ssid || "" : "",
+          focusPassword: false,
+          preserveSelection: false,
+          clearPassword: true,
         }});
       }}
 
@@ -8634,12 +8691,15 @@ def home(request: Request) -> HTMLResponse:
         if (!wifiModal || (wifiConnecting && !force)) {{
           return;
         }}
+        resetWifiPasswordField();
+        dismissTouchKeyboard();
+        clearWifiSelection();
+        if (wifiNetworkList) {{
+          wifiNetworkList.scrollTop = 0;
+        }}
         wifiModal.classList.add("hidden");
         wifiModal.setAttribute("aria-hidden", "true");
         setWifiModalMessage("");
-        if (keyboardTarget === wifiPasswordInput) {{
-          dismissTouchKeyboard();
-        }}
         syncModalShellState();
       }}
 
@@ -8735,13 +8795,6 @@ def home(request: Request) -> HTMLResponse:
         return Math.min(Math.max(value, min), max);
       }}
 
-      function readMainScrollTop() {{
-        if (mainScrollContainer && typeof mainScrollContainer.scrollTop === "number") {{
-          return Math.max(mainScrollContainer.scrollTop || 0, 0);
-        }}
-        return Math.max(window.scrollY || 0, 0);
-      }}
-
       function clearBottomNavHideTimer() {{
         if (!bottomNavHideTimer) {{
           return;
@@ -8768,7 +8821,7 @@ def home(request: Request) -> HTMLResponse:
             return;
           }}
           setBottomNavReveal(0);
-        }}, 480);
+        }}, 3000);
       }}
 
       function showBottomNavWhileScrolling() {{
@@ -8777,28 +8830,11 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function syncBottomNavReveal(force = false) {{
-        const currentScroll = readMainScrollTop();
-        const delta = currentScroll - lastScrollY;
         if (force) {{
-          bottomNavScrollAccumulator = 0;
-          lastScrollY = currentScroll;
-          if (currentScroll <= 4) {{
-            clearBottomNavHideTimer();
-            setBottomNavReveal(0);
-            return;
-          }}
-          showBottomNavWhileScrolling();
+          clearBottomNavHideTimer();
+          setBottomNavReveal(0);
           return;
         }}
-        if (Math.abs(delta) < 1) {{
-          return;
-        }}
-        lastScrollY = currentScroll;
-        bottomNavScrollAccumulator += delta;
-        if (Math.abs(bottomNavScrollAccumulator) < 10) {{
-          return;
-        }}
-        bottomNavScrollAccumulator = 0;
         showBottomNavWhileScrolling();
       }}
 
@@ -8985,7 +9021,10 @@ def home(request: Request) -> HTMLResponse:
         if (keyboardTarget === wifiPasswordInput && wifiPasswordInput) {{
           window.requestAnimationFrame(() => {{
             if (keyboardTarget === wifiPasswordInput) {{
-              wifiPasswordInput.scrollIntoView({{ block: "nearest", inline: "nearest", behavior: "auto" }});
+              if (wifiEntryPanel) {{
+                wifiEntryPanel.scrollIntoView({{ block: "end", inline: "nearest", behavior: "auto" }});
+              }}
+              wifiPasswordInput.scrollIntoView({{ block: "center", inline: "nearest", behavior: "auto" }});
             }}
           }});
         }}
@@ -9194,28 +9233,7 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function syncWifiKeyboardDock() {{
-        const shouldDock =
-          keyboardTarget === wifiPasswordInput &&
-          !!touchKeyboard &&
-          !touchKeyboard.classList.contains("hidden") &&
-          !!wifiModal &&
-          !wifiModal.classList.contains("hidden") &&
-          !!wifiPasswordShell &&
-          !wifiPasswordShell.classList.contains("hidden") &&
-          !!wifiEntryPanel &&
-          !!wifiEntryPanelHost &&
-          !!touchKeyboardDock;
         if (!wifiEntryPanel || !wifiEntryPanelHost || !touchKeyboardDock || !touchKeyboard) {{
-          return;
-        }}
-        if (shouldDock) {{
-          if (wifiEntryPanel.parentElement !== touchKeyboardDock) {{
-            touchKeyboardDock.appendChild(wifiEntryPanel);
-          }}
-          touchKeyboardDock.classList.remove("hidden");
-          touchKeyboardDock.setAttribute("aria-hidden", "false");
-          wifiEntryPanelHost.classList.add("hidden");
-          touchKeyboard.classList.add("wifi-entry-docked");
           return;
         }}
         if (wifiEntryPanel.parentElement !== wifiEntryPanelHost) {{
@@ -9268,7 +9286,7 @@ def home(request: Request) -> HTMLResponse:
         window.setTimeout(syncTouchKeyboardOffset, 40);
         window.setTimeout(() => {{
           if (keyboardTarget === target) {{
-            target.scrollIntoView({{ block: "nearest", inline: "nearest", behavior: "smooth" }});
+            target.scrollIntoView({{ block: "center", inline: "nearest", behavior: "auto" }});
           }}
         }}, 80);
       }}
@@ -10244,7 +10262,7 @@ def home(request: Request) -> HTMLResponse:
             return;
           }}
           const targetSsid = String(button.getAttribute("data-wifi-ssid") || "").trim();
-          selectWifiNetwork(targetSsid, {{ focusPassword: true }});
+          selectWifiNetwork(targetSsid, {{ focusPassword: false }});
           setWifiModalMessage("");
         }});
       }}
@@ -10276,7 +10294,6 @@ def home(request: Request) -> HTMLResponse:
       initializeTheme();
       applyUiPreferences(initialUiPreferences);
       initializeUiScale();
-      lastScrollY = readMainScrollTop();
       setBottomNavReveal(bottomNavReveal);
       initializeScreenState();
       applyInventoryFilters();
@@ -10313,33 +10330,18 @@ def home(request: Request) -> HTMLResponse:
           showKioskCursorBriefly();
         }}
       }});
+      const handleBottomNavScrollActivity = () => {{
+        if (wifiModalIsOpen() || powerDialogIsOpen() || scanIsOpen() || shutdownProgressIsOpen()) {{
+          return;
+        }}
+        syncBottomNavReveal(false);
+      }};
+      document.addEventListener("scroll", handleBottomNavScrollActivity, {{ passive: true, capture: true }});
       window.addEventListener(
         "scroll",
-        () => {{
-          if (wifiModalIsOpen() || powerDialogIsOpen() || scanIsOpen() || shutdownProgressIsOpen()) {{
-            return;
-          }}
-          syncBottomNavReveal(false);
-        }},
+        handleBottomNavScrollActivity,
         {{ passive: true }},
       );
-      if (
-        mainScrollContainer &&
-        mainScrollContainer !== document.documentElement &&
-        mainScrollContainer !== document.body &&
-        typeof mainScrollContainer.addEventListener === "function"
-      ) {{
-        mainScrollContainer.addEventListener(
-          "scroll",
-          () => {{
-            if (wifiModalIsOpen() || powerDialogIsOpen() || scanIsOpen() || shutdownProgressIsOpen()) {{
-              return;
-            }}
-            syncBottomNavReveal(false);
-          }},
-          {{ passive: true }},
-        );
-      }}
 
       window.addEventListener("keydown", (event) => {{
         if (event.key !== "Escape") {{

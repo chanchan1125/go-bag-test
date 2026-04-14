@@ -413,6 +413,10 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn("syncBottomNavReveal", body)
         self.assertIn("showBottomNavWhileScrolling", body)
         self.assertIn("scheduleBottomNavHide", body)
+        self.assertIn("3000", body)
+        self.assertIn("handleBottomNavScrollActivity", body)
+        self.assertIn('selectWifiNetwork(targetSsid, { focusPassword: false });', body)
+        self.assertNotIn("touchKeyboardDock.appendChild(wifiEntryPanel)", body)
         self.assertIn('id="settings-preferences-form"', body)
         self.assertIn("Appearance", body)
         self.assertIn("Alerts & reminders", body)
@@ -717,7 +721,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(captured.exception.status_code, 400)
         self.assertEqual(
             captured.exception.detail,
-            "Wi-Fi save is blocked by Raspberry Pi permissions. Re-run pi-server/install.sh, then try again.",
+            "Wi-Fi save needs Raspberry Pi admin permission. Ask an admin to rerun pi-server/install.sh, then try again.",
         )
 
     def test_connect_wifi_network_reports_manual_setup_when_helper_is_missing(self):
@@ -746,7 +750,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(captured.exception.status_code, 400)
         self.assertEqual(
             captured.exception.detail,
-            "Wi-Fi setup requires Raspberry Pi admin setup. Re-run pi-server/install.sh, then try again.",
+            "Wi-Fi admin setup is incomplete on this Raspberry Pi. Ask an admin to rerun pi-server/install.sh, then try again.",
         )
 
     def test_connect_wifi_network_uses_privileged_helper_when_available(self):
