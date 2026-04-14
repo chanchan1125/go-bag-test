@@ -405,6 +405,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn('id="wifi-network-list"', body)
         self.assertIn('id="wifi-entry-panel-host"', body)
         self.assertIn('id="wifi-entry-panel"', body)
+        self.assertIn('id="wifi-connect-shell"', body)
         self.assertIn('id="wifi-selected-card"', body)
         self.assertIn('id="wifi-selected-kicker"', body)
         self.assertIn('id="wifi-selected-detail"', body)
@@ -488,6 +489,43 @@ class PiServerApiTests(unittest.TestCase):
         self.assertNotIn("Align the QR code inside the camera view.", body)
         self.assertNotIn("Scan now", body)
         self.assertNotIn("Refresh preview", body)
+
+    def test_list_wifi_networks_forces_a_real_rescan_when_requested(self):
+        command_calls = []
+
+        def fake_run(args, timeout_s):
+            command_calls.append(list(args))
+            if args == ["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"]:
+                return subprocess.CompletedProcess(["nmcli", *args], 0, "wlan0:wifi:disconnected:--\n", "")
+            if args == ["device", "wifi", "rescan", "ifname", "wlan0"]:
+                return subprocess.CompletedProcess(["nmcli", *args], 0, "", "")
+            if args == ["-t", "-f", "IN-USE,SSID,SECURITY,SIGNAL", "device", "wifi", "list", "--rescan", "no"]:
+                return subprocess.CompletedProcess(["nmcli", *args], 0, ":FieldNet:WPA2:78\n", "")
+            raise AssertionError(f"Unexpected nmcli args: {args}")
+
+        with mock.patch.object(self.module, "run_wifi_command", side_effect=fake_run):
+            networks = self.module.list_wifi_networks(rescan=True)
+
+        self.assertEqual(
+            command_calls,
+            [
+                ["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"],
+                ["device", "wifi", "rescan", "ifname", "wlan0"],
+                ["-t", "-f", "IN-USE,SSID,SECURITY,SIGNAL", "device", "wifi", "list", "--rescan", "no"],
+            ],
+        )
+        self.assertEqual(
+            networks,
+            [
+                {
+                    "ssid": "FieldNet",
+                    "active": False,
+                    "signal": 78,
+                    "security": "WPA2",
+                    "requires_password": True,
+                }
+            ],
+        )
 
     def test_wifi_status_and_connect_endpoints_return_structured_payloads(self):
         status_payload = {

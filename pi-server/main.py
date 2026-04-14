@@ -1641,6 +1641,16 @@ def current_wifi_device_name() -> str:
 
 
 def list_wifi_networks(*, rescan: bool) -> List[dict]:
+    if rescan:
+        try:
+            rescan_args = ["device", "wifi", "rescan"]
+            wifi_device_name = current_wifi_device_name()
+            if wifi_device_name:
+                rescan_args.extend(["ifname", wifi_device_name])
+            run_wifi_command(rescan_args, WIFI_STATUS_TIMEOUT_S)
+        except Exception:
+            # Fall back to the cached list if the active rescan request fails.
+            pass
     args = [
         "-t",
         "-f",
@@ -1649,7 +1659,7 @@ def list_wifi_networks(*, rescan: bool) -> List[dict]:
         "wifi",
         "list",
         "--rescan",
-        "auto" if rescan else "no",
+        "no",
     ]
     result = run_wifi_command(args, WIFI_SCAN_TIMEOUT_S if rescan else WIFI_STATUS_TIMEOUT_S)
     deduped: Dict[str, dict] = {}
@@ -5490,44 +5500,47 @@ def home(request: Request) -> HTMLResponse:
     <section class="app-screen wifi-modal" data-screen="wifi" id="wifi-modal" aria-label="Wi-Fi controls" data-view="browse">
       <div class="screen-stack wifi-screen-stack">
         <section class="wifi-dialog" aria-label="Wi-Fi connection panel">
-          <div class="wifi-entry-panel-host" id="wifi-entry-panel-host">
-            <div class="wifi-entry-panel" id="wifi-entry-panel">
-              <div class="wifi-selected-card" id="wifi-selected-card">
-                <div class="wifi-selected-card-accent" aria-hidden="true"></div>
-                <div class="wifi-selected-card-main">
-                  <div class="wifi-selected-copy">
-                    <div class="wifi-selected-kicker" id="wifi-selected-kicker">Status: Offline</div>
-                    <div class="wifi-selected-name" id="wifi-selected-name">Choose a network</div>
-                    <div class="wifi-selected-detail" id="wifi-selected-detail">Tap an available network to connect.</div>
-                  </div>
-                  <div class="wifi-selected-signal">
-                    <div class="wifi-selected-signal-value" id="wifi-selected-signal-value">--</div>
-                    <div class="wifi-selected-signal-note" id="wifi-selected-signal-note">Waiting</div>
+          <div class="wifi-connect-shell" id="wifi-connect-shell">
+            <div class="wifi-entry-panel-host" id="wifi-entry-panel-host">
+              <div class="wifi-entry-panel" id="wifi-entry-panel">
+                <div class="wifi-selected-card" id="wifi-selected-card">
+                  <div class="wifi-selected-card-accent" aria-hidden="true"></div>
+                  <div class="wifi-selected-card-main">
+                    <div class="wifi-selected-copy">
+                      <div class="wifi-selected-kicker" id="wifi-selected-kicker">Status: Offline</div>
+                      <div class="wifi-selected-name" id="wifi-selected-name">Choose a network</div>
+                      <div class="wifi-selected-detail" id="wifi-selected-detail">Tap an available network to connect.</div>
+                    </div>
+                    <div class="wifi-selected-signal">
+                      <div class="wifi-selected-signal-value" id="wifi-selected-signal-value">--</div>
+                      <div class="wifi-selected-signal-note" id="wifi-selected-signal-note">Waiting</div>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div class="wifi-password-shell hidden" id="wifi-password-shell">
-                <div class="panel-subtitle">Network password</div>
-                <div class="wifi-password-row">
-                  <input
-                    type="password"
-                    id="wifi-password-input"
-                    placeholder="Wi-Fi password"
-                    autocomplete="off"
-                    autocapitalize="none"
-                    spellcheck="false"
-                    inputmode="none"
-                    readonly
-                    tabindex="-1">
-                  <button type="button" class="secondary wifi-password-toggle" id="wifi-password-toggle">Show</button>
+                <div class="wifi-password-shell hidden" id="wifi-password-shell">
+                  <div class="panel-subtitle">Network password</div>
+                  <div class="wifi-password-row">
+                    <input
+                      type="password"
+                      id="wifi-password-input"
+                      placeholder="Wi-Fi password"
+                      autocomplete="off"
+                      autocapitalize="none"
+                      spellcheck="false"
+                      inputmode="none"
+                      readonly
+                      tabindex="-1">
+                    <button type="button" class="secondary wifi-password-toggle" id="wifi-password-toggle">Show</button>
+                  </div>
                 </div>
-              </div>
-              <div class="wifi-actions hidden" id="wifi-hero-actions">
-                <button type="button" id="wifi-connect-submit">Disconnect</button>
+                <div class="wifi-actions hidden" id="wifi-hero-actions">
+                  <button type="button" id="wifi-connect-submit">Disconnect</button>
+                </div>
               </div>
             </div>
+            <div class="wifi-status-message hidden" id="wifi-modal-message"></div>
+            {render_wifi_inline_keyboard_html()}
           </div>
-          <div class="wifi-status-message hidden" id="wifi-modal-message"></div>
           <div class="wifi-network-section">
             <div class="wifi-network-head">
               <div>
@@ -5543,7 +5556,6 @@ def home(request: Request) -> HTMLResponse:
               <div class="wifi-empty-state">Scanning nearby Wi-Fi networks...</div>
             </div>
           </div>
-          {render_wifi_inline_keyboard_html()}
         </section>
       </div>
     </section>
@@ -7708,7 +7720,8 @@ def home(request: Request) -> HTMLResponse:
       max-width: 100%;
       height: auto;
       max-height: none;
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: 10px;
       border-radius: 0;
       background: transparent;
@@ -7716,6 +7729,10 @@ def home(request: Request) -> HTMLResponse:
       color: var(--ink);
       padding: 0;
       overflow: visible;
+    }}
+    .wifi-connect-shell {{
+      display: grid;
+      gap: 8px;
     }}
     .wifi-network-meta,
     .wifi-empty-state,
@@ -7902,6 +7919,7 @@ def home(request: Request) -> HTMLResponse:
       display: grid;
       gap: 8px;
       min-height: 0;
+      flex: 1 1 auto;
       grid-template-rows: auto minmax(0, 1fr);
       overflow: hidden;
       padding: 12px;
@@ -8110,6 +8128,71 @@ def home(request: Request) -> HTMLResponse:
     .wifi-inline-keyboard button:disabled {{
       opacity: 0.48;
       box-shadow: none;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-dialog,
+    .wifi-modal[data-view="connecting"] .wifi-dialog {{
+      min-height: calc(100dvh - var(--bottom-nav-height) - 112px);
+    }}
+    .wifi-modal[data-view="entry"] .wifi-connect-shell,
+    .wifi-modal[data-view="connecting"] .wifi-connect-shell {{
+      margin-top: auto;
+      padding: 12px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, var(--panel-muted), var(--panel));
+      box-shadow: 0 12px 22px var(--shadow);
+    }}
+    .wifi-modal[data-view="entry"] .wifi-entry-panel,
+    .wifi-modal[data-view="connecting"] .wifi-entry-panel {{
+      gap: 8px;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-selected-card,
+    .wifi-modal[data-view="connecting"] .wifi-selected-card {{
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      gap: 4px;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-selected-card-accent,
+    .wifi-modal[data-view="connecting"] .wifi-selected-card-accent {{
+      display: none;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-selected-card-main,
+    .wifi-modal[data-view="connecting"] .wifi-selected-card-main {{
+      grid-template-columns: minmax(0, 1fr);
+      gap: 4px;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-selected-signal,
+    .wifi-modal[data-view="connecting"] .wifi-selected-signal {{
+      display: none;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-selected-kicker,
+    .wifi-modal[data-view="connecting"] .wifi-selected-kicker {{
+      color: var(--secondary);
+    }}
+    .wifi-modal[data-view="entry"] .wifi-selected-name,
+    .wifi-modal[data-view="connecting"] .wifi-selected-name {{
+      font-size: 0.94rem;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-selected-detail,
+    .wifi-modal[data-view="connecting"] .wifi-selected-detail {{
+      font-size: 0.64rem;
+      line-height: 1.32;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-password-shell,
+    .wifi-modal[data-view="connecting"] .wifi-password-shell {{
+      gap: 5px;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-status-message,
+    .wifi-modal[data-view="connecting"] .wifi-status-message {{
+      min-height: 1em;
+      padding: 6px 0 0;
+      border-radius: 0;
+      background: transparent;
+    }}
+    .wifi-modal[data-view="entry"] .wifi-inline-keyboard,
+    .wifi-modal[data-view="connecting"] .wifi-inline-keyboard {{
+      margin-top: 0;
     }}
     .wifi-modal[data-view="entry"] .wifi-network-section,
     .wifi-modal[data-view="connecting"] .wifi-network-section {{
