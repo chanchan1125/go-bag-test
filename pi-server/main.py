@@ -5472,6 +5472,7 @@ def home(request: Request) -> HTMLResponse:
     html {{
       --touch-keyboard-offset: 0px;
       --wifi-modal-top: 0px;
+      --wifi-modal-height: 0px;
       --wifi-keyboard-top: 0px;
       --bottom-nav-reveal: 0;
       --ui-font-scale: 1;
@@ -7591,7 +7592,8 @@ def home(request: Request) -> HTMLResponse:
     .wifi-dialog {{
       width: min(100%, 378px);
       min-height: 0;
-      max-height: calc(100dvh - var(--wifi-modal-top, 0px));
+      height: var(--wifi-modal-height, calc(100dvh - var(--wifi-modal-top, 0px) - 4px));
+      max-height: var(--wifi-modal-height, calc(100dvh - var(--wifi-modal-top, 0px) - 4px));
       display: grid;
       grid-template-rows: auto auto minmax(0, 1fr);
       gap: 8px;
@@ -9602,6 +9604,10 @@ def home(request: Request) -> HTMLResponse:
       }}
 
       function syncTouchKeyboardOffset() {{
+        const viewportHeight =
+          typeof window.innerHeight === "number" && window.innerHeight > 0
+            ? Math.ceil(window.innerHeight)
+            : Math.ceil(document.documentElement ? document.documentElement.clientHeight || 0 : 0);
         const keyboardHeight =
           touchKeyboard && !touchKeyboard.classList.contains("hidden")
             ? Math.ceil(touchKeyboard.getBoundingClientRect().height)
@@ -9610,7 +9616,12 @@ def home(request: Request) -> HTMLResponse:
           wifiModalIsOpen() && topbar
             ? Math.ceil(topbar.getBoundingClientRect().bottom)
             : 0;
-        const wifiKeyboardTop =
+        const resolvedWifiModalTop = Math.max(wifiModalTop - 1, 0);
+        const wifiModalHeight =
+          wifiModalIsOpen() && viewportHeight > 0
+            ? Math.max(viewportHeight - resolvedWifiModalTop - 4, 0)
+            : 0;
+        const rawWifiKeyboardTop =
           touchKeyboard &&
           !touchKeyboard.classList.contains("hidden") &&
           wifiModalIsOpen() &&
@@ -9618,8 +9629,13 @@ def home(request: Request) -> HTMLResponse:
           wifiPasswordRow instanceof HTMLElement
             ? Math.max(Math.ceil(wifiPasswordRow.getBoundingClientRect().bottom) + 2, 0)
             : 0;
+        const wifiKeyboardTop =
+          rawWifiKeyboardTop && keyboardHeight > 0 && viewportHeight > 0
+            ? Math.min(rawWifiKeyboardTop, Math.max(viewportHeight - keyboardHeight, resolvedWifiModalTop))
+            : rawWifiKeyboardTop;
         documentRoot.style.setProperty("--touch-keyboard-offset", `${{Math.max(keyboardHeight, 0)}}px`);
-        documentRoot.style.setProperty("--wifi-modal-top", `${{Math.max(wifiModalTop - 1, 0)}}px`);
+        documentRoot.style.setProperty("--wifi-modal-top", `${{resolvedWifiModalTop}}px`);
+        documentRoot.style.setProperty("--wifi-modal-height", `${{wifiModalHeight}}px`);
         documentRoot.style.setProperty("--wifi-keyboard-top", `${{Math.max(wifiKeyboardTop, 0)}}px`);
       }}
 
