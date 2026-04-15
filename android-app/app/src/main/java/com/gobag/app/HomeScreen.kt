@@ -105,7 +105,7 @@ fun HomeScreen(
                             contentDescription = "GO BAG icon"
                         )
                         Text(
-                            "GO BAG DASHBOARD",
+                            "GO BAG",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Black
                         )

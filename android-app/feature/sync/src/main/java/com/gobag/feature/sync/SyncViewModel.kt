@@ -102,11 +102,6 @@ class SyncViewModel(
         viewModelScope.launch {
             running.value = true
             try {
-                val refreshError = sync_repository.refresh_remote_status()
-                if (refreshError != null) {
-                    feedback_message.value = refreshError
-                    return@launch
-                }
                 val result = sync_repository.run_sync_now()
                 feedback_message.value = result.skipped_reason
                     ?: "Bag updated."

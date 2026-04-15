@@ -42,9 +42,10 @@ class PiConnectionManager(
 
         device_state_store.set_connection_checking(state.selected_bag_id)
         var lastFailure = ""
+        val probeAuthToken = connection_probe_auth_token(state)
         for (candidate in candidates) {
             try {
-                val deviceStatus = RemoteDataSourceFactory.create_api(candidate.base_url).device_status()
+                val deviceStatus = RemoteDataSourceFactory.create_api(candidate.base_url, probeAuthToken).device_status()
                 ensure_matching_pi(state, deviceStatus)
                 apply_success(
                     state = state,
@@ -104,7 +105,10 @@ class PiConnectionManager(
         }
 
         try {
-            val deviceStatus = RemoteDataSourceFactory.create_api(normalizedBaseUrl).device_status()
+            val deviceStatus = RemoteDataSourceFactory.create_api(
+                normalizedBaseUrl,
+                connection_probe_auth_token(state)
+            ).device_status()
             ensure_matching_pi(state, deviceStatus)
             val resolvedMode = resolve_connection_mode(normalizedBaseUrl, inferredMode, deviceStatus)
             val detail = build_success_detail(
@@ -311,7 +315,12 @@ class PiConnectionManager(
             }
         }
 
-        return (localCandidates.values + remoteCandidates.values)
+        val preferRemoteFirst = should_prefer_remote_candidates(state)
+        return if (preferRemoteFirst) {
+            remoteCandidates.values + localCandidates.values
+        } else {
+            localCandidates.values + remoteCandidates.values
+        }
     }
 
     private fun build_refresh_failure_message(state: DeviceState, last_failure: String): String {
@@ -452,6 +461,16 @@ private fun derive_relay_base_url(pi_device_id: String): String {
     val normalizedPiDeviceId = pi_device_id.trim()
     if (relayBaseUrl.isBlank() || normalizedPiDeviceId.isBlank()) return ""
     return "${relayBaseUrl.removeSuffix("/")}/r/$normalizedPiDeviceId"
+}
+
+private fun connection_probe_auth_token(state: DeviceState): String {
+    return state.auth_token.takeIf { state.paired_bags.any { bag -> bag.bag_id == state.selected_bag_id } }.orEmpty()
+}
+
+private fun should_prefer_remote_candidates(state: DeviceState): Boolean {
+    if (state.last_connection_mode == CONNECTION_MODE_REMOTE) return true
+    if (infer_endpoint_mode(state.base_url, state) == CONNECTION_MODE_REMOTE) return true
+    return state.paired_bags.any { it.last_connection_mode == CONNECTION_MODE_REMOTE }
 }
 
 private fun urls_equivalent(left: String, right: String): Boolean {
