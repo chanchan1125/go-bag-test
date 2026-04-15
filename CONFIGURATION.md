@@ -40,6 +40,12 @@ Configuration values are read in this order:
   default: blank
   explicit advertised URL used in QR payloads, dashboard, and some status reporting
 
+- `GOBAG_REMOTE_BASE_URL`
+  default: blank
+  optional remote URL advertised to paired phones for internet or mesh access
+  use `https://...` for public internet exposure
+  `http://...` is only safe here when the address is inside a trusted VPN or mesh such as WireGuard or Tailscale
+
 When to set `GOBAG_BASE_URL` explicitly:
 
 - the Pi has multiple network interfaces
@@ -103,6 +109,7 @@ These affect optional Pi camera endpoints only.
 GOBAG_HOST=0.0.0.0
 GOBAG_PORT=8080
 GOBAG_BASE_URL=http://192.168.1.20:8080
+GOBAG_REMOTE_BASE_URL=
 GOBAG_DEVICE_NAME="GO BAG Raspberry Pi"
 GOBAG_DATA_DIR=/opt/gobag/data
 GOBAG_LOG_DIR=/opt/gobag/logs
@@ -115,21 +122,36 @@ GOBAG_BACKUP_DIR=/opt/gobag/backups
 GOBAG_HOST=0.0.0.0
 GOBAG_PORT=8080
 GOBAG_BASE_URL=http://192.168.4.1:8080
+GOBAG_REMOTE_BASE_URL=
+GOBAG_DEVICE_NAME="GO BAG Raspberry Pi"
+```
+
+### Typical dual-mode setup
+
+```env
+GOBAG_HOST=0.0.0.0
+GOBAG_PORT=8080
+GOBAG_BASE_URL=http://192.168.1.20:8080
+GOBAG_REMOTE_BASE_URL=https://bag.example.com
 GOBAG_DEVICE_NAME="GO BAG Raspberry Pi"
 ```
 
 ## How configuration affects pairing and advertised URLs
 
 - QR payload uses the backend's computed or configured base URL.
+- If `GOBAG_REMOTE_BASE_URL` is set, the QR also includes that remote URL so the phone can fall back to it later.
 - `/device/status` exposes `local_ip` for user visibility.
 - If `GOBAG_BASE_URL` is wrong, Android pairing can succeed only if the phone can still reach that address.
 - If `GOBAG_BASE_URL` is blank, the backend tries to detect a non-loopback IP automatically.
+- Different Wi-Fi networks will only work if the Pi also has a reachable remote URL or VPN/mesh address.
 
 ## Android-side configuration
 
 Android stores pairing and endpoint state in DataStore:
 
 - `base_url`
+- `local_base_url`
+- `remote_base_url`
 - `auth_token`
 - `pi_device_id`
 - `last_sync_at`
@@ -143,5 +165,6 @@ Important distinction:
 ## Practical guidance
 
 - Use `GOBAG_BASE_URL` explicitly for demos, capstones, and hotspot deployments.
+- Use `GOBAG_REMOTE_BASE_URL` only for a secure remote endpoint or trusted mesh/VPN address.
 - Keep `GOBAG_HOST=0.0.0.0` unless there is a specific reason to restrict binding.
 - Do not point Android at `localhost`; use the Pi's reachable LAN or hotspot IP.

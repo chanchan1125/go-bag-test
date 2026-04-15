@@ -67,6 +67,8 @@ data class DeviceStatusDto(
     @SerializedName("connection_status") val connection_status: String,
     @SerializedName("pending_changes_count") val pending_changes_count: Int,
     @SerializedName("local_ip") val local_ip: String,
+    @SerializedName("local_base_url") val local_base_url: String = "",
+    @SerializedName("remote_base_url") val remote_base_url: String = "",
     @SerializedName("updated_at") val updated_at: Long,
     @SerializedName("pi_device_id") val pi_device_id: String,
     @SerializedName("pair_code") val pair_code: String,
@@ -81,6 +83,8 @@ data class SyncStatusDto(
     @SerializedName("connection_status") val connection_status: String,
     @SerializedName("pending_changes_count") val pending_changes_count: Int,
     @SerializedName("local_ip") val local_ip: String,
+    @SerializedName("local_base_url") val local_base_url: String = "",
+    @SerializedName("remote_base_url") val remote_base_url: String = "",
     @SerializedName("updated_at") val updated_at: Long
 )
 

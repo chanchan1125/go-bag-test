@@ -66,7 +66,10 @@ data class PairedBagConnection(
     val pending_changes_count: Int,
     val local_ip: String,
     val last_connection_error: String,
-    val paired_at: Long
+    val paired_at: Long,
+    val local_base_url: String? = null,
+    val remote_base_url: String? = null,
+    val last_connection_mode: String? = null
 )
 
 data class SavedPiAddress(
@@ -83,6 +86,8 @@ data class DeviceState(
     val auth_token: String,
     val base_url: String,
     val pi_device_id: String,
+    val local_base_url: String,
+    val remote_base_url: String,
     val last_sync_at: Long,
     val time_offset_ms: Long,
     val auto_sync_enabled: Boolean,
@@ -92,6 +97,7 @@ data class DeviceState(
     val sync_status: String,
     val pending_changes_count: Int,
     val local_ip: String,
+    val last_connection_mode: String,
     val last_connection_error: String,
     val last_sync_error: String,
     val last_connection_check_at: Long,

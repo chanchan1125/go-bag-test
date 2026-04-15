@@ -45,6 +45,7 @@ Meaning:
 
 1. The Pi dashboard generates a QR payload containing:
    - `base_url`
+   - optional `remote_base_url`
    - `pair_code`
    - `pi_device_id`
 2. Android requests camera permission if needed.
@@ -59,6 +60,9 @@ Meaning:
    - `pi_device_id`
    - `server_time_ms`
 8. Android stores pairing data in DataStore.
+   - Pi identity
+   - local endpoint
+   - optional remote endpoint
 9. Android fetches templates.
 10. Android immediately runs the first sync.
 
@@ -94,16 +98,18 @@ This is a deliberate part of the sync-first contract.
 ## Regular sync flow
 
 1. Android reads `last_sync_at` from DataStore.
-2. Android collects locally changed bags and items from Room.
-3. Android sends them to `POST /sync`.
-4. Pi compares incoming changes to SQLite state.
-5. Pi returns:
+2. Android tries the paired Pi's local endpoint first.
+3. If the local path is not reachable, Android falls back to the saved remote endpoint.
+4. Android collects locally changed bags and items from Room.
+5. Android sends them to `POST /sync`.
+6. Pi compares incoming changes to SQLite state.
+7. Pi returns:
    - `server_bag_changes`
    - `server_item_changes`
    - `conflicts`
    - `auto_resolved`
    - `alerts`
-6. Android applies those results into Room and DataStore.
+8. Android applies those results into Room and DataStore.
 
 ## What happens when sync fails
 
@@ -173,3 +179,7 @@ Android does not directly depend on Pi CRUD endpoints for inventory display.
 - There is no background service guaranteeing sync on every Android state change.
 - Pi CRUD endpoints and Android sync models are different shapes because they serve different purposes.
 - Android and Pi can temporarily diverge until the next sync. That is expected.
+- Different Wi-Fi networks only work when the Pi has a real remote path configured.
+  Examples:
+  - secure HTTPS endpoint
+  - trusted VPN or mesh address such as WireGuard or Tailscale

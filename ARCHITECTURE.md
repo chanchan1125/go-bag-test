@@ -2,7 +2,7 @@
 
 ## System overview
 
-GO BAG is built as a local-network system with two primary runtime components:
+GO BAG is built as a local-first sync system with two primary runtime components:
 
 - Android app for editing, checklist, pairing, sync, and local offline use
 - Raspberry Pi backend for pairing, sync, dashboard, and persistent storage
@@ -21,6 +21,7 @@ GO BAG is built as a local-network system with two primary runtime components:
 +-------------+-------------+
               |
               | local HTTP
+              | or secure remote HTTP(S)
               | /health /device/status
               | /pair /templates /sync
               v
@@ -120,6 +121,7 @@ Sync-first matches the existing app architecture with the least risky rewrite.
 ```text
 Pi dashboard renders QR payload
   -> Android scans QR
+  -> Android stores Pi identity plus local and optional remote endpoints
   -> Android calls POST /pair
   -> Android stores auth token, base URL, Pi device ID
   -> Android downloads templates
@@ -131,6 +133,8 @@ Pi dashboard renders QR payload
 
 ```text
 Android local edit
+  -> app tries the local endpoint first
+  -> if local fails, app falls back to the remote endpoint
   -> Room updated immediately
   -> Sync request built from changed rows since last_sync_at
   -> Pi compares incoming rows with SQLite rows

@@ -11,10 +11,12 @@ import com.gobag.core.model.Item
 import com.gobag.data.local.ConflictDao
 import com.gobag.data.local.to_entity
 import com.gobag.data.local.to_model
+import com.gobag.data.remote.AlertDto
+import com.gobag.data.remote.BagDto
+import com.gobag.data.remote.ConflictDto
+import com.gobag.data.remote.ItemDto
 import com.gobag.data.remote.RemoteDataSourceFactory
 import com.gobag.data.remote.SyncRequestDto
-import com.gobag.data.remote.to_dto
-import com.gobag.data.remote.to_model
 import com.gobag.domain.logic.PiConnectionStatus
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.SyncRepository
@@ -155,8 +157,18 @@ class GoBagSyncRepository(
             )
         }
 
-        val changed_items = item_repository.get_items_changed_since(state.last_sync_at).filter { it.bag_id == selectedBagId }
-        val changed_bags = item_repository.get_bags_changed_since(state.last_sync_at).filter { it.bag_id == selectedBagId }
+        val refreshError = pi_connection_manager.refresh_current_connection()
+        if (refreshError != null) {
+            device_state_store.set_sync_status(
+                status = PiConnectionStatus.SYNC_STATUS_FAILED,
+                error = refreshError
+            )
+            throw IllegalStateException(refreshError)
+        }
+
+        val activeState = device_state_store.state.first()
+        val changed_items = item_repository.get_items_changed_since(activeState.last_sync_at).filter { it.bag_id == selectedBagId }
+        val changed_bags = item_repository.get_bags_changed_since(activeState.last_sync_at).filter { it.bag_id == selectedBagId }
         try {
             validate_sync_payload(selectedBagId, changed_bags, changed_items)
         } catch (e: IllegalStateException) {
@@ -172,14 +184,14 @@ class GoBagSyncRepository(
             throw e
         }
 
-        val api = RemoteDataSourceFactory.create_api(state.base_url, state.auth_token)
+        val api = RemoteDataSourceFactory.create_api(activeState.base_url, activeState.auth_token)
         val response = try {
             api.sync(
                 SyncRequestDto(
-                    phone_device_id = state.phone_device_id,
-                    last_sync_at = state.last_sync_at,
-                    changed_bags = changed_bags.map { it.to_dto() },
-                    changed_items = changed_items.map { it.to_dto() }
+                    phone_device_id = activeState.phone_device_id,
+                    last_sync_at = activeState.last_sync_at,
+                    changed_bags = changed_bags.map { it.as_remote_dto() },
+                    changed_items = changed_items.map { it.as_remote_dto() }
                 )
             )
         } catch (e: Exception) {
@@ -190,20 +202,20 @@ class GoBagSyncRepository(
         }
 
         response.server_bag_changes
-            .map { it.to_model() }
+            .map { it.as_remote_model() }
             .filter { it.bag_id == selectedBagId || it.bag_id in pairedBagIds }
             .forEach {
             item_repository.apply_server_bag(it, state.last_sync_at)
         }
         response.server_item_changes
-            .map { it.to_model() }
+            .map { it.as_remote_model() }
             .filter { it.bag_id == selectedBagId || it.bag_id in pairedBagIds }
             .forEach {
             item_repository.apply_server_item(it, state.last_sync_at)
         }
 
         val conflicts = response.conflicts
-            .map { it.to_model() }
+            .map { it.as_remote_model() }
             .filter { it.server_version.bag_id == selectedBagId }
         conflict_dao.clear_all()
         if (conflicts.isNotEmpty()) {
@@ -214,7 +226,7 @@ class GoBagSyncRepository(
             device_state_store.set_has_unresolved_conflicts(false)
         }
 
-        val alerts = response.alerts.map { it.to_model() }.filter { it.bag_id == selectedBagId }
+        val alerts = response.alerts.map { it.as_remote_model() }.filter { it.bag_id == selectedBagId }
         if (alerts.isNotEmpty()) {
             NotificationHelper.notify_alerts(context, alerts)
         }
@@ -230,7 +242,11 @@ class GoBagSyncRepository(
                 pendingChangesCount = syncStatus.pending_changes_count,
                 localIp = syncStatus.local_ip,
                 lastSyncAt = syncStatus.last_sync_at,
-                bag_id = selectedBagId
+                bag_id = selectedBagId,
+                resolvedBaseUrl = activeState.base_url,
+                localBaseUrl = syncStatus.local_base_url.ifBlank { null },
+                remoteBaseUrl = syncStatus.remote_base_url.ifBlank { null },
+                connectionMode = activeState.last_connection_mode.ifBlank { null }
             )
         } else {
             device_state_store.set_last_sync_at(response.server_time_ms, bag_id = selectedBagId)
@@ -331,3 +347,67 @@ class GoBagSyncRepository(
         return listOfNotNull(location.ifBlank { null }, message.ifBlank { null }).joinToString(": ").ifBlank { null }
     }
 }
+
+private fun BagProfile.as_remote_dto(): BagDto = BagDto(
+    bag_id = bag_id,
+    name = name,
+    size_liters = size_liters,
+    template_id = template_id,
+    updated_at = updated_at,
+    updated_by = updated_by
+)
+
+private fun Item.as_remote_dto(): ItemDto = ItemDto(
+    id = id,
+    bag_id = bag_id,
+    name = name,
+    category = category,
+    quantity = quantity,
+    unit = unit,
+    packed_status = packed_status,
+    notes = notes,
+    expiry_date_ms = expiry_date_ms,
+    deleted = deleted,
+    updated_at = updated_at,
+    updated_by = updated_by
+)
+
+private fun BagDto.as_remote_model(): BagProfile = BagProfile(
+    bag_id = bag_id,
+    name = name,
+    size_liters = size_liters,
+    template_id = template_id,
+    updated_at = updated_at,
+    updated_by = updated_by
+)
+
+private fun ItemDto.as_remote_model(): Item = Item(
+    id = id,
+    bag_id = bag_id,
+    name = name,
+    category = category,
+    quantity = quantity,
+    unit = unit,
+    packed_status = packed_status,
+    notes = notes,
+    expiry_date_ms = expiry_date_ms,
+    deleted = deleted,
+    updated_at = updated_at,
+    updated_by = updated_by
+)
+
+private fun ConflictDto.as_remote_model(): Conflict = Conflict(
+    item_id = item_id,
+    server_version = server_version.as_remote_model(),
+    reason = reason
+)
+
+private fun AlertDto.as_remote_model(): AlertModel = AlertModel(
+    bag_id = bag_id,
+    bag_name = bag_name ?: bag_id,
+    item_id = item_id,
+    item_name = item_name ?: item_id,
+    type = type,
+    days_left = days_left,
+    expiry_date_ms = expiry_date_ms
+)

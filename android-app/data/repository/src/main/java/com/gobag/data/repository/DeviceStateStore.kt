@@ -78,6 +78,8 @@ class DeviceStateStore(context: Context) {
                 auth_token = activeBag?.auth_token.orEmpty(),
                 base_url = activeBag?.base_url ?: activeAddress?.base_url.orEmpty(),
                 pi_device_id = activeBag?.pi_device_id.orEmpty(),
+                local_base_url = activeBag?.local_base_url.orEmpty(),
+                remote_base_url = activeBag?.remote_base_url.orEmpty(),
                 last_sync_at = activeBag?.last_sync_at ?: (prefs[LAST_SYNC_AT] ?: 0L),
                 time_offset_ms = activeBag?.time_offset_ms ?: (prefs[TIME_OFFSET_MS] ?: 0L),
                 auto_sync_enabled = prefs[AUTO_SYNC_ENABLED] ?: false,
@@ -87,6 +89,7 @@ class DeviceStateStore(context: Context) {
                 sync_status = PiConnectionStatus.normalize_sync_status(prefs[SYNC_STATUS]),
                 pending_changes_count = activeBag?.pending_changes_count ?: (prefs[PENDING_CHANGES_COUNT] ?: 0L).toInt(),
                 local_ip = activeBag?.local_ip ?: (prefs[LOCAL_IP] ?: ""),
+                last_connection_mode = activeBag?.last_connection_mode.orEmpty(),
                 last_connection_error = activeBag?.last_connection_error
                     ?: (prefs[LAST_CONNECTION_ERROR] ?: ""),
                 last_sync_error = prefs[LAST_SYNC_ERROR] ?: "",
@@ -127,7 +130,10 @@ class DeviceStateStore(context: Context) {
         auth_token: String,
         base_url: String,
         pi_device_id: String,
-        time_offset_ms: Long
+        time_offset_ms: Long,
+        local_base_url: String? = null,
+        remote_base_url: String? = null,
+        last_connection_mode: String? = null
     ) {
         data_store.edit { prefs ->
             val existing = parse_paired_bags(prefs[PAIRED_BAGS_JSON]).toMutableList()
@@ -147,7 +153,10 @@ class DeviceStateStore(context: Context) {
                 pending_changes_count = current?.pending_changes_count ?: 0,
                 local_ip = current?.local_ip ?: "",
                 last_connection_error = "",
-                paired_at = current?.paired_at ?: System.currentTimeMillis()
+                paired_at = current?.paired_at ?: System.currentTimeMillis(),
+                local_base_url = local_base_url ?: current?.local_base_url,
+                remote_base_url = remote_base_url ?: current?.remote_base_url,
+                last_connection_mode = last_connection_mode ?: current?.last_connection_mode
             )
             existing.removeAll { it.bag_id == bag_id }
             existing += updated
@@ -313,17 +322,25 @@ class DeviceStateStore(context: Context) {
         pendingChangesCount: Int,
         localIp: String,
         lastSyncAt: Long? = null,
-        bag_id: String? = null
+        bag_id: String? = null,
+        resolvedBaseUrl: String? = null,
+        localBaseUrl: String? = null,
+        remoteBaseUrl: String? = null,
+        connectionMode: String? = null
     ) {
         val effectiveBagId = bag_id ?: state.map { it.selected_bag_id }.first_or_default("")
         val checkedAt = System.currentTimeMillis()
         update_paired_bag_connection(effectiveBagId, preserve_when_missing = true) {
             it.copy(
+                base_url = resolvedBaseUrl ?: it.base_url,
                 connection_status = PiConnectionStatus.STATUS_PI_ONLINE,
                 pending_changes_count = pendingChangesCount,
                 local_ip = localIp,
                 last_sync_at = lastSyncAt ?: it.last_sync_at,
-                last_connection_error = ""
+                last_connection_error = "",
+                local_base_url = localBaseUrl ?: it.local_base_url,
+                remote_base_url = remoteBaseUrl ?: it.remote_base_url,
+                last_connection_mode = connectionMode ?: it.last_connection_mode
             )
         }
         data_store.edit { prefs ->
@@ -378,7 +395,10 @@ class DeviceStateStore(context: Context) {
     suspend fun update_paired_bag_endpoint(
         base_url: String,
         bag_id: String? = null,
-        pi_device_id: String? = null
+        pi_device_id: String? = null,
+        local_base_url: String? = null,
+        remote_base_url: String? = null,
+        last_connection_mode: String? = null
     ) {
         if (base_url.isBlank()) return
         data_store.edit { prefs ->
@@ -390,7 +410,12 @@ class DeviceStateStore(context: Context) {
                 val matchesBag = selectedBagId.isNotBlank() && bag.bag_id == selectedBagId
                 val matchesPi = selectedPiId.isNotBlank() && bag.pi_device_id == selectedPiId
                 if (matchesBag || matchesPi) {
-                    bag.copy(base_url = base_url)
+                    bag.copy(
+                        base_url = base_url,
+                        local_base_url = local_base_url ?: bag.local_base_url,
+                        remote_base_url = remote_base_url ?: bag.remote_base_url,
+                        last_connection_mode = last_connection_mode ?: bag.last_connection_mode
+                    )
                 } else {
                     bag
                 }

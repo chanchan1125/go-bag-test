@@ -3,6 +3,7 @@
 ## Notes before the endpoint list
 
 - Base URL is typically `http://<pi-ip>:8080`
+- An optional remote base URL can also be advertised for cross-network access
 - Android uses a sync-first contract
 - Android directly uses only a subset of the Pi API
 - Pi CRUD endpoints still exist for Pi/web/admin use
@@ -44,10 +45,12 @@
   - `last_sync_at`
   - `connection_status`
   - `pending_changes_count`
-  - `local_ip`
-  - `updated_at`
-  - `pi_device_id`
-  - `pair_code`
+- `local_ip`
+- `local_base_url`
+- `remote_base_url`
+- `updated_at`
+- `pi_device_id`
+- `pair_code`
   - `paired_devices`
   - `database_path`
 
@@ -62,8 +65,10 @@
   - `last_sync_at`
   - `connection_status`
   - `pending_changes_count`
-  - `local_ip`
-  - `updated_at`
+- `local_ip`
+- `local_base_url`
+- `remote_base_url`
+- `updated_at`
 
 ### `GET /time`
 

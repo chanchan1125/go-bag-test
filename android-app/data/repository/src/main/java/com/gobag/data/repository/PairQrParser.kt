@@ -5,6 +5,7 @@ import com.google.gson.JsonParser
 
 data class PairQrPayload(
     val base_url: String,
+    val remote_base_url: String = "",
     val pair_code: String,
     val pi_device_id: String = "",
     val bag_id: String = "",
@@ -41,6 +42,7 @@ object PairQrParser {
 
         return PairQrPayload(
             base_url = baseUrl,
+            remote_base_url = payload.read_string("remote_base_url"),
             pair_code = pairCode,
             pi_device_id = payload.read_string("pi_device_id"),
             bag_id = payload.read_string("bag_id"),

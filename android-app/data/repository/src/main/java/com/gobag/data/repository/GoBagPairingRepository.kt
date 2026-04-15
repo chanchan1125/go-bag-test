@@ -15,6 +15,7 @@ import com.gobag.domain.repository.SyncRepository
 import com.google.gson.JsonParser
 import kotlinx.coroutines.flow.first
 import retrofit2.HttpException
+import java.net.URI
 
 private data class PairingBagSeed(
     val bag_id: String,
@@ -30,14 +31,36 @@ class GoBagPairingRepository(
     private val item_repository: ItemRepository,
     private val sync_repository: SyncRepository,
     private val pi_connection_manager: PiConnectionManager
-) : PairingRepository {
+    ) : PairingRepository {
     override suspend fun pair_from_qr_payload(payload_json: String): PairingSetupResult {
         val payload = PairQrParser.parse(payload_json)
-        return perform_pairing(
-            base_url = payload.base_url,
-            pair_code = payload.pair_code,
-            qr_payload = payload
-        )
+        val normalizedQrBaseUrl = runCatching { normalize_base_url(payload.base_url) }.getOrNull()
+        val candidateEndpoints = build_qr_pairing_candidates(payload.base_url, payload.remote_base_url)
+        if (candidateEndpoints.isEmpty()) {
+            normalize_base_url(payload.base_url)
+        }
+        var lastFailure: Exception? = null
+
+        for (candidate in candidateEndpoints) {
+            try {
+                val result = perform_pairing(
+                    base_url = candidate,
+                    pair_code = payload.pair_code,
+                    qr_payload = payload
+                )
+                return if (normalizedQrBaseUrl != null && candidate.equals(normalizedQrBaseUrl, ignoreCase = true)) {
+                    result
+                } else {
+                    result.copy(
+                        detail = "${result.detail} We used the saved bag location because the QR location was not reachable."
+                    )
+                }
+            } catch (e: Exception) {
+                lastFailure = e
+            }
+        }
+
+        throw lastFailure ?: IllegalStateException("We could not finish setup.")
     }
 
     override suspend fun pair_with_code(base_url: String, pair_code: String): PairingSetupResult {
@@ -87,6 +110,17 @@ class GoBagPairingRepository(
     ): PairingSetupResult {
         device_state_store.initialize_phone_device_id_if_missing()
         val normalizedBaseUrl = normalize_base_url(base_url)
+        val normalizedLocalBaseUrl = normalize_optional_base_url(qr_payload?.base_url)
+            .ifBlank { if (is_remote_candidate(normalizedBaseUrl)) "" else normalizedBaseUrl }
+        val normalizedRemoteBaseUrl = normalize_optional_base_url(qr_payload?.remote_base_url)
+            .ifBlank { if (is_remote_candidate(normalizedBaseUrl)) normalizedBaseUrl else "" }
+        val connectionMode = if (normalizedRemoteBaseUrl.isNotBlank() &&
+            normalizedBaseUrl.equals(normalizedRemoteBaseUrl, ignoreCase = true)
+        ) {
+            CONNECTION_MODE_REMOTE
+        } else {
+            CONNECTION_MODE_LOCAL
+        }
         val normalizedPairCode = normalize_pair_code(pair_code)
         pi_connection_manager.test_endpoint(normalizedBaseUrl, adopt_on_success = false)
 
@@ -121,7 +155,10 @@ class GoBagPairingRepository(
             auth_token = pair.auth_token,
             base_url = normalizedBaseUrl,
             pi_device_id = pair.pi_device_id,
-            time_offset_ms = pair.server_time_ms - phone_time_ms
+            time_offset_ms = pair.server_time_ms - phone_time_ms,
+            local_base_url = normalizedLocalBaseUrl.ifBlank { null },
+            remote_base_url = normalizedRemoteBaseUrl.ifBlank { null },
+            last_connection_mode = connectionMode
         )
         device_state_store.set_selected_bag_id(bagProfile.bag_id)
 
@@ -132,7 +169,8 @@ class GoBagPairingRepository(
                 base_url = normalizedBaseUrl,
                 bag_id = bagProfile.bag_id,
                 pi_device_id = pair.pi_device_id,
-                device_status = deviceStatus
+                device_status = deviceStatus,
+                hinted_remote_base_url = normalizedRemoteBaseUrl.ifBlank { null }
             )
         }.onFailure {
             warnings += "Bag status refresh failed."
@@ -210,6 +248,61 @@ class GoBagPairingRepository(
             )
         }
             throw IllegalStateException("The bag did not send its details. Refresh the bag screen and try again.")
+    }
+
+    private suspend fun build_qr_pairing_candidates(qr_base_url: String, qr_remote_base_url: String): List<String> {
+        val state = device_state_store.state.first()
+        val localCandidates = linkedSetOf<String>()
+        val remoteCandidates = linkedSetOf<String>()
+
+        fun add_candidate(bucket: MutableSet<String>, raw: String?) {
+            val normalized = raw
+                ?.takeIf { it.isNotBlank() }
+                ?.let { runCatching { normalize_base_url(it) }.getOrNull() }
+                .orEmpty()
+            if (normalized.isNotBlank()) {
+                bucket += normalized
+            }
+        }
+
+        add_candidate(localCandidates, state.local_base_url)
+        add_candidate(localCandidates, state.base_url.takeIf { !is_remote_candidate(it) })
+        state.saved_addresses.filter { it.is_active && !is_remote_candidate(it.base_url) }
+            .forEach { add_candidate(localCandidates, it.base_url) }
+        add_candidate(localCandidates, qr_base_url)
+        state.saved_addresses.filter { !is_remote_candidate(it.base_url) }
+            .forEach { add_candidate(localCandidates, it.base_url) }
+
+        add_candidate(remoteCandidates, state.remote_base_url)
+        add_candidate(remoteCandidates, state.base_url.takeIf { is_remote_candidate(it) })
+        add_candidate(remoteCandidates, qr_remote_base_url)
+        state.saved_addresses.filter { is_remote_candidate(it.base_url) }
+            .forEach { add_candidate(remoteCandidates, it.base_url) }
+
+        return (localCandidates + remoteCandidates).toList()
+    }
+
+    private fun normalize_optional_base_url(base_url: String?): String {
+        return base_url
+            ?.takeIf { it.isNotBlank() }
+            ?.let { runCatching { normalize_base_url(it) }.getOrNull() }
+            .orEmpty()
+    }
+
+    private fun is_remote_candidate(base_url: String?): Boolean {
+        val normalizedBaseUrl = normalize_optional_base_url(base_url)
+        if (normalizedBaseUrl.isBlank()) return false
+        val uri = runCatching { URI(normalizedBaseUrl) }.getOrNull() ?: return false
+        val host = uri.host.orEmpty().trim().trim('[', ']').lowercase()
+        if (uri.scheme.equals("https", ignoreCase = true)) return true
+        if (host.endsWith(".ts.net")) return true
+        if (host.contains(':')) {
+            return host.startsWith("fc") || host.startsWith("fd")
+        }
+        val octets = host.split('.')
+        if (octets.size != 4) return false
+        val parts = octets.map { it.toIntOrNull() ?: return false }
+        return parts[0] == 100 && parts[1] in 64..127
     }
 
     private fun normalize_base_url(base_url: String): String {

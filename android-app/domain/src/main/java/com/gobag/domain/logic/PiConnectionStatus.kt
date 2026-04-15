@@ -122,6 +122,8 @@ object PiConnectionStatus {
     fun from_device_state(state: DeviceState): PiConnectionSnapshot {
         val isPaired = state.paired_bags.isNotEmpty()
         val hasSavedAddress = state.saved_addresses.isNotEmpty() || state.base_url.isNotBlank()
+        val hasRemotePath = state.remote_base_url.isNotBlank() || state.paired_bags.any { !it.remote_base_url.isNullOrBlank() }
+        val connectionMode = state.last_connection_mode.trim().lowercase(Locale.ROOT)
         val connectionStatus = normalize_connection_status(
             value = state.connection_status,
             is_paired = isPaired,
@@ -148,11 +150,15 @@ object PiConnectionStatus {
         }
         val connectionLabel = when (reachabilityState) {
             PiReachabilityState.CHECKING_CONNECTION -> "Checking"
-            PiReachabilityState.PI_ONLINE -> "Online"
+            PiReachabilityState.PI_ONLINE -> when (connectionMode) {
+                "remote" -> "Online (Remote)"
+                "local" -> "Online (Local)"
+                else -> "Online"
+            }
             PiReachabilityState.PI_OFFLINE -> "Offline"
             PiReachabilityState.ADDRESS_UNREACHABLE -> "Offline"
             PiReachabilityState.UNKNOWN -> when {
-                isPaired -> "Saved"
+                isPaired -> "Paired"
                 hasSavedAddress -> "Setup started"
                 else -> "Not set up"
             }
@@ -168,9 +174,13 @@ object PiConnectionStatus {
             syncState == PiSyncState.SYNC_FAILED -> "Update failed"
             reachabilityState == PiReachabilityState.CHECKING_CONNECTION -> "Checking"
             discoveryState == PiDiscoveryState.PAIRING_READY -> "Ready"
-            reachabilityState == PiReachabilityState.PI_ONLINE -> "Online"
+            reachabilityState == PiReachabilityState.PI_ONLINE -> when (connectionMode) {
+                "remote" -> "Remote online"
+                "local" -> "Local online"
+                else -> "Online"
+            }
             isPaired && reachabilityState in setOf(PiReachabilityState.PI_OFFLINE, PiReachabilityState.ADDRESS_UNREACHABLE) -> "Offline"
-            isPaired -> "Saved"
+            isPaired -> "Paired"
             hasSavedAddress -> "Setup started"
             else -> "Not set up"
         }
@@ -181,20 +191,28 @@ object PiConnectionStatus {
             reachabilityState == PiReachabilityState.CHECKING_CONNECTION -> "Checking your bag connection."
             discoveryState == PiDiscoveryState.PAIRING_READY ->
                 "We found the bag hub. You can connect now."
+            reachabilityState == PiReachabilityState.PI_ONLINE && isPaired && connectionMode == "remote" ->
+                "Your bag is available right now through its remote link."
             reachabilityState == PiReachabilityState.PI_ONLINE && isPaired ->
-                "Your bag is available right now."
+                "Your bag is available right now on this Wi-Fi."
+            reachabilityState == PiReachabilityState.PI_ONLINE && connectionMode == "remote" ->
+                "We found the bag remotely. You can connect now."
             reachabilityState == PiReachabilityState.PI_ONLINE ->
                 "We found the bag hub. You can connect now."
             reachabilityState == PiReachabilityState.ADDRESS_UNREACHABLE && state.last_connection_error.isNotBlank() ->
                 state.last_connection_error
+            reachabilityState == PiReachabilityState.ADDRESS_UNREACHABLE && hasRemotePath ->
+                "We could not reach the bag on its local or remote link. Try reconnecting."
             reachabilityState == PiReachabilityState.ADDRESS_UNREACHABLE ->
                 "We could not reach the saved bag location. Try reconnecting."
             reachabilityState == PiReachabilityState.PI_OFFLINE && state.last_connection_error.isNotBlank() ->
                 state.last_connection_error
+            reachabilityState == PiReachabilityState.PI_OFFLINE && hasRemotePath ->
+                "Your bag is offline right now on both its local and remote links."
             reachabilityState == PiReachabilityState.PI_OFFLINE ->
                 "Your bag is offline right now."
             isPaired ->
-                "This phone remembers your bag."
+                "This phone is paired with your bag."
             hasSavedAddress ->
                 "A bag location is saved. Finish connecting to use it."
             else ->

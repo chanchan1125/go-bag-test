@@ -1,13 +1,30 @@
-﻿plugins {
+plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
 }
+
+val relayBaseUrl = (
+    providers.gradleProperty("GOBAG_RELAY_BASE_URL").orNull
+        ?: System.getenv("GOBAG_RELAY_BASE_URL")
+        ?: ""
+).trim()
 
 android {
     namespace = "com.gobag.data.repository"
     compileSdk = 34
 
-    defaultConfig { minSdk = 26 }
+    defaultConfig {
+        minSdk = 26
+        buildConfigField(
+            "String",
+            "GOBAG_RELAY_BASE_URL",
+            "\"" + relayBaseUrl.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        )
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
 
     kotlinOptions { jvmTarget = "17" }
     compileOptions {

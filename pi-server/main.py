@@ -1,6 +1,7 @@
 import base64
 import calendar
 import glob
+import ipaddress
 import io
 import json
 import logging
@@ -22,6 +23,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from html import escape
 from typing import Dict, Iterator, List, Literal, Optional, Union
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from urllib.parse import parse_qs, quote, urlsplit
 
 import qrcode
@@ -83,6 +86,15 @@ WIFI_SUDOERS_FILE = os.getenv("GOBAG_WIFI_SUDOERS_FILE", "/etc/sudoers.d/gobag-w
 WIFI_STATUS_TIMEOUT_S = max(float(os.getenv("GOBAG_WIFI_STATUS_TIMEOUT_S", "4")), 1.0)
 WIFI_SCAN_TIMEOUT_S = max(float(os.getenv("GOBAG_WIFI_SCAN_TIMEOUT_S", "12")), 2.0)
 WIFI_CONNECT_TIMEOUT_S = max(float(os.getenv("GOBAG_WIFI_CONNECT_TIMEOUT_S", "25")), 4.0)
+RELAY_URL = os.getenv("GOBAG_RELAY_URL", "").strip()
+RELAY_DEVICE_SECRET = os.getenv("GOBAG_RELAY_DEVICE_SECRET", "").strip()
+RELAY_BOOTSTRAP_SECRET = os.getenv("GOBAG_RELAY_BOOTSTRAP_SECRET", "").strip()
+RELAY_POLL_TIMEOUT_S = max(float(os.getenv("GOBAG_RELAY_POLL_TIMEOUT_S", "18")), 5.0)
+RELAY_REQUEST_TIMEOUT_S = max(float(os.getenv("GOBAG_RELAY_REQUEST_TIMEOUT_S", "20")), 3.0)
+RELAY_RETRY_DELAY_S = max(float(os.getenv("GOBAG_RELAY_RETRY_DELAY_S", "3")), 1.0)
+TAILSCALE_CMD = os.getenv("GOBAG_TAILSCALE_CMD", "tailscale").strip() or "tailscale"
+TAILSCALE_STATUS_TIMEOUT_S = max(float(os.getenv("GOBAG_TAILSCALE_STATUS_TIMEOUT_S", "2.5")), 0.5)
+TAILSCALE_REMOTE_CACHE_TTL_S = max(float(os.getenv("GOBAG_TAILSCALE_REMOTE_CACHE_TTL_S", "15")), 0.0)
 KIOSK_PREFERENCES_META_KEY = "pi_kiosk_preferences_v1"
 KIOSK_BRIGHTNESS_OPTIONS = {"low", "medium", "high"}
 KIOSK_REMINDER_INTERVAL_OPTIONS = (15, 30, 60, 180)
@@ -104,6 +116,8 @@ if not logging.getLogger().handlers:
 IMAGE_RESAMPLING = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 USB_CAPABILITY_CACHE_TTL_S = 60.0
 _usb_camera_capability_cache: Dict[str, tuple[float, "UsbCameraCapability"]] = {}
+_tailscale_remote_url_cache: Dict[str, Union[str, float]] = {"value": "", "expires_at": 0.0}
+_tailscale_remote_url_cache_lock = threading.Lock()
 
 
 class Bag(BaseModel):
@@ -258,6 +272,8 @@ class DeviceStatusResponse(BaseModel):
     connection_status: str
     pending_changes_count: int
     local_ip: str
+    local_base_url: str
+    remote_base_url: str
     updated_at: int
     pi_device_id: str
     pair_code: str
@@ -272,6 +288,8 @@ class SyncStatusResponse(BaseModel):
     connection_status: str
     pending_changes_count: int
     local_ip: str
+    local_base_url: str
+    remote_base_url: str
     updated_at: int
 
 
@@ -1220,19 +1238,46 @@ def current_device_ip_display() -> str:
     return display_local_ip(compute_local_ip())
 
 
-def current_device_base_url_display(request: Optional[Request] = None) -> str:
-    fallback_base_url = compute_base_url(request)
-    live_ip = current_device_ip_display()
-    if live_ip == "Unavailable":
-        return fallback_base_url
-    parsed = urlsplit(fallback_base_url if "://" in fallback_base_url else f"http://{fallback_base_url}")
-    scheme = parsed.scheme or "http"
-    port = parsed.port or PORT
-    return f"{scheme}://{live_ip}:{port}"
+def normalize_base_url_value(raw_value: str) -> str:
+    value = str(raw_value or "").strip().rstrip("/")
+    if not value:
+        return ""
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    path = parsed.path.rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
-def compute_base_url(request: Optional[Request] = None) -> str:
-    configured = os.getenv("GOBAG_BASE_URL", "").strip()
+def is_trusted_private_or_mesh_host(host: str) -> bool:
+    normalized = str(host or "").strip().strip("[]").lower()
+    if not normalized:
+        return False
+    if normalized.endswith(".ts.net"):
+        return True
+    try:
+        ip = ipaddress.ip_address(normalized)
+    except ValueError:
+        return normalized.endswith(".local") or normalized.endswith(".lan")
+    if ip.is_private or ip.is_loopback or ip.is_link_local:
+        return True
+    if isinstance(ip, ipaddress.IPv4Address) and ip in ipaddress.ip_network("100.64.0.0/10"):
+        return True
+    return False
+
+
+def is_secure_remote_base_url(base_url: str) -> bool:
+    normalized = normalize_base_url_value(base_url)
+    if not normalized:
+        return False
+    parsed = urlsplit(normalized)
+    if parsed.scheme == "https":
+        return True
+    return is_trusted_private_or_mesh_host(parsed.hostname or "")
+
+
+def compute_local_base_url(request: Optional[Request] = None) -> str:
+    configured = normalize_base_url_value(os.getenv("GOBAG_BASE_URL", ""))
     if configured:
         return configured
 
@@ -1246,6 +1291,316 @@ def compute_base_url(request: Optional[Request] = None) -> str:
             return f"http://{host}"
 
     return f"http://127.0.0.1:{PORT}"
+
+
+def current_pi_device_id() -> str:
+    with db_conn() as conn:
+        return get_meta(conn, "pi_device_id") or ""
+
+
+def normalized_relay_base_url() -> str:
+    return normalize_base_url_value(RELAY_URL)
+
+
+def relay_remote_base_url_for_pi(pi_device_id: str) -> str:
+    relay_base_url = normalized_relay_base_url()
+    if not relay_base_url or not pi_device_id.strip():
+        return ""
+    return f"{relay_base_url}/r/{quote(pi_device_id.strip(), safe='')}"
+
+
+def compute_relay_remote_base_url() -> str:
+    if not normalized_relay_base_url() or not RELAY_DEVICE_SECRET:
+        return ""
+    return relay_remote_base_url_for_pi(current_pi_device_id())
+
+
+def resolve_tailscale_command() -> str:
+    configured = TAILSCALE_CMD.strip()
+    if not configured:
+        return ""
+    resolved = shutil.which(configured)
+    if resolved:
+        return resolved
+    if os.path.isabs(configured) and os.path.exists(configured):
+        return configured
+    return ""
+
+
+def run_tailscale_command(args: List[str]) -> Optional[subprocess.CompletedProcess[str]]:
+    command = resolve_tailscale_command()
+    if not command:
+        return None
+    try:
+        return subprocess.run(
+            [command, *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=TAILSCALE_STATUS_TIMEOUT_S,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("Tailscale command failed for %s: %s", shlex.join([command, *args]), exc)
+        return None
+
+
+def parse_tailscale_status_payload(raw_output: str) -> dict:
+    try:
+        payload = json.loads(raw_output or "{}")
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def tailscale_self_payload(status_payload: dict) -> dict:
+    self_payload = status_payload.get("Self")
+    return self_payload if isinstance(self_payload, dict) else {}
+
+
+def build_tailscale_ip_base_url(status_payload: dict) -> str:
+    ipv6_candidate = ""
+    for raw_ip in tailscale_self_payload(status_payload).get("TailscaleIPs") or []:
+        candidate = str(raw_ip or "").strip()
+        if not candidate:
+            continue
+        try:
+            ip = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if isinstance(ip, ipaddress.IPv4Address):
+            return f"http://{candidate}:{PORT}"
+        if not ipv6_candidate:
+            ipv6_candidate = f"http://[{candidate}]:{PORT}"
+    return ipv6_candidate
+
+
+def detect_tailscale_serve_url() -> str:
+    result = run_tailscale_command(["serve", "status"])
+    if not result or result.returncode != 0:
+        return ""
+
+    current_url = ""
+    local_target_pattern = re.compile(
+        rf"(?:https\+insecure|https|http)://(?:127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\]|\[::\]):{PORT}\b"
+    )
+    for raw_line in (result.stdout or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        url_match = re.search(r"https://[^\s]+", line)
+        if url_match:
+            current_url = normalize_base_url_value(url_match.group(0))
+            continue
+        if current_url and local_target_pattern.search(line):
+            return current_url
+    return ""
+
+
+def detect_tailscale_remote_base_url_uncached() -> str:
+    status_result = run_tailscale_command(["status", "--json"])
+    if not status_result or status_result.returncode != 0:
+        return ""
+    status_payload = parse_tailscale_status_payload(status_result.stdout)
+    if not status_payload:
+        return ""
+
+    serve_url = detect_tailscale_serve_url()
+    if serve_url:
+        return serve_url
+    return build_tailscale_ip_base_url(status_payload)
+
+
+def detect_tailscale_remote_base_url() -> str:
+    if TAILSCALE_REMOTE_CACHE_TTL_S <= 0:
+        return detect_tailscale_remote_base_url_uncached()
+
+    now = time.time()
+    with _tailscale_remote_url_cache_lock:
+        if now < float(_tailscale_remote_url_cache["expires_at"]):
+            return str(_tailscale_remote_url_cache["value"])
+
+    detected = detect_tailscale_remote_base_url_uncached()
+    with _tailscale_remote_url_cache_lock:
+        _tailscale_remote_url_cache["value"] = detected
+        _tailscale_remote_url_cache["expires_at"] = now + TAILSCALE_REMOTE_CACHE_TTL_S
+    return detected
+
+
+def compute_pairing_remote_base_url() -> str:
+    configured = normalize_base_url_value(os.getenv("GOBAG_REMOTE_BASE_URL", ""))
+    if configured:
+        if is_secure_remote_base_url(configured):
+            return configured
+        logger.warning("Ignoring insecure GOBAG_REMOTE_BASE_URL because it is not HTTPS or a trusted mesh/VPN address.")
+
+    detected = normalize_base_url_value(detect_tailscale_remote_base_url())
+    if detected and is_secure_remote_base_url(detected):
+        return detected
+    return ""
+
+
+def compute_remote_base_url() -> str:
+    configured = normalize_base_url_value(os.getenv("GOBAG_REMOTE_BASE_URL", ""))
+    if configured:
+        if is_secure_remote_base_url(configured):
+            return configured
+        logger.warning("Ignoring insecure GOBAG_REMOTE_BASE_URL because it is not HTTPS or a trusted mesh/VPN address.")
+
+    relay_remote_base_url = compute_relay_remote_base_url()
+    if relay_remote_base_url:
+        return relay_remote_base_url
+
+    detected = normalize_base_url_value(detect_tailscale_remote_base_url())
+    if detected and is_secure_remote_base_url(detected):
+        return detected
+    return ""
+
+
+def compute_pairing_base_url(request: Optional[Request] = None) -> str:
+    local_base_url = compute_local_base_url(request)
+    if local_base_url and "127.0.0.1" not in local_base_url and "localhost" not in local_base_url:
+        return local_base_url
+    return compute_remote_base_url() or local_base_url
+
+
+def current_device_base_url_display(request: Optional[Request] = None) -> str:
+    fallback_base_url = compute_local_base_url(request)
+    live_ip = current_device_ip_display()
+    if live_ip == "Unavailable":
+        return fallback_base_url
+    parsed = urlsplit(fallback_base_url if "://" in fallback_base_url else f"http://{fallback_base_url}")
+    scheme = parsed.scheme or "http"
+    port = parsed.port or PORT
+    return f"{scheme}://{live_ip}:{port}"
+
+
+def compute_base_url(request: Optional[Request] = None) -> str:
+    return compute_local_base_url(request)
+
+
+def relay_enabled() -> bool:
+    return bool(normalized_relay_base_url() and RELAY_DEVICE_SECRET)
+
+
+class RelayClientManager:
+    def __init__(self) -> None:
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if not relay_enabled():
+            return
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event = threading.Event()
+        worker = threading.Thread(target=self._run_loop, daemon=True, name="gobag-relay-client")
+        self._thread = worker
+        logger.info("Relay client enabled for %s", normalized_relay_base_url())
+        worker.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        worker = self._thread
+        self._thread = None
+        if worker and worker.is_alive():
+            worker.join(timeout=2)
+
+    def _run_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                handled_request = self._poll_once()
+                if handled_request:
+                    continue
+            except Exception as exc:
+                logger.warning("Relay poll failed: %s", exc)
+            self._stop_event.wait(RELAY_RETRY_DELAY_S)
+
+    def _poll_once(self) -> bool:
+        pi_device_id = current_pi_device_id()
+        if not pi_device_id:
+            return False
+        response = self._post_json(
+            f"{normalized_relay_base_url()}/v1/pi/poll",
+            {
+                "pi_device_id": pi_device_id,
+                "device_secret": RELAY_DEVICE_SECRET,
+                "bootstrap_secret": RELAY_BOOTSTRAP_SECRET,
+                "device_name": DEVICE_NAME,
+                "local_base_url": compute_local_base_url(),
+                "remote_base_url": compute_remote_base_url(),
+                "poll_timeout_ms": int(RELAY_POLL_TIMEOUT_S * 1000),
+            },
+            timeout_s=max(RELAY_POLL_TIMEOUT_S + 5.0, RELAY_REQUEST_TIMEOUT_S),
+        )
+        request_payload = response.get("request")
+        if not isinstance(request_payload, dict):
+            return False
+        self._handle_request(pi_device_id, request_payload)
+        return True
+
+    def _handle_request(self, pi_device_id: str, request_payload: dict) -> None:
+        request_id = str(request_payload.get("request_id") or "").strip()
+        kind = str(request_payload.get("kind") or "").strip()
+        authorization = str(request_payload.get("authorization") or "")
+        payload = request_payload.get("payload")
+
+        if not request_id or not kind:
+            raise RuntimeError("Relay delivered an invalid request payload.")
+
+        status_code = 200
+        response_body: object
+        try:
+            if kind == "device_status":
+                response_body = relay_device_status_payload(authorization)
+            elif kind == "sync_status":
+                response_body = relay_sync_status_payload(authorization)
+            elif kind == "sync":
+                response_body = relay_sync_payload(payload if isinstance(payload, dict) else {}, authorization)
+            else:
+                raise structured_http_exception(400, "RELAY_REQUEST_INVALID", f"Unsupported relay request kind '{kind}'.")
+        except HTTPException as exc:
+            status_code = exc.status_code
+            response_body = error_payload_from_detail(exc.detail, default_code="RELAY_REQUEST_FAILED")
+        except Exception as exc:
+            status_code = 500
+            response_body = structured_error_detail("RELAY_REQUEST_FAILED", "The Raspberry Pi could not complete the remote request.", technical=str(exc)[:240])
+
+        self._post_json(
+            f"{normalized_relay_base_url()}/v1/pi/respond",
+            {
+                "pi_device_id": pi_device_id,
+                "device_secret": RELAY_DEVICE_SECRET,
+                "request_id": request_id,
+                "status_code": status_code,
+                "response_body": response_body,
+            },
+            timeout_s=max(RELAY_REQUEST_TIMEOUT_S, 10.0),
+        )
+
+    def _post_json(self, url: str, payload: dict, timeout_s: float) -> dict:
+        request = urllib_request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=timeout_s) as response:
+                body = response.read().decode("utf-8", errors="replace")
+        except urllib_error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"relay HTTP {exc.code}: {body[:240] or exc.reason}") from exc
+        except urllib_error.URLError as exc:
+            raise RuntimeError(f"relay request failed: {exc.reason}") from exc
+        payload = json.loads(body or "{}")
+        if not isinstance(payload, dict):
+            raise RuntimeError("relay response was not a JSON object")
+        return payload
+
+
+relay_client_manager = RelayClientManager()
 
 
 def update_device_state(conn: sqlite3.Connection, connection_status: Optional[str] = None) -> None:
@@ -1465,13 +1820,16 @@ def parse_token(authorization: Optional[str]) -> str:
     return authorization.replace("Bearer ", "", 1)
 
 
-def require_token(authorization: Optional[str] = Header(default=None)) -> str:
-    token = parse_token(authorization)
+def ensure_token_active(token: str) -> str:
     with db_conn() as conn:
         row = conn.execute("SELECT token FROM tokens WHERE token = ? AND revoked = 0", (token,)).fetchone()
         if not row:
             raise HTTPException(status_code=401, detail="Invalid token")
     return token
+
+
+def require_token(authorization: Optional[str] = Header(default=None)) -> str:
+    return ensure_token_active(parse_token(authorization))
 
 
 def require_admin_access(request: Request) -> None:
@@ -3422,7 +3780,7 @@ def write_item_record(conn: sqlite3.Connection, item_id: str, bag_id: str, paylo
     return row_to_item_record(get_item_row_or_404(conn, item_id))
 
 
-def get_device_status_payload(conn: sqlite3.Connection) -> DeviceStatusResponse:
+def get_device_status_payload(conn: sqlite3.Connection, request: Optional[Request] = None) -> DeviceStatusResponse:
     update_device_state(conn)
     row = conn.execute("SELECT * FROM device_state WHERE id = 'primary'").fetchone()
     pair = active_pair_code(conn) or create_pair_code(conn)
@@ -3434,6 +3792,8 @@ def get_device_status_payload(conn: sqlite3.Connection) -> DeviceStatusResponse:
         connection_status=row["connection_status"],
         pending_changes_count=row["pending_changes_count"],
         local_ip=row["local_ip"],
+        local_base_url=compute_local_base_url(request),
+        remote_base_url=compute_remote_base_url(),
         updated_at=row["updated_at"],
         pi_device_id=get_meta(conn, "pi_device_id") or "",
         pair_code=pair["code"],
@@ -3508,10 +3868,12 @@ def capture_camera_jpeg() -> bytes:
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    relay_client_manager.start()
 
 
 @app.on_event("shutdown")
 def shutdown() -> None:
+    relay_client_manager.stop()
     usb_camera_session_manager.stop(clear_state=True)
 
 
@@ -3748,9 +4110,9 @@ def get_templates() -> dict:
 
 
 @app.get("/device/status", response_model=DeviceStatusResponse)
-def device_status() -> DeviceStatusResponse:
+def device_status(request: Request) -> DeviceStatusResponse:
     with db_conn() as conn:
-        return get_device_status_payload(conn)
+        return get_device_status_payload(conn, request)
 
 
 @app.get("/categories", response_model=List[CategoryRecord])
@@ -3869,13 +4231,28 @@ def get_alerts() -> List[AlertItem]:
         return compute_alerts(conn, now_ms())
 
 
+def get_sync_status_payload(conn: sqlite3.Connection, request: Optional[Request] = None) -> SyncStatusResponse:
+    update_device_state(conn)
+    row = conn.execute("SELECT * FROM device_state WHERE id = 'primary'").fetchone()
+    return SyncStatusResponse(
+        id=row["id"],
+        device_name=row["device_name"],
+        last_sync_at=row["last_sync_at"],
+        connection_status=row["connection_status"],
+        pending_changes_count=row["pending_changes_count"],
+        local_ip=row["local_ip"],
+        local_base_url=compute_local_base_url(request),
+        remote_base_url=compute_remote_base_url(),
+        updated_at=row["updated_at"],
+    )
+
+
 @app.get("/sync/status", response_model=SyncStatusResponse)
-def sync_status() -> SyncStatusResponse:
+def sync_status(request: Request) -> SyncStatusResponse:
     with db_conn() as conn:
-        update_device_state(conn)
-        row = conn.execute("SELECT * FROM device_state WHERE id = 'primary'").fetchone()
+        payload = get_sync_status_payload(conn, request)
         conn.commit()
-    return SyncStatusResponse(**dict(row))
+    return payload
 
 
 @app.get("/settings", response_model=SettingsRecord)
@@ -3928,8 +4305,7 @@ def pair(req: PairRequest) -> PairResponse:
         return PairResponse(auth_token=token, pi_device_id=get_meta(conn, "pi_device_id") or "", server_time_ms=now_ms())
 
 
-@app.post("/sync", response_model=SyncResponse)
-def sync(req: SyncRequest, _: str = Depends(require_token)) -> SyncResponse:
+def run_sync_request(req: SyncRequest) -> SyncResponse:
     with db_conn() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -4050,6 +4426,33 @@ def sync(req: SyncRequest, _: str = Depends(require_token)) -> SyncResponse:
             raise
 
 
+@app.post("/sync", response_model=SyncResponse)
+def sync(req: SyncRequest, _: str = Depends(require_token)) -> SyncResponse:
+    return run_sync_request(req)
+
+
+def relay_device_status_payload(authorization: str) -> dict:
+    ensure_token_active(parse_token(authorization))
+    with db_conn() as conn:
+        payload = get_device_status_payload(conn)
+        conn.commit()
+    return payload.model_dump()
+
+
+def relay_sync_status_payload(authorization: str) -> dict:
+    ensure_token_active(parse_token(authorization))
+    with db_conn() as conn:
+        payload = get_sync_status_payload(conn)
+        conn.commit()
+    return payload.model_dump()
+
+
+def relay_sync_payload(payload: dict, authorization: str) -> dict:
+    ensure_token_active(parse_token(authorization))
+    request = SyncRequest.model_validate(payload)
+    return run_sync_request(request).model_dump()
+
+
 @app.get("/kiosk/state")
 def kiosk_state(request: Request) -> dict:
     with db_conn() as conn:
@@ -4111,9 +4514,10 @@ def admin_revoke_tokens(request: Request) -> dict:
     return {"revoked": True}
 
 
-def pair_qr_payload(base_url: str, pair_code: str, pi_device_id: str, bag: Bag) -> dict:
-    return {
+def pair_qr_payload(base_url: str, pair_code: str, pi_device_id: str, bag: Bag, remote_base_url: str = "") -> dict:
+    payload = {
         "base_url": base_url,
+        "remote_base_url": remote_base_url,
         "pair_code": pair_code,
         "pi_device_id": pi_device_id,
         "bag_id": bag.bag_id,
@@ -4121,6 +4525,9 @@ def pair_qr_payload(base_url: str, pair_code: str, pi_device_id: str, bag: Bag) 
         "size_liters": bag.size_liters,
         "template_id": bag.template_id,
     }
+    if not remote_base_url:
+        payload.pop("remote_base_url")
+    return payload
 
 
 def render_summary_html(summary_cards: List[tuple[str, str, str]]) -> str:
@@ -4297,17 +4704,19 @@ def render_inventory_groups_html(inventory_groups: List[InventoryGroupView]) -> 
 
 
 def render_pairing_card_html(base_url: str, pair: sqlite3.Row, pi_device_id: str, bag: Bag, paired: bool) -> str:
+    remote_base_url = compute_pairing_remote_base_url()
     return f"""
     <div class="pair-card">
       <div class="row-title">{escape(bag.name)}</div>
       <div class="row-subtitle">{escape(bag_size_label(bag.size_liters))} physical GO BAG on this Raspberry Pi</div>
       <div class="qr-wrap" style="margin-top: 12px;">
-        <img src="{qr_data_uri_for_payload(pair_qr_payload(base_url, pair['code'], pi_device_id, bag))}" alt="Pair {escape(bag.name)} QR">
+        <img src="{qr_data_uri_for_payload(pair_qr_payload(base_url, pair['code'], pi_device_id, bag, remote_base_url=remote_base_url))}" alt="Pair {escape(bag.name)} QR">
         <div class="pair-code-card">
           <div class="pair-code-label">Pair code</div>
           <div class="pair-code-value">{escape(pair['code'])}</div>
           <div class="panel-note">Scan this QR code from the phone app Pair screen or enter the code manually.</div>
           <div class="panel-note">{escape('A phone is already paired and can sync now.' if paired else 'Waiting for a phone to pair with this GO BAG.')}</div>
+          {f'<div class="panel-note">Remote link ready: {escape(remote_base_url)}</div>' if remote_base_url else ''}
         </div>
       </div>
     </div>
@@ -4486,7 +4895,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         edit_item = row_to_item_record(edit_item_row) if edit_item_row else None
         conn.commit()
 
-    base_url = compute_base_url(request)
+    base_url = compute_pairing_base_url(request)
     local_ip_display = current_device_ip_display()
     display_base_url = current_device_base_url_display(request)
     checked_count = sum(1 for row in readiness["checklist"] if row["checked"])

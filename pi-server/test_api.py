@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -49,16 +50,125 @@ class PiServerApiTests(unittest.TestCase):
         payload = device.json()
         self.assertEqual(payload["device_name"], "GO BAG Raspberry Pi")
         self.assertIn("gobag.db", payload["database_path"])
+        self.assertIn("local_base_url", payload)
+        self.assertIn("remote_base_url", payload)
 
         sync_status = self.client.get("/sync/status")
         self.assertEqual(sync_status.status_code, 200)
-        self.assertIn("connection_status", sync_status.json())
+        sync_payload = sync_status.json()
+        self.assertIn("connection_status", sync_payload)
+        self.assertIn("local_base_url", sync_payload)
+        self.assertIn("remote_base_url", sync_payload)
 
     def test_current_device_ip_display_prefers_live_ip_over_base_url(self):
         with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": "http://192.168.1.10:8001"}, clear=False):
             with mock.patch.object(self.module, "preferred_non_loopback_ip", return_value="192.168.1.9"):
                 self.assertEqual(self.module.current_device_ip_display(), "192.168.1.9")
                 self.assertEqual(self.module.current_device_base_url_display(), "http://192.168.1.9:8001")
+
+    def test_device_status_exposes_secure_remote_base_url(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "GOBAG_BASE_URL": "http://192.168.1.20:8080",
+                "GOBAG_REMOTE_BASE_URL": "https://bag.example.com",
+            },
+            clear=False,
+        ):
+            device = self.client.get("/device/status")
+        self.assertEqual(device.status_code, 200)
+        payload = device.json()
+        self.assertEqual(payload["local_base_url"], "http://192.168.1.20:8080")
+        self.assertEqual(payload["remote_base_url"], "https://bag.example.com")
+
+    def test_device_status_exposes_relay_remote_base_url_for_paired_phones(self):
+        expected = f"https://relay.example.com/r/{self.module.current_pi_device_id()}"
+        with mock.patch.object(self.module, "RELAY_URL", "https://relay.example.com"), mock.patch.object(
+            self.module, "RELAY_DEVICE_SECRET", "device-secret"
+        ):
+            self.assertEqual(self.module.compute_remote_base_url(), expected)
+            device = self.client.get("/device/status")
+        self.assertEqual(device.status_code, 200)
+        self.assertEqual(device.json()["remote_base_url"], expected)
+
+    def test_pairing_remote_base_url_excludes_relay_only_configuration(self):
+        with mock.patch.object(self.module, "RELAY_URL", "https://relay.example.com"), mock.patch.object(
+            self.module, "RELAY_DEVICE_SECRET", "device-secret"
+        ), mock.patch.object(self.module, "detect_tailscale_remote_base_url", return_value=""):
+            self.assertEqual(self.module.compute_pairing_remote_base_url(), "")
+
+    def test_insecure_public_http_remote_base_url_is_ignored(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "GOBAG_BASE_URL": "http://192.168.1.20:8080",
+                "GOBAG_REMOTE_BASE_URL": "http://bag.example.com:8080",
+            },
+            clear=False,
+        ), mock.patch.object(self.module, "detect_tailscale_remote_base_url", return_value=""):
+            self.assertEqual(self.module.compute_remote_base_url(), "")
+            device = self.client.get("/device/status")
+        self.assertEqual(device.status_code, 200)
+        self.assertEqual(device.json()["remote_base_url"], "")
+
+    def test_tailscale_serve_https_url_is_auto_detected(self):
+        def fake_run(args):
+            if args == ["status", "--json"]:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout=json.dumps({"Self": {"TailscaleIPs": ["100.81.82.83"]}}),
+                    stderr="",
+                )
+            if args == ["serve", "status"]:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout="Available within your tailnet:\nhttps://bag.tail000.ts.net\n\n|-- / proxy http://127.0.0.1:8080\n",
+                    stderr="",
+                )
+            raise AssertionError(args)
+
+        with mock.patch.dict(os.environ, {"GOBAG_REMOTE_BASE_URL": ""}, clear=False), mock.patch.object(
+            self.module, "run_tailscale_command", side_effect=fake_run
+        ):
+            self.assertEqual(self.module.compute_remote_base_url(), "https://bag.tail000.ts.net")
+
+    def test_tailscale_ip_is_used_when_serve_is_not_configured(self):
+        def fake_run(args):
+            if args == ["status", "--json"]:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout=json.dumps({"Self": {"TailscaleIPs": ["100.91.92.93"]}}),
+                    stderr="",
+                )
+            if args == ["serve", "status"]:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="Nothing is being served.\n", stderr="")
+            raise AssertionError(args)
+
+        with mock.patch.dict(os.environ, {"GOBAG_REMOTE_BASE_URL": ""}, clear=False), mock.patch.object(
+            self.module, "run_tailscale_command", side_effect=fake_run
+        ):
+            self.assertEqual(self.module.compute_remote_base_url(), "http://100.91.92.93:8080")
+
+    def test_pair_qr_payload_includes_remote_base_url_when_available(self):
+        bag = self.module.Bag(
+            bag_id="bag-1",
+            name="Field Bag",
+            size_liters=44,
+            template_id="template_44l",
+            updated_at=1,
+            updated_by="pi-1",
+        )
+        payload = self.module.pair_qr_payload(
+            base_url="http://192.168.1.20:8080",
+            pair_code="123456",
+            pi_device_id="pi-1",
+            bag=bag,
+            remote_base_url="https://bag.example.com",
+        )
+        self.assertEqual(payload["remote_base_url"], "https://bag.example.com")
 
     def test_bag_and_item_crud(self):
         categories = self.client.get("/categories")
