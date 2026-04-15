@@ -17,6 +17,8 @@ WIFI_SUDOERS_FILE="/etc/sudoers.d/gobag-wifi-helper"
 WIFI_HELPER_INSTALL_DIR="/usr/local/libexec"
 WIFI_HELPER_INSTALL_PATH="${WIFI_HELPER_INSTALL_DIR}/gobag-wifi-helper"
 MENU_ENTRY="/usr/share/applications/gobag-inventory.desktop"
+AUTOSTART_BLOCK_BEGIN="# >>> GO BAG AUTOSTART >>>"
+AUTOSTART_BLOCK_END="# <<< GO BAG AUTOSTART <<<"
 
 AUTOSTART_BACKEND=1
 ENABLE_UI_AUTOSTART=1
@@ -143,6 +145,53 @@ render_template() {
     -e "s|__LAUNCH_CMD__|${launch_cmd}|g" \
     -e "s|__AUTO_OPEN_ARGS__|${auto_open_args}|g" \
     "${src}" | ${SUDO} tee "${dest}" >/dev/null
+}
+
+strip_managed_block() {
+  local file="$1"
+  local begin_marker="$2"
+  local end_marker="$3"
+  local tmp_file=""
+  [[ -f "${file}" ]] || return 0
+  tmp_file="$(mktemp)"
+  awk -v begin_marker="${begin_marker}" -v end_marker="${end_marker}" '
+    $0 == begin_marker { skip = 1; next }
+    $0 == end_marker { skip = 0; next }
+    !skip { print }
+  ' "${file}" > "${tmp_file}"
+  ${SUDO} install -m 644 "${tmp_file}" "${file}"
+  ${SUDO} chown "${DESKTOP_USER}:${DESKTOP_USER}" "${file}"
+  rm -f "${tmp_file}"
+}
+
+append_managed_block() {
+  local file="$1"
+  local body="$2"
+  local tmp_file=""
+  tmp_file="$(mktemp)"
+  if [[ -f "${file}" ]]; then
+    cat "${file}" > "${tmp_file}"
+  fi
+  if [[ -s "${tmp_file}" ]]; then
+    printf '\n' >> "${tmp_file}"
+  fi
+  printf '%s\n' "${AUTOSTART_BLOCK_BEGIN}" >> "${tmp_file}"
+  printf '%s\n' "${body}" >> "${tmp_file}"
+  printf '%s\n' "${AUTOSTART_BLOCK_END}" >> "${tmp_file}"
+  ${SUDO} install -m 644 "${tmp_file}" "${file}"
+  ${SUDO} chown "${DESKTOP_USER}:${DESKTOP_USER}" "${file}"
+  rm -f "${tmp_file}"
+}
+
+configure_labwc_autostart() {
+  local launch_cmd="$1"
+  local auto_open_args="$2"
+  local labwc_dir="${DESKTOP_HOME}/.config/labwc"
+  local labwc_file="${labwc_dir}/autostart"
+  local body="( sleep 6; \"${launch_cmd}\" ${auto_open_args} ) >/dev/null 2>&1 &"
+  ${SUDO} mkdir -p "${labwc_dir}"
+  strip_managed_block "${labwc_file}" "${AUTOSTART_BLOCK_BEGIN}" "${AUTOSTART_BLOCK_END}"
+  append_managed_block "${labwc_file}" "${body}"
 }
 
 configure_desktop_autologin() {
@@ -276,6 +325,7 @@ fi
 
 AUTOSTART_DIR="${DESKTOP_HOME}/.config/autostart"
 AUTOSTART_FILE="${AUTOSTART_DIR}/gobag-inventory.desktop"
+AUX_AUTOSTART_LAUNCH_CMD="${APP_DIR}/scripts/autostart_ui.sh"
 AUTO_OPEN_ARGS="--app"
 if [[ "${ENABLE_KIOSK}" -eq 1 ]]; then
   AUTO_OPEN_ARGS="--kiosk"
@@ -283,11 +333,13 @@ fi
 if [[ "${ENABLE_UI_AUTOSTART}" -eq 1 ]]; then
   log "Enabling desktop autostart for GO BAG..."
   ${SUDO} mkdir -p "${AUTOSTART_DIR}"
-  render_template "${APP_DIR}/desktop/gobag-inventory-autostart.desktop" "${AUTOSTART_FILE}" "${APP_DIR}/launch.sh" "${AUTO_OPEN_ARGS}"
+  render_template "${APP_DIR}/desktop/gobag-inventory-autostart.desktop" "${AUTOSTART_FILE}" "${AUX_AUTOSTART_LAUNCH_CMD}" "${AUTO_OPEN_ARGS}"
   ${SUDO} chown "${DESKTOP_USER}:${DESKTOP_USER}" "${AUTOSTART_FILE}"
+  configure_labwc_autostart "${AUX_AUTOSTART_LAUNCH_CMD}" "${AUTO_OPEN_ARGS}"
   configure_desktop_autologin
 else
   ${SUDO} rm -f "${AUTOSTART_FILE}"
+  strip_managed_block "${DESKTOP_HOME}/.config/labwc/autostart" "${AUTOSTART_BLOCK_BEGIN}" "${AUTOSTART_BLOCK_END}"
 fi
 
 log "Checking backend health..."

@@ -53,6 +53,7 @@ Optional modes:
 - installs the desktop launcher
 - optionally configures desktop-login autostart in kiosk mode
 - in kiosk mode on Raspberry Pi OS, also enables graphical desktop auto-login through `raspi-config` so the UI returns after reboot
+- on current Raspberry Pi OS desktop builds, also installs a native `labwc` autostart hook and a logged autostart wrapper for the GO BAG UI
 
 ## Installed paths
 
@@ -139,6 +140,14 @@ sudo raspi-config nonint do_boot_behaviour B4
 ```
 
 That makes a reboot return straight to the GO BAG kiosk without a manual login. If `raspi-config` is unavailable on your Linux image, the backend still auto-starts, but the UI waits for a desktop login before opening.
+
+If the UI still does not appear after login, inspect:
+
+```bash
+tail -n 100 /opt/gobag/logs/ui-autostart.log
+tail -n 100 /opt/gobag/logs/app-shell.log
+tail -n 100 /opt/gobag/logs/launcher.log
+```
 
 ## Android app build and install
 
