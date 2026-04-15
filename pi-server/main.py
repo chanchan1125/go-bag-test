@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from html import escape
 from typing import Dict, Iterator, List, Literal, Optional, Union
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 import qrcode
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
@@ -1218,6 +1218,17 @@ def current_device_ip_display() -> str:
     if detected_ip:
         return display_local_ip(detected_ip)
     return display_local_ip(compute_local_ip())
+
+
+def current_device_base_url_display(request: Optional[Request] = None) -> str:
+    fallback_base_url = compute_base_url(request)
+    live_ip = current_device_ip_display()
+    if live_ip == "Unavailable":
+        return fallback_base_url
+    parsed = urlsplit(fallback_base_url if "://" in fallback_base_url else f"http://{fallback_base_url}")
+    scheme = parsed.scheme or "http"
+    port = parsed.port or PORT
+    return f"{scheme}://{live_ip}:{port}"
 
 
 def compute_base_url(request: Optional[Request] = None) -> str:
@@ -4477,6 +4488,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
 
     base_url = compute_base_url(request)
     local_ip_display = current_device_ip_display()
+    display_base_url = current_device_base_url_display(request)
     checked_count = sum(1 for row in readiness["checklist"] if row["checked"])
     missing_categories = [row["name"] for row in readiness["checklist"] if not row["checked"]]
     expiring_items = [a for a in alerts if a.type == "expiring_soon"]
@@ -4550,6 +4562,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         "current_time_ms": current_time,
         "timezone_label": (time.tzname[0] if time.tzname else "Local time"),
         "local_ip_display": local_ip_display,
+        "display_base_url": display_base_url,
         "state_version": str(
             max(
                 int(bag.updated_at or 0),
@@ -4615,6 +4628,7 @@ def ui_state(request: Request) -> dict:
         "inventory_group_count": view_model["inventory_group_count"],
         "batch_count": view_model["batch_count"],
         "local_ip_display": view_model["local_ip_display"],
+        "display_base_url": view_model["display_base_url"],
     }
 
 
@@ -5317,7 +5331,7 @@ def home(request: Request) -> HTMLResponse:
             </div>
             <div class="subpanel status-cluster-card">
               <div class="panel-subtitle">Access URL</div>
-              <div class="status-card-value settings-url">{escape(view_model['base_url'])}</div>
+              <div class="status-card-value settings-url" id="settings-access-url">{escape(view_model['display_base_url'])}</div>
               <div class="status-card-note">Used by the Android phone app for pairing and sync</div>
             </div>
             <div class="subpanel status-cluster-card">
@@ -8373,6 +8387,7 @@ def home(request: Request) -> HTMLResponse:
       const settingsTimezoneNote = document.getElementById("settings-timezone-note");
       const settingsExpiryCount = document.getElementById("settings-expiry-count");
       const settingsLowStockCount = document.getElementById("settings-low-stock-count");
+      const settingsAccessUrl = document.getElementById("settings-access-url");
       const settingsIpAddress = document.getElementById("settings-ip-address");
       const syncIpAddress = document.getElementById("sync-ip-address");
       let keyboardTarget = null;
@@ -10182,6 +10197,7 @@ def home(request: Request) -> HTMLResponse:
           if (settingsPairedCount) settingsPairedCount.textContent = String(state.paired_phone_count || 0);
           if (settingsExpiryCount) settingsExpiryCount.textContent = String((Number(state.expired_count || 0) + Number(state.expiring_count || 0)) || 0);
           if (settingsLowStockCount) settingsLowStockCount.textContent = String(state.low_stock_count || 0);
+          if (settingsAccessUrl) settingsAccessUrl.textContent = state.display_base_url || state.base_url || "";
           if (syncIpAddress) syncIpAddress.textContent = state.local_ip_display || "Unavailable";
           if (settingsIpAddress) settingsIpAddress.textContent = state.local_ip_display || "Unavailable";
           if (settingsSyncChip) {{

@@ -126,7 +126,7 @@ fun HomeScreen(
                     IconButton(onClick = on_pairing) {
                         Icon(
                             Icons.Default.SettingsRemote,
-                            contentDescription = "Connect Raspberry Pi",
+                            contentDescription = "Connect bag",
                             tint = MaterialTheme.colorScheme.onSurface
                         )
                     }

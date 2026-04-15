@@ -23,20 +23,20 @@ object PairQrParser {
     fun parse(payload_json: String): PairQrPayload {
         val trimmed = payload_json.trim()
         if (trimmed.isBlank()) {
-            throw IllegalArgumentException("QR payload is empty.")
+            throw IllegalArgumentException("That QR code was empty.")
         }
         val root = runCatching { JsonParser.parseString(trimmed) }.getOrElse {
-            throw IllegalArgumentException("QR code did not contain valid GO BAG pairing data.")
+            throw IllegalArgumentException("That QR code does not contain valid bag setup data.")
         }
         if (!root.isJsonObject) {
-            throw IllegalArgumentException("QR code did not contain a valid GO BAG pairing object.")
+            throw IllegalArgumentException("That QR code does not contain valid bag setup data.")
         }
 
         val payload = root.asJsonObject
         val baseUrl = payload.read_string("base_url")
         val pairCode = payload.read_string("pair_code")
         if (baseUrl.isBlank() || pairCode.isBlank()) {
-            throw IllegalArgumentException("QR payload is missing the Raspberry Pi address or Pair Code.")
+            throw IllegalArgumentException("That QR code is missing the bag location or code.")
         }
 
         return PairQrPayload(

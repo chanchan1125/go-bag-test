@@ -94,7 +94,6 @@ class PairingViewModel(
         view_inputs
     ) { state, inputs ->
         val connection = PiConnectionStatus.from_device_state(state)
-        val paired = state.paired_bags.isNotEmpty()
         PairingUiState(
             connection = connection,
             endpoint = state.base_url,

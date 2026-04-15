@@ -135,7 +135,7 @@ class GoBagPairingRepository(
                 device_status = deviceStatus
             )
         }.onFailure {
-            warnings += "Raspberry Pi status refresh failed."
+            warnings += "Bag status refresh failed."
             device_state_store.update_saved_address_status(
                 address_id = savedAddress.id,
                 status = "Ready",
@@ -166,7 +166,7 @@ class GoBagPairingRepository(
         }.isSuccess
         if (!initialSyncCompleted) {
             device_state_store.set_connection_error(
-                message = "Bag pairing succeeded, but the first inventory sync failed.",
+                message = "Your bag is connected, but the first update did not finish.",
                 bag_id = bagProfile.bag_id
             )
         }

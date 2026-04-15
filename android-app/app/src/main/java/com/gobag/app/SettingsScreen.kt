@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import com.gobag.core.model.BagProfile
 import com.gobag.core.model.SavedPiAddress
 import com.gobag.domain.logic.PiConnectionSnapshot
+import com.gobag.domain.logic.PiConnectionStatus
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -94,7 +96,7 @@ fun SettingsScreen(
                 title = {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            "SYSTEM CONFIG",
+                            "APP SETTINGS",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
@@ -108,7 +110,7 @@ fun SettingsScreen(
                 },
                 actions = {
                     StatusPill(
-                        label = connection.connection_label.uppercase(),
+                        label = connection.primary_label,
                         accent = resolveConnectionAccent(connection)
                     )
                 },
@@ -128,20 +130,20 @@ fun SettingsScreen(
         ) {
             item {
                 SettingsHeroCard(
-                    selectedBagName = selectedBag?.name ?: "No primary bag selected",
-                    endpoint = state.endpoint_input.ifBlank { "No endpoint saved" },
-                    connectionStatus = connection.connection_label,
-                    piDeviceId = state.pi_device_id.ifBlank { "Not paired" },
-                    localIp = connection.local_ip.ifBlank { "Unknown" },
+                    selectedBagName = selectedBag?.name ?: "No bag selected",
+                    statusLabel = connection.connection_label,
+                    statusDetail = connection.detail,
                     pendingChanges = connection.pending_changes_count,
-                    lastSync = formatSettingsTime(connection.last_sync_at)
+                    lastSync = formatSettingsTime(connection.last_sync_at),
+                    savedLocationCount = state.saved_addresses.size,
+                    bagCount = state.bags.size
                 )
             }
 
             item {
                 SettingsSectionCard(
                     title = "Appearance",
-                    subtitle = "Choose the app theme here. The selected mode stays saved across restarts."
+                    subtitle = "Choose how the app looks."
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -149,16 +151,16 @@ fun SettingsScreen(
                     ) {
                         ThemeModeCard(
                             modifier = Modifier.weight(1f),
-                            label = "Light Mode",
-                            detail = "Sun / bright UI",
+                            label = "Light",
+                            detail = "Bright look",
                             icon = Icons.Default.LightMode,
                             selected = !state.dark_theme_enabled,
                             onClick = { view_model.set_dark_theme(false) }
                         )
                         ThemeModeCard(
                             modifier = Modifier.weight(1f),
-                            label = "Dark Mode",
-                            detail = "Moon / tactical UI",
+                            label = "Dark",
+                            detail = "Dim look",
                             icon = Icons.Default.DarkMode,
                             selected = state.dark_theme_enabled,
                             onClick = { view_model.set_dark_theme(true) }
@@ -169,14 +171,14 @@ fun SettingsScreen(
 
             item {
                 SettingsSectionCard(
-                    title = "Connection Tools",
-                    subtitle = "Save Raspberry Pi addresses here. Saving an address does not pair a bag; QR pairing is still required before a bag becomes usable."
+                    title = "Bag connection",
+                    subtitle = "Save the bag location here, then use Connect Bag to finish setup."
                 ) {
                     OutlinedTextField(
                         value = state.endpoint_input,
                         onValueChange = view_model::on_endpoint_changed,
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text(if (state.editing_address_id == null) "New Pi address" else "Edit Pi address") },
+                        label = { Text("Location") },
                         placeholder = { Text("http://192.168.4.1:8080") },
                         singleLine = true
                     )
@@ -197,8 +199,9 @@ fun SettingsScreen(
                             )
                         ) {
                             Text(
-                                if (state.editing_address_id == null) "Save Address" else "Update Address",
-                                fontWeight = FontWeight.Bold
+                                if (state.editing_address_id == null) "Save location" else "Update location",
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
                             )
                         }
                         OutlinedButton(
@@ -209,7 +212,7 @@ fun SettingsScreen(
                             enabled = !state.running,
                             shape = RoundedCornerShape(16.dp)
                         ) {
-                            Text(if (state.running) "Checking..." else "Test Address")
+                            Text(if (state.running) "Checking..." else "Check location", maxLines = 1)
                         }
                     }
                     if (state.editing_address_id != null) {
@@ -220,7 +223,7 @@ fun SettingsScreen(
                                 .heightIn(min = 50.dp),
                             shape = RoundedCornerShape(16.dp)
                         ) {
-                            Text("Cancel Address Edit")
+                            Text("Cancel edit")
                         }
                     }
                     OutlinedButton(
@@ -236,7 +239,7 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Default.Sync, contentDescription = null)
-                            Text("Refresh Current Bag Status")
+                            Text("Refresh status")
                         }
                     }
                 }
@@ -244,13 +247,13 @@ fun SettingsScreen(
 
             item {
                 SettingsSectionCard(
-                    title = "Saved Raspberry Pi Addresses",
-                    subtitle = "Tap any saved address to activate, retest, edit, or remove it."
+                    title = "Saved locations",
+                    subtitle = "Choose which saved location to use, check it again, or remove it."
                 ) {
                     if (state.saved_addresses.isEmpty()) {
                         EmptyStateCard(
-                            title = "No Raspberry Pi addresses saved yet",
-                            body = "Save a local address here or start from Connect Pi to test and pair the hub."
+                            title = "No saved locations yet",
+                            body = "Add a bag location here or open Connect Bag."
                         )
                     } else {
                         state.saved_addresses.forEach { address ->
@@ -274,13 +277,13 @@ fun SettingsScreen(
 
             item {
                 SettingsSectionCard(
-                    title = "Paired Bags",
-                    subtitle = "Switch the phone's primary working bag or remove the current paired bag from this phone."
+                    title = "Bags on this phone",
+                    subtitle = "Choose which bag this phone uses or remove one from this phone."
                 ) {
                     if (state.bags.isEmpty()) {
                         EmptyStateCard(
-                            title = "No bag paired on this phone yet",
-                            body = "Scan a bag QR from the Raspberry Pi app first so the phone can authenticate and sync."
+                            title = "No bag saved on this phone yet",
+                            body = "Open Connect Bag first."
                         )
                     } else {
                         state.bags.forEach { bag ->
@@ -299,7 +302,7 @@ fun SettingsScreen(
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
                         ) {
                             Text(
-                                "Remove Selected Bag From Phone",
+                                "Remove this bag from phone",
                                 color = MaterialTheme.colorScheme.error,
                                 fontWeight = FontWeight.Bold
                             )
@@ -314,12 +317,12 @@ fun SettingsScreen(
 @Composable
 private fun SettingsHeroCard(
     selectedBagName: String,
-    endpoint: String,
-    connectionStatus: String,
-    piDeviceId: String,
-    localIp: String,
+    statusLabel: String,
+    statusDetail: String,
     pendingChanges: Int,
-    lastSync: String
+    lastSync: String,
+    savedLocationCount: Int,
+    bagCount: Int
 ) {
     Card(
         shape = RoundedCornerShape(20.dp),
@@ -342,7 +345,7 @@ private fun SettingsHeroCard(
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        "Primary Phone Node",
+                        "This phone",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
@@ -355,10 +358,10 @@ private fun SettingsHeroCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        endpoint,
+                        statusDetail,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -369,15 +372,15 @@ private fun SettingsHeroCard(
                     HeroMetric(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.SettingsEthernet,
-                        label = "Connection",
-                        value = connectionStatus,
+                        label = "Status",
+                        value = statusLabel,
                         accent = MaterialTheme.colorScheme.tertiary
                     )
                     HeroMetric(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.Router,
-                        label = "Pi Local IP",
-                        value = localIp,
+                        label = "Saved locations",
+                        value = savedLocationCount.toString(),
                         accent = MaterialTheme.colorScheme.primary
                     )
                 }
@@ -388,22 +391,24 @@ private fun SettingsHeroCard(
                     HeroMetric(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.Sync,
-                        label = "Pending Changes",
+                        label = "Changes waiting",
                         value = pendingChanges.toString(),
                         accent = MaterialTheme.colorScheme.primary
                     )
                     HeroMetric(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.Palette,
-                        label = "Last Sync",
+                        label = "Last update",
                         value = lastSync,
                         accent = MaterialTheme.colorScheme.secondary
                     )
                 }
-                Text(
-                    "Pi device id: $piDeviceId",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                HeroMetric(
+                    modifier = Modifier.fillMaxWidth(),
+                    icon = Icons.Default.Router,
+                    label = "Bags on this phone",
+                    value = bagCount.toString(),
+                    accent = MaterialTheme.colorScheme.primary
                 )
             }
         }
@@ -540,7 +545,9 @@ private fun ThemeModeCard(
             Text(
                 detail,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -576,23 +583,27 @@ private fun AddressRow(
                     Text(
                         address.base_url,
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        address.last_detail.ifBlank { "No test run yet." },
+                        address.last_detail.ifBlank { "Not checked yet." },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 if (address.is_active) {
                     StatusPill(
-                        label = "ACTIVE",
+                        label = "Current",
                         accent = MaterialTheme.colorScheme.tertiary
                     )
                 }
             }
             Text(
-                "${address.last_status} • Last checked ${formatSettingsTime(address.last_checked_at)}",
+                "${PiConnectionStatus.saved_location_label(address.last_status)} - Checked ${formatSettingsTime(address.last_checked_at)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -601,7 +612,7 @@ private fun AddressRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(onClick = onActivate, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
-                    Text(if (address.is_active) "Active" else "Make Active")
+                    Text(if (address.is_active) "In use" else "Use this")
                 }
                 OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
                     Text("Edit")
@@ -612,7 +623,7 @@ private fun AddressRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(onClick = onTest, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
-                    Text("Test")
+                    Text("Check")
                 }
                 OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)
@@ -657,7 +668,7 @@ private fun PairedBagRow(
                 }
                 if (isPrimary) {
                     StatusPill(
-                        label = "PRIMARY",
+                        label = "Current",
                         accent = MaterialTheme.colorScheme.primary
                     )
                 }
@@ -669,7 +680,7 @@ private fun PairedBagRow(
                     .heightIn(min = 48.dp),
                 shape = RoundedCornerShape(14.dp)
             ) {
-                Text(if (isPrimary) "Primary Bag Selected" else "Set As Primary Bag")
+                Text(if (isPrimary) "This bag is in use" else "Use this bag")
             }
         }
     }
@@ -721,6 +732,7 @@ private fun ErrorCard(message: String) {
             Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
             Text(
                 message,
+                modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -734,6 +746,7 @@ private fun StatusPill(
     accent: Color
 ) {
     Surface(
+        modifier = Modifier.widthIn(max = 132.dp),
         shape = RoundedCornerShape(999.dp),
         color = accent.copy(alpha = 0.14f)
     ) {
@@ -752,7 +765,9 @@ private fun StatusPill(
                 label,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                color = accent
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

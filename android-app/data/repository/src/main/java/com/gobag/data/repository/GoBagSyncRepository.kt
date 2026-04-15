@@ -92,7 +92,7 @@ class GoBagSyncRepository(
         val state = device_state_store.state.first()
         if (state.selected_bag_id.isBlank()) {
             device_state_store.set_connection_error(
-                message = "Select a primary paired bag before syncing.",
+                message = "Choose a bag on this phone before updating.",
                 status = if (state.paired_bags.isNotEmpty()) {
                     PiConnectionStatus.STATUS_PI_PAIRED
                 } else {
@@ -101,32 +101,32 @@ class GoBagSyncRepository(
             )
             device_state_store.set_sync_status(
                 status = PiConnectionStatus.SYNC_STATUS_FAILED,
-                error = "Select a primary paired bag before syncing."
+                error = "Choose a bag on this phone before updating."
             )
             return SyncRunResult(
                 server_time_ms = state.last_sync_at,
                 conflicts = emptyList(),
                 auto_resolved = emptyList(),
                 alerts = emptyList(),
-                skipped_reason = "Sync skipped because no primary paired bag is selected."
+                skipped_reason = "Update skipped because no bag is selected."
             )
         }
         if (state.auth_token.isBlank() || state.base_url.isBlank()) {
             device_state_store.set_connection_error(
-                message = "The selected primary bag is not paired to a Raspberry Pi.",
+                message = "This phone still needs to connect to that bag.",
                 bag_id = state.selected_bag_id,
                 status = PiConnectionStatus.STATUS_PI_PAIRED
             )
             device_state_store.set_sync_status(
                 status = PiConnectionStatus.SYNC_STATUS_FAILED,
-                error = "The selected primary bag is not paired to a Raspberry Pi."
+                error = "This phone still needs to connect to that bag."
             )
             return SyncRunResult(
                 server_time_ms = state.last_sync_at,
                 conflicts = emptyList(),
                 auto_resolved = emptyList(),
                 alerts = emptyList(),
-                skipped_reason = "Sync skipped because the selected primary bag is not paired to a Raspberry Pi."
+                skipped_reason = "Update skipped because this phone is not connected to that bag yet."
             )
         }
 
@@ -134,7 +134,7 @@ class GoBagSyncRepository(
         val pairedBagIds = state.paired_bags.map { it.bag_id }.toSet()
         if (selectedBagId !in pairedBagIds) {
             device_state_store.set_connection_error(
-                message = "The selected primary bag is not available in the paired bag list.",
+                message = "The selected bag is not available on this phone.",
                 bag_id = selectedBagId,
                 status = if (pairedBagIds.isNotEmpty()) {
                     PiConnectionStatus.STATUS_PI_PAIRED
@@ -144,14 +144,14 @@ class GoBagSyncRepository(
             )
             device_state_store.set_sync_status(
                 status = PiConnectionStatus.SYNC_STATUS_FAILED,
-                error = "The selected primary bag is not available in the paired bag list."
+                error = "The selected bag is not available on this phone."
             )
             return SyncRunResult(
                 server_time_ms = state.last_sync_at,
                 conflicts = emptyList(),
                 auto_resolved = emptyList(),
                 alerts = emptyList(),
-                skipped_reason = "Sync skipped because the selected primary bag is not paired yet."
+                skipped_reason = "Update skipped because the selected bag is not ready on this phone."
             )
         }
 
@@ -161,13 +161,13 @@ class GoBagSyncRepository(
             validate_sync_payload(selectedBagId, changed_bags, changed_items)
         } catch (e: IllegalStateException) {
             device_state_store.set_connection_error(
-                message = e.message ?: "Sync validation failed.",
+                message = e.message ?: "We could not prepare the bag update.",
                 bag_id = selectedBagId,
                 status = PiConnectionStatus.STATUS_PI_PAIRED
             )
             device_state_store.set_sync_status(
                 status = PiConnectionStatus.SYNC_STATUS_FAILED,
-                error = e.message ?: "Sync validation failed."
+                error = e.message ?: "We could not prepare the bag update."
             )
             throw e
         }
@@ -183,7 +183,7 @@ class GoBagSyncRepository(
                 )
             )
         } catch (e: Exception) {
-            val message = describe_remote_exception(e, action = "Raspberry Pi sync failed")
+            val message = describe_remote_exception(e, action = "The bag update failed")
             device_state_store.set_connection_error(message, bag_id = selectedBagId, status = PiConnectionStatus.STATUS_PI_OFFLINE)
             device_state_store.set_sync_status(status = PiConnectionStatus.SYNC_STATUS_FAILED, error = message)
             throw IllegalStateException(message, e)
@@ -256,7 +256,7 @@ class GoBagSyncRepository(
         }
         if (invalidBag != null) {
             val label = invalidBag.name.ifBlank { invalidBag.bag_id }
-            throw IllegalStateException("Cannot sync bag '$label' because required bag fields are missing.")
+            throw IllegalStateException("We could not update '$label' because some bag details are missing.")
         }
 
         val invalidItem = changed_items.firstOrNull {
@@ -272,16 +272,16 @@ class GoBagSyncRepository(
         if (invalidItem != null) {
             val label = invalidItem.name.ifBlank { invalidItem.id }
             val reason = when {
-                invalidItem.bag_id.isBlank() -> "missing a bag reference"
-                invalidItem.bag_id != selectedBagId -> "belongs to a bag that is not currently selected"
-                !invalidItem.deleted && invalidItem.bag_id !in knownBagIds -> "references a bag that does not exist locally"
+                invalidItem.bag_id.isBlank() -> "is missing its bag"
+                invalidItem.bag_id != selectedBagId -> "belongs to a different bag"
+                !invalidItem.deleted && invalidItem.bag_id !in knownBagIds -> "points to a bag that is not saved on this phone"
                 invalidItem.name.isBlank() -> "is missing a name"
                 invalidItem.unit.isBlank() -> "is missing a unit"
-                invalidItem.updated_by.isBlank() -> "is missing an updated_by value"
-                invalidItem.quantity <= 0.0 -> "has a non-positive quantity"
-                else -> "is missing required fields"
+                invalidItem.updated_by.isBlank() -> "is missing update details"
+                invalidItem.quantity <= 0.0 -> "has an invalid amount"
+                else -> "is missing required details"
             }
-            throw IllegalStateException("Cannot sync item '$label' because it $reason.")
+            throw IllegalStateException("We could not update '$label' because it $reason.")
         }
     }
 
@@ -292,13 +292,13 @@ class GoBagSyncRepository(
         if (error is HttpException) {
             val detail = error.response()?.errorBody()?.string()?.let(::parse_fastapi_detail)
             return when {
-                error.code() == 422 && !detail.isNullOrBlank() -> "$action: Raspberry Pi rejected the payload ($detail)."
-                error.code() == 422 -> "$action: Raspberry Pi rejected the payload."
-                !detail.isNullOrBlank() -> "$action: HTTP ${error.code()} ($detail)."
-                else -> "$action: HTTP ${error.code()}."
+                error.code() == 422 && !detail.isNullOrBlank() -> "$action. $detail"
+                error.code() == 422 -> "$action. The bag did not accept the update."
+                !detail.isNullOrBlank() -> "$action. $detail"
+                else -> "$action."
             }
         }
-        return error.message?.let { "$action: $it" } ?: action
+        return error.message?.let { "$action. $it" } ?: action
     }
 
     private fun parse_fastapi_detail(raw: String): String? {

@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -70,8 +70,6 @@ private val SyncSecondary = Color(0xFF8CCDFF)
 private val SyncSuccess = Color(0xFF78DC77)
 private val SyncCritical = Color(0xFF93000A)
 private val SyncCriticalSoft = Color(0xFFFFDAD6)
-private val SyncConsole = Color(0xFF101112)
-private val SyncConsoleText = Color(0xFF94F990)
 
 @Composable
 fun SyncScreen(
@@ -81,7 +79,6 @@ fun SyncScreen(
     val state by view_model.ui_state.collectAsState()
     val connection = state.connection
     val snackbarHost = remember { SnackbarHostState() }
-    val connectionLabel = connection.connection_label
     val connectionAccent = remember(connection, state.conflicts.size) {
         resolveConnectionAccent(connection = connection, conflictCount = state.conflicts.size)
     }
@@ -100,7 +97,7 @@ fun SyncScreen(
         topBar = {
             SyncTopBar(
                 bagName = state.selected_bag_name,
-                connectionLabel = connectionLabel,
+                connectionLabel = connection.primary_label,
                 connectionAccent = connectionAccent,
                 onBack = on_back
             )
@@ -116,8 +113,8 @@ fun SyncScreen(
             item {
                 SyncHeroCard(
                     bagName = state.selected_bag_name,
-                    connectionLabel = connectionLabel,
-                    localIp = connection.local_ip,
+                    connectionLabel = connection.connection_label,
+                    detail = connection.detail,
                     lastSync = formatSyncTime(state.last_sync_at),
                     pending = connection.pending_changes_count,
                     running = state.running,
@@ -139,8 +136,7 @@ fun SyncScreen(
                     running = state.running,
                     autoSyncEnabled = state.auto_sync_enabled,
                     autoSyncLocked = autoSyncLocked,
-                    localIp = connection.local_ip,
-                    connectionLabel = connectionLabel,
+                    connection = connection,
                     onSyncNow = view_model::sync_now,
                     onSetAutoSync = view_model::set_auto_sync
                 )
@@ -155,19 +151,7 @@ fun SyncScreen(
             }
 
             item {
-                SystemLogCard(
-                    bagName = state.selected_bag_name,
-                    connectionLabel = connectionLabel,
-                    lastSync = formatSyncTime(state.last_sync_at),
-                    pending = connection.pending_changes_count,
-                    autoSyncEnabled = state.auto_sync_enabled,
-                    autoSyncLocked = autoSyncLocked,
-                    localIp = connection.local_ip
-                )
-            }
-
-            item {
-                SectionLabel("Expiry Alerts")
+                SectionLabel("Expiry alerts")
             }
 
             item {
@@ -178,7 +162,7 @@ fun SyncScreen(
             }
 
             item {
-                SectionLabel("Conflict Queue")
+                SectionLabel("Review items")
             }
 
             if (state.conflicts.isEmpty()) {
@@ -231,13 +215,13 @@ private fun SyncTopBar(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        "TACTICAL READY",
+                        "UPDATE BAG",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Black,
                         color = SyncPrimarySoft
                     )
                     Text(
-                        if (bagName.isBlank()) "SYNC CENTER" else bagName.uppercase(),
+                        if (bagName.isBlank()) "No bag selected" else bagName,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -246,7 +230,7 @@ private fun SyncTopBar(
                 }
             }
             StatusPill(
-                text = connectionLabel.uppercase(),
+                text = connectionLabel,
                 accent = connectionAccent
             )
         }
@@ -257,7 +241,7 @@ private fun SyncTopBar(
 private fun SyncHeroCard(
     bagName: String,
     connectionLabel: String,
-    localIp: String,
+    detail: String,
     lastSync: String,
     pending: Int,
     running: Boolean,
@@ -282,22 +266,22 @@ private fun SyncHeroCard(
                 .padding(20.dp)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                SectionLabel("System Node")
+                SectionLabel("Bag status")
                 Text(
-                    "SYNC CENTER",
+                    "UPDATE BAG",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    if (bagName.isBlank()) "No primary bag selected for sync." else bagName,
+                    if (bagName.isBlank()) "No bag selected yet." else bagName,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 ConnectionBanner(
                     connectionLabel = connectionLabel,
-                    localIp = localIp,
+                    detail = detail,
                     lastSync = lastSync,
                     accent = connectionAccent
                 )
@@ -307,14 +291,14 @@ private fun SyncHeroCard(
                 ) {
                     HeroMetric(
                         modifier = Modifier.weight(1f),
-                        label = "Pending Changes",
+                        label = "Changes waiting",
                         value = pending.toString(),
                         accent = SyncPrimary
                     )
                     HeroMetric(
                         modifier = Modifier.weight(1f),
-                        label = "Manual Sync",
-                        value = if (running) "RUNNING" else "READY",
+                        label = "Update",
+                        value = if (running) "Updating" else "Ready",
                         accent = if (running) SyncPrimary else SyncSuccess
                     )
                 }
@@ -326,7 +310,7 @@ private fun SyncHeroCard(
 @Composable
 private fun ConnectionBanner(
     connectionLabel: String,
-    localIp: String,
+    detail: String,
     lastSync: String,
     accent: Color
 ) {
@@ -359,16 +343,14 @@ private fun ConnectionBanner(
                 )
             }
             Text(
-                if (localIp.isBlank()) {
-                    "Saved Raspberry Pi endpoint is not currently reporting a local address."
-                } else {
-                    "Connected node: $localIp"
-                },
+                detail,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
-                "Last sync checkpoint: $lastSync",
+                "Last update: $lastSync",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -404,12 +386,16 @@ private fun HeroMetric(
                 value,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Black,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 label,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -429,13 +415,13 @@ private fun MetricsRow(
         MetricCard(
             modifier = Modifier.weight(1f),
             value = pending.toString(),
-            label = "Pending",
+            label = "Changes",
             accent = SyncPrimary
         )
         MetricCard(
             modifier = Modifier.weight(1f),
-            value = if (conflicts == 0) "Clean" else conflicts.toString(),
-            label = if (conflicts == 0) "Conflicts" else "Needs Review",
+            value = if (conflicts == 0) "Clear" else conflicts.toString(),
+            label = if (conflicts == 0) "Review" else "Review",
             accent = if (conflicts == 0) SyncSuccess else SyncCriticalSoft
         )
         MetricCard(
@@ -475,12 +461,16 @@ private fun MetricCard(
                 value,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Black,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 label,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -491,8 +481,7 @@ private fun SyncActionsCard(
     running: Boolean,
     autoSyncEnabled: Boolean,
     autoSyncLocked: Boolean,
-    localIp: String,
-    connectionLabel: String,
+    connection: PiConnectionSnapshot,
     onSyncNow: () -> Unit,
     onSetAutoSync: (Boolean) -> Unit
 ) {
@@ -526,13 +515,13 @@ private fun SyncActionsCard(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        "Sync Controls",
+                        "Updates",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        "Manual sync is always available. Auto-sync stays locked until conflicts are cleared.",
+                        "Update any time. Automatic updates turn on when review items are clear.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -556,7 +545,7 @@ private fun SyncActionsCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        if (running) "Syncing..." else "Sync Now",
+                        if (running) "Updating..." else "Update now",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Black
                     )
@@ -599,7 +588,7 @@ private fun SyncActionsCard(
                         }
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                if (autoSyncEnabled) "Auto-sync ON" else "Auto-sync OFF",
+                                if (autoSyncEnabled) "Auto update on" else "Auto update off",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -607,8 +596,7 @@ private fun SyncActionsCard(
                             Text(
                                 buildAutoSyncMessage(
                                     autoSyncLocked = autoSyncLocked,
-                                    connectionLabel = connectionLabel,
-                                    localIp = localIp
+                                    connection = connection
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -655,74 +643,11 @@ private fun ErrorNoticeCard(message: String) {
             )
             Text(
                 message,
+                modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SyncCriticalSoft
             )
         }
-    }
-}
-
-@Composable
-private fun SystemLogCard(
-    bagName: String,
-    connectionLabel: String,
-    lastSync: String,
-    pending: Int,
-    autoSyncEnabled: Boolean,
-    autoSyncLocked: Boolean,
-    localIp: String
-) {
-    Card(
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = SyncConsole),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                "SYSTEM LOG",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = SyncPrimarySoft
-            )
-            LogLine("node", if (bagName.isBlank()) "NO_PRIMARY_BAG" else bagName.uppercase())
-            LogLine("status", connectionLabel.uppercase().replace(' ', '_'))
-            LogLine("endpoint", localIp.ifBlank { "UNKNOWN_LOCAL_IP" })
-            LogLine("last_sync", lastSync.uppercase())
-            LogLine("pending", pending.toString())
-            LogLine(
-                "auto_sync",
-                when {
-                    autoSyncLocked -> "LOCKED_BY_CONFLICTS"
-                    autoSyncEnabled -> "ENABLED"
-                    else -> "DISABLED"
-                }
-            )
-        }
-    }
-}
-
-@Composable
-private fun LogLine(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Text(
-            text = "> $label",
-            modifier = Modifier.width(88.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = SyncConsoleText.copy(alpha = 0.72f)
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodySmall,
-            color = SyncConsoleText
-        )
     }
 }
 
@@ -754,7 +679,7 @@ private fun ExpiryAlertsCard(
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        "Primary Bag Alerts",
+                        "Bag alerts",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
@@ -763,7 +688,7 @@ private fun ExpiryAlertsCard(
                         if (alerts.isEmpty()) {
                             "No expired or near-expiry items in $bagName."
                         } else {
-                            "Current expiry warnings for the selected synced bag."
+                            "Items that need attention in this bag."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -775,8 +700,8 @@ private fun ExpiryAlertsCard(
                 StatusMessageCard(
                     icon = Icons.Default.CheckCircle,
                     iconTint = SyncSuccess,
-                    title = "No active expiry alerts",
-                    body = "This bag has no expired or near-expiry items detected right now."
+                    title = "No active alerts",
+                    body = "This bag has no expired or near-expiry items right now."
                 )
             } else {
                 alerts.take(5).forEach { alert ->
@@ -827,8 +752,8 @@ private fun NoConflictsCard() {
     StatusMessageCard(
         icon = Icons.Default.CheckCircle,
         iconTint = SyncSuccess,
-        title = "No unresolved conflicts",
-        body = "Manual sync is available whenever you want to push local inventory updates to the Raspberry Pi."
+        title = "Nothing to review",
+        body = "You can update your bag whenever you are ready."
     )
 }
 
@@ -872,12 +797,12 @@ private fun ConflictReviewCard(
                 )
             }
             Text(
-                "Reason: ${conflict.reason}",
+                "Needs review: ${conflict.reason}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                "Choose whether the phone copy, Raspberry Pi copy, or deletion should win for this item.",
+                "Choose which version to keep.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -902,7 +827,7 @@ private fun ConflictReviewCard(
                     shape = RoundedCornerShape(14.dp),
                     border = BorderStroke(1.dp, SyncOutline)
                 ) {
-                    Text("Keep Pi")
+                    Text("Keep bag")
                 }
             }
             Row(
@@ -975,7 +900,9 @@ private fun StatusMessageCard(
                 Text(
                     body,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -988,6 +915,7 @@ private fun StatusPill(
     accent: Color
 ) {
     Surface(
+        modifier = Modifier.widthIn(max = 132.dp),
         color = accent.copy(alpha = 0.16f),
         shape = RoundedCornerShape(999.dp)
     ) {
@@ -1006,7 +934,9 @@ private fun StatusPill(
                 text,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                color = accent
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -1024,13 +954,13 @@ private fun SectionLabel(text: String) {
 
 private fun buildAutoSyncMessage(
     autoSyncLocked: Boolean,
-    connectionLabel: String,
-    localIp: String
+    connection: PiConnectionSnapshot
 ): String {
     return when {
-        autoSyncLocked -> "Auto-sync is disabled until every sync conflict is resolved."
-        localIp.isBlank() -> "Connection state: $connectionLabel. No local Raspberry Pi address is currently known."
-        else -> "Connection state: $connectionLabel. Active Raspberry Pi local address: $localIp."
+        autoSyncLocked -> "Automatic updates stay off until every review item is cleared."
+        connection.is_online -> "Your bag is ready for automatic updates."
+        connection.is_paired -> "Automatic updates will resume when your bag is back online."
+        else -> "Connect your bag before turning on automatic updates."
     }
 }
 
@@ -1056,5 +986,5 @@ private fun formatSyncTime(value: Long): String {
 private fun formatAlertDetail(alert: AlertModel): String {
     val status = if (alert.type == "expired") "Expired" else "Expiring soon"
     val date = PreparednessRules.format_epoch_ms_to_yyyy_mm_dd(alert.expiry_date_ms).ifBlank { "No date" }
-    return "${alert.bag_name} | $status | $date"
+    return "${alert.bag_name} - $status - $date"
 }

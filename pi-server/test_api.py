@@ -58,6 +58,7 @@ class PiServerApiTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": "http://192.168.1.10:8001"}, clear=False):
             with mock.patch.object(self.module, "preferred_non_loopback_ip", return_value="192.168.1.9"):
                 self.assertEqual(self.module.current_device_ip_display(), "192.168.1.9")
+                self.assertEqual(self.module.current_device_base_url_display(), "http://192.168.1.9:8001")
 
     def test_bag_and_item_crud(self):
         categories = self.client.get("/categories")
@@ -461,6 +462,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn('id="settings-refresh-clock-button"', body)
         self.assertIn('id="settings-restart-button"', body)
         self.assertIn('id="settings-shutdown-button"', body)
+        self.assertIn('id="settings-access-url"', body)
         self.assertIn('id="settings-ip-address"', body)
         self.assertIn('id="sync-ip-address"', body)
         self.assertIn("Current IP", body)
@@ -1502,6 +1504,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn("Emergency Blanket", payload["inventory_groups_html"])
         self.assertTrue(payload["state_version"])
         self.assertIn("local_ip_display", payload)
+        self.assertIn("display_base_url", payload)
 
     def test_ui_routes_redirect_instead_of_dumping_raw_json_or_500_errors(self):
         bag_id = self.client.get("/bags").json()[0]["id"]

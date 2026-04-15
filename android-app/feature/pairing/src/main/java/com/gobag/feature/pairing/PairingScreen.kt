@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -116,7 +117,7 @@ fun PairingScreen(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            "CONNECT PI",
+                            "CONNECT BAG",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Black
                         )
@@ -124,11 +125,7 @@ fun PairingScreen(
                 },
                 actions = {
                     StatusPill(
-                        label = when {
-                            connection.discovery_label.isNotBlank() -> connection.discovery_label.uppercase()
-                            connection.is_paired -> connection.connection_label.uppercase()
-                            else -> connection.pairing_label.uppercase()
-                        },
+                        label = connection.primary_label,
                         accent = statusAccent
                     )
                 },
@@ -148,68 +145,34 @@ fun PairingScreen(
         ) {
             item {
                 PairingHeroCard(
-                    endpoint = state.manual_endpoint.ifBlank { state.endpoint.ifBlank { "Raspberry Pi Hub" } },
-                    pairingDetail = state.pairing_detail,
-                    statusLabel = when {
-                        connection.discovery_label.isNotBlank() -> connection.discovery_label
-                        connection.is_paired -> connection.connection_label
-                        else -> connection.pairing_label
-                    },
-                    authStatus = state.auth_status,
+                    endpoint = state.manual_endpoint.ifBlank { state.endpoint.ifBlank { "No saved location" } },
+                    detail = connection.detail,
+                    statusLabel = connection.primary_label,
+                    statusValue = connection.connection_label,
                     pairedBagCount = state.paired_bag_count,
                     statusAccent = statusAccent
                 )
             }
 
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    MiniStatusCard(
-                        modifier = Modifier.weight(1f),
-                        title = "Endpoint",
-                        value = connection.connection_label,
-                        detail = connection.detail,
-                        accent = statusAccent
-                    )
-                    MiniStatusCard(
-                        modifier = Modifier.weight(1f),
-                        title = "Auth",
-                        value = state.auth_status,
-                        detail = if (connection.discovery_label.isNotBlank()) {
-                            connection.discovery_label
-                        } else if (isPaired) {
-                            connection.pairing_label
-                        } else {
-                            "Use a QR scan or manual Pair Code to authenticate."
-                        },
-                        accent = if (isPaired) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-
-            item {
                 ControlCard(
-                    title = "Saved Raspberry Pi Address",
-                    subtitle = "Save and test the Raspberry Pi address first. Then pair with either the bag QR code or the 6-digit Pair Code shown on the Pi."
+                    title = "Bag location",
+                    subtitle = "Save the bag location first. Then scan the QR code or enter the 6-digit code."
                 ) {
                     OutlinedTextField(
                         value = state.manual_endpoint,
                         onValueChange = view_model::on_manual_endpoint_changed,
                         modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Location") },
                         placeholder = { Text("http://192.168.1.20:8080") },
                         singleLine = true
                     )
                     Text(
                         connection.detail,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        "Pairing status: ${connection.pairing_label} | Connection: ${connection.connection_label}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
                     )
                     if (state.error.isNotBlank()) {
                         Text(
@@ -239,9 +202,10 @@ fun PairingScreen(
                         )
                     ) {
                         Text(
-                            if (state.running) "Testing..." else "Test Address",
+                            if (state.running) "Checking..." else "Check location",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
                         )
                     }
                     OutlinedButton(
@@ -260,9 +224,10 @@ fun PairingScreen(
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                     ) {
                         Text(
-                            if (state.running) "Waiting..." else "Scan QR",
+                            if (state.running) "Working..." else "Scan QR",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
                         )
                     }
                 }
@@ -270,19 +235,20 @@ fun PairingScreen(
 
             item {
                 ControlCard(
-                    title = "Manual Pair Code",
-                    subtitle = "If the Raspberry Pi already shows a 6-digit Pair Code, enter it here to pair without scanning."
+                    title = "Enter code",
+                    subtitle = "If the bag shows a 6-digit code, type it here."
                 ) {
                     OutlinedTextField(
                         value = state.manual_pair_code,
                         onValueChange = view_model::on_pair_code_changed,
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Enter 6-digit Pair Code") },
+                        label = { Text("6-digit code") },
+                        placeholder = { Text("123456") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
                     )
                     Text(
-                        "Use the same saved Raspberry Pi address above. The phone will validate the Pair Code with the Pi and then download the bag inventory.",
+                        "Use the same saved location above. We will finish setup and pull the bag details to this phone.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -299,9 +265,10 @@ fun PairingScreen(
                         )
                     ) {
                         Text(
-                            if (state.running) "Pairing With Code..." else "Pair With Code",
+                            if (state.running) "Connecting..." else "Connect with code",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
                         )
                     }
                 }
@@ -309,16 +276,16 @@ fun PairingScreen(
 
             item {
                 ControlCard(
-                    title = "Pairing Methods",
-                    subtitle = "Both pairing methods reach the same secure Pi backend route and end in the same saved bag state on the phone."
+                    title = "How to connect",
+                    subtitle = "Choose the option that feels easiest."
                 ) {
                     GuidanceLine(
-                        title = "Scan Bag QR",
-                        body = "Best when the Pi dashboard is nearby. The QR already contains the Pi address and Pair Code."
+                        title = "Scan the QR code",
+                        body = "Fastest option when the bag screen is nearby."
                     )
                     GuidanceLine(
-                        title = "Enter Pair Code",
-                        body = "Best when the camera is unreliable. First save the Pi address above, then enter the 6-digit code manually."
+                        title = "Type the 6-digit code",
+                        body = "Use this when scanning is not working."
                     )
                 }
             }
@@ -334,32 +301,12 @@ fun PairingScreen(
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
                     ) {
                         Text(
-                            "Remove Selected Bag",
+                            "Remove this bag",
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
                     }
-                }
-            }
-
-            item {
-                ControlCard(
-                    title = "Pairing Flow",
-                    subtitle = "Keep the Pi powered and nearby. The phone can now complete the same pairing flow from either a QR scan or the visible Pair Code."
-                ) {
-                    GuidanceLine(
-                        title = "1. Save the address",
-                        body = "Test a local Pi endpoint so the phone knows where the hub lives."
-                    )
-                    GuidanceLine(
-                        title = "2. Use QR or Pair Code",
-                        body = "Scan the Pi QR code or type the 6-digit Pair Code shown on the Raspberry Pi."
-                    )
-                    GuidanceLine(
-                        title = "3. Start editing offline",
-                        body = "Once paired, the bag becomes selectable everywhere in the phone app."
-                    )
                 }
             }
         }
@@ -369,16 +316,16 @@ fun PairingScreen(
 private fun buildPairQrScanOptions(): ScanOptions =
     ScanOptions().apply {
         setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-        setPrompt("Scan Go-Bag QR")
+        setPrompt("Scan bag QR code")
         setBeepEnabled(false)
     }
 
 @Composable
 private fun PairingHeroCard(
     endpoint: String,
-    pairingDetail: String,
+    detail: String,
     statusLabel: String,
-    authStatus: String,
+    statusValue: String,
     pairedBagCount: Int,
     statusAccent: Color
 ) {
@@ -411,7 +358,7 @@ private fun PairingHeroCard(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            "Raspberry Pi Hub",
+                            "Connect your bag",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Black,
                             maxLines = 2,
@@ -420,16 +367,20 @@ private fun PairingHeroCard(
                         Text(
                             endpoint,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    StatusPill(label = statusLabel.uppercase(), accent = statusAccent)
+                    StatusPill(label = statusLabel, accent = statusAccent)
                 }
 
                 Text(
-                    pairingDetail,
+                    detail,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
                 )
 
                 Row(
@@ -438,14 +389,14 @@ private fun PairingHeroCard(
                 ) {
                     HeroMetric(
                         modifier = Modifier.weight(1f),
-                        label = "Paired Bags",
+                        label = "Saved bags",
                         value = pairedBagCount.toString(),
                         accent = MaterialTheme.colorScheme.primary
                     )
                     HeroMetric(
                         modifier = Modifier.weight(1f),
-                        label = "Auth",
-                        value = authStatus,
+                        label = "Status",
+                        value = statusValue,
                         accent = statusAccent
                     )
                 }
@@ -482,58 +433,15 @@ private fun HeroMetric(
                 value,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Black,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 label,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun MiniStatusCard(
-    modifier: Modifier = Modifier,
-    title: String,
-    value: String,
-    detail: String,
-    accent: Color
-) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(accent)
-            )
-            Text(
-                title,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                value,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -609,6 +517,7 @@ private fun StatusPill(
     accent: Color
 ) {
     Surface(
+        modifier = Modifier.widthIn(max = 132.dp),
         shape = RoundedCornerShape(999.dp),
         color = accent.copy(alpha = 0.14f)
     ) {
@@ -627,7 +536,9 @@ private fun StatusPill(
                 label,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                color = accent
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
