@@ -1,4 +1,7 @@
-﻿plugins {
+val appVersionCode = 5
+val appVersionName = "0.5"
+
+plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -11,8 +14,8 @@ android {
         applicationId = "com.gobag.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
     }
 
     buildFeatures {
