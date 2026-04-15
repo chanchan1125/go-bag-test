@@ -21,7 +21,7 @@ class PiConnectionManager(
         val state = device_state_store.state.first()
         val candidates = build_candidate_endpoints(state)
         if (candidates.isEmpty()) {
-            return "No Raspberry Pi address is saved yet."
+            return "No bag location is saved yet."
         }
 
         device_state_store.set_connection_checking(state.selected_bag_id)
@@ -50,7 +50,7 @@ class PiConnectionManager(
         if (state.active_address_id.isNotBlank()) {
             device_state_store.update_saved_address_status(
                 address_id = state.active_address_id,
-                status = "Failed",
+                status = "Unavailable",
                 detail = message,
                 make_active = true
             )
@@ -90,14 +90,14 @@ class PiConnectionManager(
             } else if (address_id != null) {
                 device_state_store.update_saved_address_status(
                     address_id = address_id,
-                    status = "Reachable",
+                    status = "Available",
                     detail = detail,
                     make_active = state.active_address_id == address_id
                 )
             }
             return PairingConnectionResult(
                 endpoint = normalizedBaseUrl,
-                status = if (state.paired_bags.isNotEmpty()) "Pi Online" else "Pairing Ready",
+                status = if (state.paired_bags.isNotEmpty()) "Online" else "Ready to connect",
                 detail = detail
             )
         } catch (e: Exception) {
@@ -105,7 +105,7 @@ class PiConnectionManager(
             if (address_id != null) {
                 device_state_store.update_saved_address_status(
                     address_id = address_id,
-                    status = "Failed",
+                    status = "Unavailable",
                     detail = message,
                     make_active = state.active_address_id == address_id
                 )
@@ -158,7 +158,7 @@ class PiConnectionManager(
         )
         device_state_store.update_saved_address_status(
             address_id = savedAddress.id,
-            status = "Reachable",
+            status = "Available",
             detail = detail,
             make_active = true
         )
@@ -207,11 +207,11 @@ class PiConnectionManager(
     private fun build_refresh_failure_message(state: DeviceState, last_failure: String): String {
         return when {
             state.paired_bags.isNotEmpty() ->
-                "Pi paired but offline. Address may be outdated. Reconnect required. ${last_failure.ifBlank { "Could not reach the Raspberry Pi." }}"
+                "Your bag is offline right now. ${last_failure.ifBlank { "Try reconnecting." }}"
             state.saved_addresses.isNotEmpty() ->
-                "Saved Raspberry Pi address is unreachable. ${last_failure.ifBlank { "Could not reach the Raspberry Pi." }}"
+                "We could not reach the saved bag location. ${last_failure.ifBlank { "Try again." }}"
             else ->
-                last_failure.ifBlank { "Could not refresh Raspberry Pi status." }
+                last_failure.ifBlank { "We could not refresh your bag status." }
         }
     }
 }
@@ -219,10 +219,10 @@ class PiConnectionManager(
 internal fun normalize_base_url(base_url: String): String {
     val normalizedBaseUrl = base_url.trim().removeSuffix("/")
     if (normalizedBaseUrl.isBlank()) {
-        throw IllegalArgumentException("Enter the Raspberry Pi address first.")
+        throw IllegalArgumentException("Enter the bag location first.")
     }
     if (!normalizedBaseUrl.startsWith("http://") && !normalizedBaseUrl.startsWith("https://")) {
-        throw IllegalArgumentException("Use a full address like http://192.168.1.20:8080.")
+        throw IllegalArgumentException("Use a full location like http://192.168.1.20:8080.")
     }
     return normalizedBaseUrl
 }
@@ -231,21 +231,21 @@ internal fun classify_connection_error(error: Exception): String {
     val message = error.message.orEmpty()
     return when {
         error is IllegalArgumentException -> message
-        error is UnknownHostException -> "Raspberry Pi address not found. Check the IP address and that the phone is on the same network."
-        error is ConnectException -> "Could not reach the Raspberry Pi. Address may be outdated or the Pi server is offline."
-        error is SocketTimeoutException -> "Connection timed out. Address may be outdated or the Raspberry Pi is too slow to respond."
+        error is UnknownHostException -> "We could not find that bag location. Check it and try again."
+        error is ConnectException -> "We could not reach your bag. Make sure it is on and on the same Wi-Fi."
+        error is SocketTimeoutException -> "Your bag took too long to respond. Try again in a moment."
         error is HttpException -> {
             val detail = parse_fastapi_detail(error.response()?.errorBody()?.string().orEmpty())
             when {
-                error.code() == 401 || error.code() == 403 -> "The Raspberry Pi rejected the request. Re-pair this phone and try again."
-                error.code() == 404 -> "The Raspberry Pi responded, but the Go-Bag API path was not found. Check the Pi server URL."
-                detail.isNotBlank() -> "Connection test failed: HTTP ${error.code()} ($detail)."
-                else -> "Connection test failed: HTTP ${error.code()}."
+                error.code() == 401 || error.code() == 403 -> "This phone needs to reconnect to the bag."
+                error.code() == 404 -> "That saved bag location is not working anymore. Check it and try again."
+                detail.isNotBlank() -> "We could not connect to the bag. $detail"
+                else -> "We could not connect to the bag right now."
             }
         }
         message.contains("CLEARTEXT communication", ignoreCase = true) ->
-            "Android blocked an insecure HTTP request. Enable local HTTP access or use HTTPS on the Raspberry Pi."
-        else -> "Connection test failed: ${message.ifBlank { "unknown network error" }}"
+            "This phone cannot open that bag location. Try a local network location or a secure address."
+        else -> "We could not connect to the bag. ${message.ifBlank { "Try again." }}"
     }
 }
 
@@ -254,15 +254,10 @@ private fun build_success_detail(
     device_status: DeviceStatusDto,
     has_paired_bag: Boolean
 ): String {
-    val endpointDetail = if (device_status.local_ip.isBlank()) {
-        base_url
-    } else {
-        device_status.local_ip
-    }
     return if (has_paired_bag) {
-        "Pi ${device_status.device_name} is online at $endpointDetail."
+        "Your bag is online."
     } else {
-        "Pi ${device_status.device_name} is online at $endpointDetail. Pairing is ready."
+        "We found the bag hub. You can connect now."
     }
 }
 

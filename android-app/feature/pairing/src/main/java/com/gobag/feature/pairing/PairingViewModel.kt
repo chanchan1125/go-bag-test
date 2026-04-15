@@ -19,10 +19,7 @@ data class PairingUiState(
     val endpoint: String = "",
     val manual_endpoint: String = "",
     val manual_pair_code: String = "",
-    val auth_status: String = "Not authenticated",
-    val pairing_detail: String = "No Raspberry Pi has been paired with this phone yet.",
     val paired_bag_count: Int = 0,
-    val selected_bag_name: String = "",
     val running: Boolean = false,
     val error: String = "",
     val feedback_message: String = ""
@@ -105,13 +102,7 @@ class PairingViewModel(
                 state.saved_addresses.firstOrNull { it.is_active }?.base_url ?: state.base_url
             },
             manual_pair_code = inputs.pair_code_input,
-            auth_status = if (state.auth_token.isNotBlank()) "Authenticated for selected bag" else "Not authenticated",
-            pairing_detail = when {
-                paired -> "This phone has ${state.paired_bags.size} paired bag(s). ${connection.detail}"
-                else -> connection.detail
-            },
             paired_bag_count = state.paired_bags.size,
-            selected_bag_name = state.selected_bag_id,
             running = inputs.running,
             error = inputs.error,
             feedback_message = inputs.feedback
@@ -148,11 +139,15 @@ class PairingViewModel(
             try {
                 val result = pairing_repository.test_connection(value)
                 manualEndpoint.value = result.endpoint
-                feedback_message.value = "Address test succeeded. Use QR scan or the Pair Code to authenticate this phone."
+                feedback_message.value = if (result.status == "Ready to connect") {
+                    "Bag hub found. Scan the QR code or enter the 6-digit code now."
+                } else {
+                    "Bag hub found."
+                }
             } catch (e: Exception) {
-                val message = e.message ?: "Connection test failed."
+                val message = e.message ?: "We could not check that bag location."
                 error.value = message
-                feedback_message.value = "Address test failed."
+                feedback_message.value = "We could not check that bag location."
             } finally {
                 running.value = false
             }
@@ -163,12 +158,12 @@ class PairingViewModel(
         viewModelScope.launch {
             val selectedBagId = sync_repository.observe_device_state().first().selected_bag_id
             if (selectedBagId.isBlank()) {
-                error.value = "No paired bag is selected."
+                error.value = "No bag is selected on this phone."
                 return@launch
             }
             pairing_repository.unpair_bag(selectedBagId)
             error.value = ""
-            feedback_message.value = "Bag unpaired."
+            feedback_message.value = "Bag removed from this phone."
         }
     }
 
@@ -186,7 +181,7 @@ class PairingViewModel(
                 manualPairCode.value = ""
                 feedback_message.value = result.detail
             } catch (e: Exception) {
-                val message = e.message ?: "Pair failed"
+                val message = e.message ?: "We could not finish setup."
                 error.value = message
                 feedback_message.value = message
             } finally {

@@ -184,7 +184,7 @@ class DeviceStateStore(context: Context) {
             id = address_id ?: UUID.randomUUID().toString(),
             base_url = base_url,
             last_status = "Saved",
-            last_detail = "Address saved. Test it or scan a bag QR to pair.",
+            last_detail = "Location saved. Check it when you're ready.",
             last_checked_at = 0L,
             is_active = make_active
         )

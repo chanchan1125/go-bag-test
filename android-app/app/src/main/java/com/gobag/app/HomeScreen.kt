@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -80,11 +81,11 @@ fun HomeScreen(
     val primaryAlert = when {
         connection.last_sync_error.isNotBlank() -> connection.last_sync_error
         connection.last_connection_error.isNotBlank() -> connection.last_connection_error
-        state.has_conflicts -> "Sync conflicts need review before auto-sync can be trusted."
+        state.has_conflicts -> "Review items before turning automatic updates back on."
         state.expiry_alerts.isNotEmpty() -> formatExpiryAlertDetail(state.expiry_alerts.first())
         state.alerts.isNotEmpty() -> state.alerts.first()
-        state.sync_recommended -> "Phone changes are waiting to be synced to the Raspberry Pi."
-        else -> "No critical alerts. The primary bag is stable."
+        state.sync_recommended -> "Phone changes are ready to send to your bag."
+        else -> "Everything looks steady right now."
     }
 
     Scaffold(
@@ -118,7 +119,7 @@ fun HomeScreen(
                 },
                 actions = {
                     TacticalTopPill(
-                        text = connection.connection_label.uppercase(),
+                        text = connection.primary_label,
                         accent = connectionAccent
                     )
                     Spacer(modifier = Modifier.size(4.dp))
@@ -168,7 +169,6 @@ fun HomeScreen(
                     bagReadiness = state.bag_readiness,
                     connectionLabel = connection.connection_label,
                     pendingChanges = connection.pending_changes_count,
-                    localIp = connection.local_ip,
                     lastSync = formatTimestamp(state.last_sync_time)
                 )
             }
@@ -181,7 +181,7 @@ fun HomeScreen(
                     MetricCard(
                         modifier = Modifier.weight(1f),
                         value = state.bag_count.toString(),
-                        label = "Paired Bags",
+                        label = "Bags",
                         accent = MaterialTheme.colorScheme.primary
                     )
                     MetricCard(
@@ -206,7 +206,7 @@ fun HomeScreen(
                 ) {
                     StatusCard(
                         modifier = Modifier.weight(1f),
-                        title = "Connection Node",
+                        title = "Bag status",
                         value = connection.connection_label,
                         detail = connection.detail,
                         icon = if (connection.is_online) Icons.Default.CloudDone else Icons.Default.CloudOff,
@@ -216,9 +216,9 @@ fun HomeScreen(
                         modifier = Modifier.weight(1f),
                         title = "Primary Alert",
                         value = when {
-                            state.has_conflicts -> "Conflict Review"
-                            state.expiry_alerts.isNotEmpty() -> "Expiry Watch"
-                            state.sync_recommended -> "Sync Needed"
+                            state.has_conflicts -> "Review"
+                            state.expiry_alerts.isNotEmpty() -> "Expiring"
+                            state.sync_recommended -> "Update"
                             else -> "Stable"
                         },
                         detail = primaryAlert,
@@ -283,19 +283,19 @@ fun HomeScreen(
                 ) {
                     ActionTile(
                         modifier = Modifier.weight(1f),
-                        title = "Connect Pi",
+                        title = "Connect Bag",
                         detail = if (connection.is_paired) {
-                            "Review pairing, reconnection, and bag authentication"
+                            "Check your bag connection and reconnect if needed"
                         } else {
-                            "Link this phone to your Raspberry Pi hub"
+                            "Connect this phone to your bag"
                         },
                         icon = Icons.Default.QrCodeScanner,
                         onClick = on_pairing
                     )
                     ActionTile(
                         modifier = Modifier.weight(1f),
-                        title = "Sync Now",
-                        detail = "Push local changes to the Pi hub",
+                        title = "Update Bag",
+                        detail = "Send phone changes to your bag",
                         icon = Icons.Default.Sync,
                         onClick = on_sync
                     )
@@ -306,15 +306,9 @@ fun HomeScreen(
                 ActionTile(
                     modifier = Modifier.fillMaxWidth(),
                     title = "Settings",
-                    detail = "Addresses, paired bags, connection tools, and appearance",
+                    detail = "Bag connections, saved locations, and app theme",
                     icon = Icons.Default.Settings,
                     onClick = on_settings
-                )
-            }
-
-            item {
-                SystemHubCard(
-                    connection = connection
                 )
             }
         }
@@ -329,7 +323,6 @@ private fun HomeHeroCard(
     bagReadiness: String,
     connectionLabel: String,
     pendingChanges: Int,
-    localIp: String,
     lastSync: String
 ) {
     Card(
@@ -369,7 +362,7 @@ private fun HomeHeroCard(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            "Offline-first readiness overview with local Raspberry Pi sync.",
+                            "Your bag summary and recent updates.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -393,10 +386,9 @@ private fun HomeHeroCard(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        HeroDetailLine("Connection", connectionLabel)
-                        HeroDetailLine("Pending changes", pendingChanges.toString())
-                        HeroDetailLine("Last sync", lastSync)
-                        HeroDetailLine("Local endpoint", localIp.ifBlank { "Unknown" })
+                        HeroDetailLine("Bag status", connectionLabel)
+                        HeroDetailLine("Changes waiting", pendingChanges.toString())
+                        HeroDetailLine("Last update", lastSync)
                     }
                 }
             }
@@ -492,7 +484,9 @@ private fun MetricCard(
             Text(
                 label,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -536,7 +530,9 @@ private fun StatusCard(
             Text(
                 value,
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 detail,
@@ -707,52 +703,16 @@ private fun ActionTile(
             Text(
                 title,
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 detail,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun SystemHubCard(
-    connection: PiConnectionSnapshot
-) {
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            SectionLabel("System Hub")
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .clip(CircleShape)
-                        .background(resolveConnectionAccent(connection))
-                )
-                Text(
-                    connection.connection_label,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Text(
-                connection.detail,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -774,6 +734,7 @@ private fun TacticalTopPill(
     accent: Color
 ) {
     Surface(
+        modifier = Modifier.widthIn(max = 132.dp),
         shape = RoundedCornerShape(999.dp),
         color = accent.copy(alpha = 0.14f)
     ) {
@@ -792,7 +753,9 @@ private fun TacticalTopPill(
                 text,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                color = accent
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -825,5 +788,5 @@ private fun formatTimestamp(time: Long): String {
 private fun formatExpiryAlertDetail(alert: AlertModel): String {
     val status = if (alert.type == "expired") "Expired" else "Expiring soon"
     val date = PreparednessRules.format_epoch_ms_to_yyyy_mm_dd(alert.expiry_date_ms).ifBlank { "No date" }
-    return "${alert.bag_name} | $status | $date"
+    return "${alert.bag_name} - $status - $date"
 }

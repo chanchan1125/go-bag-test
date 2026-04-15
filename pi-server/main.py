@@ -1213,6 +1213,13 @@ def display_local_ip(value: str) -> str:
     return host_value
 
 
+def current_device_ip_display() -> str:
+    detected_ip = preferred_non_loopback_ip()
+    if detected_ip:
+        return display_local_ip(detected_ip)
+    return display_local_ip(compute_local_ip())
+
+
 def compute_base_url(request: Optional[Request] = None) -> str:
     configured = os.getenv("GOBAG_BASE_URL", "").strip()
     if configured:
@@ -4469,7 +4476,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         conn.commit()
 
     base_url = compute_base_url(request)
-    local_ip_display = display_local_ip(compute_local_ip())
+    local_ip_display = current_device_ip_display()
     checked_count = sum(1 for row in readiness["checklist"] if row["checked"])
     missing_categories = [row["name"] for row in readiness["checklist"] if not row["checked"]]
     expiring_items = [a for a in alerts if a.type == "expiring_soon"]

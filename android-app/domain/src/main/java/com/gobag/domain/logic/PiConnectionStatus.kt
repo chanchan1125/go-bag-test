@@ -71,11 +71,11 @@ object PiConnectionStatus {
         reachability_state = PiReachabilityState.UNKNOWN,
         sync_state = PiSyncState.IDLE,
         discovery_state = PiDiscoveryState.NONE,
-        primary_label = "No Pi Paired",
-        connection_label = "No Pi Paired",
-        pairing_label = "No Pi Paired",
+        primary_label = "Not set up",
+        connection_label = "Not set up",
+        pairing_label = "Not set up",
         discovery_label = "",
-        detail = "No Raspberry Pi has been paired with this phone yet.",
+        detail = "Connect your bag to get started.",
         active_endpoint = "",
         local_ip = "",
         pending_changes_count = 0,
@@ -147,55 +147,58 @@ object PiConnectionStatus {
             else -> PiSyncState.IDLE
         }
         val connectionLabel = when (reachabilityState) {
-            PiReachabilityState.CHECKING_CONNECTION -> "Connecting..."
-            PiReachabilityState.PI_ONLINE -> "Pi Online"
-            PiReachabilityState.PI_OFFLINE -> "Pi Offline"
-            PiReachabilityState.ADDRESS_UNREACHABLE -> "Address Unreachable"
+            PiReachabilityState.CHECKING_CONNECTION -> "Checking"
+            PiReachabilityState.PI_ONLINE -> "Online"
+            PiReachabilityState.PI_OFFLINE -> "Offline"
+            PiReachabilityState.ADDRESS_UNREACHABLE -> "Offline"
             PiReachabilityState.UNKNOWN -> when {
-                isPaired -> "Pi Paired"
-                hasSavedAddress -> "Address Saved"
-                else -> "No Pi Paired"
+                isPaired -> "Saved"
+                hasSavedAddress -> "Setup started"
+                else -> "Not set up"
             }
         }
-        val pairingLabel = if (isPaired) "Pi Paired" else "No Pi Paired"
-        val discoveryLabel = if (discoveryState == PiDiscoveryState.PAIRING_READY) "Pairing Ready" else ""
+        val pairingLabel = when {
+            isPaired -> "Saved"
+            hasSavedAddress -> "Setup started"
+            else -> "Not set up"
+        }
+        val discoveryLabel = if (discoveryState == PiDiscoveryState.PAIRING_READY) "Ready to connect" else ""
         val primaryLabel = when {
-            syncState == PiSyncState.SYNCING -> "Syncing"
-            syncState == PiSyncState.SYNC_FAILED -> "Sync Failed"
-            reachabilityState == PiReachabilityState.CHECKING_CONNECTION -> "Connecting..."
-            discoveryState == PiDiscoveryState.PAIRING_READY -> "Pairing Ready"
-            reachabilityState == PiReachabilityState.PI_ONLINE -> "Pi Online"
-            isPaired && reachabilityState in setOf(PiReachabilityState.PI_OFFLINE, PiReachabilityState.ADDRESS_UNREACHABLE) -> "Pi Paired but Offline"
-            isPaired -> "Pi Paired"
-            hasSavedAddress -> "Address Saved"
-            else -> "No Pi Paired"
+            syncState == PiSyncState.SYNCING -> "Updating"
+            syncState == PiSyncState.SYNC_FAILED -> "Update failed"
+            reachabilityState == PiReachabilityState.CHECKING_CONNECTION -> "Checking"
+            discoveryState == PiDiscoveryState.PAIRING_READY -> "Ready"
+            reachabilityState == PiReachabilityState.PI_ONLINE -> "Online"
+            isPaired && reachabilityState in setOf(PiReachabilityState.PI_OFFLINE, PiReachabilityState.ADDRESS_UNREACHABLE) -> "Offline"
+            isPaired -> "Saved"
+            hasSavedAddress -> "Setup started"
+            else -> "Not set up"
         }
         val detail = when {
-            syncState == PiSyncState.SYNCING -> "Syncing with the Raspberry Pi now."
+            syncState == PiSyncState.SYNCING -> "Updating your bag now."
             syncState == PiSyncState.SYNC_FAILED && state.last_sync_error.isNotBlank() -> state.last_sync_error
-            syncState == PiSyncState.SYNC_FAILED -> "The last sync attempt failed."
-            reachabilityState == PiReachabilityState.CHECKING_CONNECTION -> "Checking the saved Raspberry Pi address."
-            reachabilityState == PiReachabilityState.PI_ONLINE && state.local_ip.isNotBlank() ->
-                "Raspberry Pi reachable at ${state.local_ip}."
-            reachabilityState == PiReachabilityState.PI_ONLINE && state.base_url.isNotBlank() ->
-                "Raspberry Pi reachable at ${state.base_url}."
-            reachabilityState == PiReachabilityState.PI_ONLINE -> "Raspberry Pi reachable right now."
+            syncState == PiSyncState.SYNC_FAILED -> "The last update did not finish."
+            reachabilityState == PiReachabilityState.CHECKING_CONNECTION -> "Checking your bag connection."
+            discoveryState == PiDiscoveryState.PAIRING_READY ->
+                "We found the bag hub. You can connect now."
+            reachabilityState == PiReachabilityState.PI_ONLINE && isPaired ->
+                "Your bag is available right now."
+            reachabilityState == PiReachabilityState.PI_ONLINE ->
+                "We found the bag hub. You can connect now."
             reachabilityState == PiReachabilityState.ADDRESS_UNREACHABLE && state.last_connection_error.isNotBlank() ->
                 state.last_connection_error
             reachabilityState == PiReachabilityState.ADDRESS_UNREACHABLE ->
-                "The saved Raspberry Pi address may be outdated or unreachable. Reconnect required."
+                "We could not reach the saved bag location. Try reconnecting."
             reachabilityState == PiReachabilityState.PI_OFFLINE && state.last_connection_error.isNotBlank() ->
                 state.last_connection_error
             reachabilityState == PiReachabilityState.PI_OFFLINE ->
-                "The Raspberry Pi is currently offline."
-            discoveryState == PiDiscoveryState.PAIRING_READY ->
-                "Raspberry Pi is reachable and ready for pairing."
+                "Your bag is offline right now."
             isPaired ->
-                "Saved pairing credentials exist, but the live connection has not been confirmed yet."
+                "This phone remembers your bag."
             hasSavedAddress ->
-                "A Raspberry Pi address is saved. Pair a bag to enable sync."
+                "A bag location is saved. Finish connecting to use it."
             else ->
-                "No Raspberry Pi has been paired with this phone yet."
+                "Connect your bag to get started."
         }
         val isOnline = reachabilityState == PiReachabilityState.PI_ONLINE
         val addressNeedsAttention = reachabilityState == PiReachabilityState.ADDRESS_UNREACHABLE
@@ -236,6 +239,15 @@ object PiConnectionStatus {
             is_paired -> STATUS_PI_PAIRED
             has_saved_address -> STATUS_ADDRESS_SAVED
             else -> STATUS_NO_PI_PAIRED
+        }
+    }
+
+    fun saved_location_label(status: String?): String {
+        return when (status.orEmpty().trim().lowercase(Locale.ROOT).replace(' ', '_')) {
+            "reachable", "available", STATUS_PI_ONLINE, "online" -> "Available"
+            "failed", "unavailable", STATUS_ADDRESS_UNREACHABLE, STATUS_PI_OFFLINE, "offline", "error" -> "Unavailable"
+            "paired", "ready", "pairing_ready" -> "Ready"
+            else -> "Saved"
         }
     }
 }

@@ -138,8 +138,8 @@ class GoBagPairingRepository(
             warnings += "Raspberry Pi status refresh failed."
             device_state_store.update_saved_address_status(
                 address_id = savedAddress.id,
-                status = "Paired",
-                detail = "Pair code accepted. Refresh the Raspberry Pi status or open Sync to finish setup.",
+                status = "Ready",
+                detail = "Your bag is connected, but the first update still needs to finish.",
                 make_active = true
             )
         }
@@ -209,16 +209,16 @@ class GoBagPairingRepository(
                 updated_at = 0L
             )
         }
-        throw IllegalStateException("The Raspberry Pi did not provide bag details for this Pair Code. Refresh the Pi dashboard and try again.")
+            throw IllegalStateException("The bag did not send its details. Refresh the bag screen and try again.")
     }
 
     private fun normalize_base_url(base_url: String): String {
         val normalizedBaseUrl = base_url.trim().removeSuffix("/")
         if (normalizedBaseUrl.isBlank()) {
-            throw IllegalArgumentException("Enter the Raspberry Pi address first.")
+            throw IllegalArgumentException("Enter the bag location first.")
         }
         if (!normalizedBaseUrl.startsWith("http://") && !normalizedBaseUrl.startsWith("https://")) {
-            throw IllegalArgumentException("Use a full address like http://192.168.1.20:8080.")
+            throw IllegalArgumentException("Use a full location like http://192.168.1.20:8080.")
         }
         return normalizedBaseUrl
     }
@@ -226,7 +226,7 @@ class GoBagPairingRepository(
     private fun normalize_pair_code(pair_code: String): String {
         val normalized = pair_code.trim().filter { !it.isWhitespace() }
         if (!normalized.matches(Regex("\\d{6}"))) {
-            throw IllegalArgumentException("Enter the 6-digit Pair Code shown on the Raspberry Pi.")
+            throw IllegalArgumentException("Enter the 6-digit code shown on the bag.")
         }
         return normalized
     }
@@ -237,11 +237,11 @@ class GoBagPairingRepository(
             val detail = parse_fastapi_detail(error.response()?.errorBody()?.string().orEmpty())
             return when {
                 error.code() == 400 && detail.contains("invalid or expired", ignoreCase = true) ->
-                    "Pair Code invalid or expired. Generate a new code on the Raspberry Pi and try again."
+                    "That code is no longer valid. Get a new code from the bag and try again."
                 error.code() == 400 && detail.isNotBlank() -> detail
-                error.code() == 404 -> "The Raspberry Pi pairing route was not found at this address."
-                detail.isNotBlank() -> "Pairing failed: $detail"
-                else -> "Pairing failed with HTTP ${error.code()}."
+                error.code() == 404 -> "That bag location is not working for setup."
+                detail.isNotBlank() -> "We could not finish setup. $detail"
+                else -> "We could not finish setup right now."
             }
         }
         return classify_connection_error(error)
@@ -266,18 +266,18 @@ class GoBagPairingRepository(
     ): String {
         val base = when {
             already_paired && initial_sync_completed ->
-                "$bag_name was already paired. Connection details were refreshed and inventory re-synced."
+                "$bag_name is ready on this phone."
             initial_sync_completed ->
-                "$bag_name paired successfully and its inventory downloaded."
+                "$bag_name is connected and ready."
             already_paired ->
-                "$bag_name was refreshed, but the first inventory sync failed. Open Sync to retry."
+                "$bag_name is connected, but the first update did not finish. Open Update Bag to try again."
             else ->
-                "$bag_name paired successfully, but the first inventory sync failed. Open Sync to retry."
+                "$bag_name is connected, but the first update did not finish. Open Update Bag to try again."
         }
         return if (warnings.isEmpty()) {
             base
         } else {
-            "$base ${warnings.joinToString(" ")}"
+            "$base Some setup steps still need attention."
         }
     }
 

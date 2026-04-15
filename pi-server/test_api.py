@@ -54,6 +54,11 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(sync_status.status_code, 200)
         self.assertIn("connection_status", sync_status.json())
 
+    def test_current_device_ip_display_prefers_live_ip_over_base_url(self):
+        with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": "http://192.168.1.10:8001"}, clear=False):
+            with mock.patch.object(self.module, "preferred_non_loopback_ip", return_value="192.168.1.9"):
+                self.assertEqual(self.module.current_device_ip_display(), "192.168.1.9")
+
     def test_bag_and_item_crud(self):
         categories = self.client.get("/categories")
         self.assertEqual(categories.status_code, 200)

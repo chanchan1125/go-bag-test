@@ -93,9 +93,9 @@ class SyncViewModel(
                 }
                 val result = sync_repository.run_sync_now()
                 feedback_message.value = result.skipped_reason
-                    ?: "Sync completed. Raspberry Pi inventory is up to date."
+                    ?: "Bag updated."
             } catch (e: Exception) {
-                feedback_message.value = "Sync failed: ${e.message ?: "unknown error"}"
+                feedback_message.value = e.message ?: "The bag update did not finish."
             } finally {
                 running.value = false
             }
@@ -105,7 +105,7 @@ class SyncViewModel(
     fun set_auto_sync(enabled: Boolean) {
         viewModelScope.launch {
             sync_repository.set_auto_sync(enabled)
-            feedback_message.value = if (enabled) "Auto-sync enabled." else "Auto-sync disabled."
+            feedback_message.value = if (enabled) "Auto update turned on." else "Auto update turned off."
         }
     }
 

@@ -98,12 +98,12 @@ class SettingsViewModel(
                 editing_address_id.value = null
                 endpoint_input.value = saved.base_url
                 feedback_message.value = if (saved.is_active) {
-                    "Raspberry Pi address saved and marked active."
+                    "Bag location saved."
                 } else {
-                    "Raspberry Pi address saved."
+                    "Bag location saved."
                 }
             } catch (e: Exception) {
-                feedback_message.value = e.message ?: "Could not save endpoint."
+                feedback_message.value = e.message ?: "We could not save that bag location."
             } finally {
                 running.value = false
             }
@@ -120,12 +120,12 @@ class SettingsViewModel(
                     endpoint_input.value = ""
                 }
                 feedback_message.value = if (address.is_active) {
-                    "Active Raspberry Pi address deleted. The next saved address became active."
+                    "Bag location removed."
                 } else {
-                    "Raspberry Pi address deleted."
+                    "Bag location removed."
                 }
             } catch (e: Exception) {
-                feedback_message.value = e.message ?: "Could not delete endpoint."
+                feedback_message.value = e.message ?: "We could not remove that bag location."
             } finally {
                 running.value = false
             }
@@ -137,7 +137,7 @@ class SettingsViewModel(
             pairing_repository.set_active_endpoint(address.id)
             endpoint_input.value = address.base_url
             editing_address_id.value = null
-            feedback_message.value = "Active Raspberry Pi address updated."
+            feedback_message.value = "Bag location updated."
         }
     }
 
@@ -153,7 +153,7 @@ class SettingsViewModel(
                 endpoint_input.value = result.endpoint
                 feedback_message.value = result.detail
             } catch (e: Exception) {
-                feedback_message.value = e.message ?: "Connection test failed."
+                feedback_message.value = e.message ?: "We could not check that bag location."
             } finally {
                 running.value = false
             }
@@ -164,7 +164,7 @@ class SettingsViewModel(
         viewModelScope.launch {
             running.value = true
             val message = sync_repository.refresh_remote_status()
-            feedback_message.value = message ?: "Raspberry Pi status refreshed."
+            feedback_message.value = message ?: "Bag status refreshed."
             running.value = false
         }
     }
@@ -183,11 +183,11 @@ class SettingsViewModel(
         viewModelScope.launch {
             val current = sync_repository.observe_device_state().first()
             if (current.selected_bag_id.isBlank()) {
-                feedback_message.value = "No paired bag is selected."
+                feedback_message.value = "No bag is selected on this phone."
                 return@launch
             }
             pairing_repository.unpair_bag(current.selected_bag_id)
-            feedback_message.value = "Selected bag removed from this phone."
+            feedback_message.value = "Bag removed from this phone."
         }
     }
 
