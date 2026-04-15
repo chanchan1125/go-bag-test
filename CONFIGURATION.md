@@ -103,7 +103,7 @@ These affect optional Pi camera endpoints only.
 GOBAG_HOST=0.0.0.0
 GOBAG_PORT=8080
 GOBAG_BASE_URL=http://192.168.1.20:8080
-GOBAG_DEVICE_NAME=GO BAG Raspberry Pi
+GOBAG_DEVICE_NAME="GO BAG Raspberry Pi"
 GOBAG_DATA_DIR=/opt/gobag/data
 GOBAG_LOG_DIR=/opt/gobag/logs
 GOBAG_BACKUP_DIR=/opt/gobag/backups
@@ -115,7 +115,7 @@ GOBAG_BACKUP_DIR=/opt/gobag/backups
 GOBAG_HOST=0.0.0.0
 GOBAG_PORT=8080
 GOBAG_BASE_URL=http://192.168.4.1:8080
-GOBAG_DEVICE_NAME=GO BAG Raspberry Pi
+GOBAG_DEVICE_NAME="GO BAG Raspberry Pi"
 ```
 
 ## How configuration affects pairing and advertised URLs

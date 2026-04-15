@@ -145,7 +145,7 @@ They affect camera status and capture behavior, but they are not required for An
 ```env
 GOBAG_HOST=0.0.0.0
 GOBAG_PORT=8080
-GOBAG_DEVICE_NAME=GO BAG Raspberry Pi
+GOBAG_DEVICE_NAME="GO BAG Raspberry Pi"
 GOBAG_DATA_DIR=/opt/gobag/data
 GOBAG_LOG_DIR=/opt/gobag/logs
 GOBAG_BACKUP_DIR=/opt/gobag/backups
@@ -154,7 +154,7 @@ GOBAG_ADMIN_TOKEN=
 GOBAG_AUTO_OPEN_UI=1
 GOBAG_UI_SHELL=pywebview
 GOBAG_APP_URL=
-GOBAG_APP_TITLE=GO BAG Inventory
+GOBAG_APP_TITLE="GO BAG Inventory"
 GOBAG_APP_FULLSCREEN=1
 GOBAG_APP_FRAMELESS=1
 GOBAG_APP_WIDTH=480
