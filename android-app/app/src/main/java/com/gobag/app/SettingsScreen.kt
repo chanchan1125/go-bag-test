@@ -133,7 +133,7 @@ fun SettingsScreen(
                     selectedBagName = selectedBag?.name ?: "No bag selected",
                     statusLabel = connection.connection_label,
                     statusDetail = connection.detail,
-                    pendingChanges = connection.pending_changes_count,
+                    pendingChanges = state.pending_phone_changes,
                     lastSync = formatSettingsTime(connection.last_sync_at),
                     savedLocationCount = state.saved_addresses.size,
                     bagCount = state.bags.size
@@ -391,7 +391,7 @@ private fun SettingsHeroCard(
                     HeroMetric(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.Sync,
-                        label = "Changes waiting",
+                        label = "Phone changes",
                         value = pendingChanges.toString(),
                         accent = MaterialTheme.colorScheme.primary
                     )

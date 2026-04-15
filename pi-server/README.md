@@ -130,7 +130,7 @@ curl http://127.0.0.1:8080/camera/status
 
 Open `http://<pi-ip>:8080/` in a browser to confirm the dashboard and QR pairing flow.
 
-The installer creates a desktop icon and, by default, a desktop autostart entry that opens the native GO BAG app shell on login. Use `--kiosk` to launch it in kiosk mode, or `--no-ui-autostart` to skip desktop auto-open.
+The installer creates a desktop icon and, by default, a desktop autostart entry that opens the native GO BAG app shell on login. Use `--kiosk` to launch it in kiosk mode. On Raspberry Pi OS, kiosk mode also asks `raspi-config` to boot back into a graphical desktop with auto-login so the GO BAG UI returns after reboot. On other Linux desktops, you may still need to enable desktop auto-login separately. Use `--no-ui-autostart` to skip desktop auto-open.
 
 You can launch the local UI shell manually with:
 

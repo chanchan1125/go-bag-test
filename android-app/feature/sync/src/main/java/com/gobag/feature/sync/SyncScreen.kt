@@ -116,7 +116,7 @@ fun SyncScreen(
                     connectionLabel = connection.connection_label,
                     detail = connection.detail,
                     lastSync = formatSyncTime(state.last_sync_at),
-                    pending = connection.pending_changes_count,
+                    pending = state.pending_phone_changes,
                     running = state.running,
                     connectionAccent = connectionAccent
                 )
@@ -124,7 +124,7 @@ fun SyncScreen(
 
             item {
                 MetricsRow(
-                    pending = connection.pending_changes_count,
+                    pending = state.pending_phone_changes,
                     conflicts = state.conflicts.size,
                     alerts = state.alerts.size,
                     connectionAccent = connectionAccent
@@ -291,7 +291,7 @@ private fun SyncHeroCard(
                 ) {
                     HeroMetric(
                         modifier = Modifier.weight(1f),
-                        label = "Changes waiting",
+                        label = "Phone changes",
                         value = pending.toString(),
                         accent = SyncPrimary
                     )
@@ -415,7 +415,7 @@ private fun MetricsRow(
         MetricCard(
             modifier = Modifier.weight(1f),
             value = pending.toString(),
-            label = "Changes",
+            label = "Phone changes",
             accent = SyncPrimary
         )
         MetricCard(

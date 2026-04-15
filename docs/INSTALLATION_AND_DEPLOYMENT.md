@@ -62,6 +62,7 @@ What `pi-server/install.sh` does in the current codebase:
 - installs `/etc/systemd/system/gobag-backend.service`
 - restarts the backend service
 - installs a desktop launcher and optional desktop-login autostart entry for the native GO BAG app shell
+- in kiosk mode on Raspberry Pi OS, also enables graphical desktop auto-login through `raspi-config` so the UI returns after reboot
 
 ### Installed runtime paths
 

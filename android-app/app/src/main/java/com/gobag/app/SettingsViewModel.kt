@@ -10,11 +10,14 @@ import com.gobag.domain.logic.PiConnectionStatus
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.PairingRepository
 import com.gobag.domain.repository.SyncRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -25,12 +28,14 @@ data class SettingsUiState(
     val connection: PiConnectionSnapshot = PiConnectionStatus.empty(),
     val pi_device_id: String = "",
     val selected_bag_id: String = "",
+    val pending_phone_changes: Int = 0,
     val bags: List<BagProfile> = emptyList(),
     val saved_addresses: List<SavedPiAddress> = emptyList(),
     val running: Boolean = false,
     val feedback_message: String = ""
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModel(
     private val item_repository: ItemRepository,
     private val pairing_repository: PairingRepository,
@@ -41,9 +46,17 @@ class SettingsViewModel(
     private val editing_address_id = MutableStateFlow<String?>(null)
     private val running = MutableStateFlow(false)
     private val feedback_message = MutableStateFlow("")
+    private val device_state = sync_repository.observe_device_state()
+    private val pending_phone_changes = device_state.flatMapLatest { state ->
+        if (state.selected_bag_id.isBlank()) {
+            flowOf(0)
+        } else {
+            item_repository.observe_pending_phone_change_count(state.selected_bag_id, state.last_sync_at)
+        }
+    }
 
     private val base_ui_state = combine(
-        sync_repository.observe_device_state(),
+        device_state,
         item_repository.observe_bags(),
         endpoint_input,
         editing_address_id,
@@ -57,6 +70,7 @@ class SettingsViewModel(
             connection = PiConnectionStatus.from_device_state(deviceState),
             pi_device_id = deviceState.pi_device_id,
             selected_bag_id = deviceState.selected_bag_id,
+            pending_phone_changes = 0,
             bags = bags.filter { it.bag_id in pairedBagIds },
             saved_addresses = deviceState.saved_addresses,
         )
@@ -64,10 +78,12 @@ class SettingsViewModel(
 
     val ui_state: StateFlow<SettingsUiState> = combine(
         base_ui_state,
+        pending_phone_changes,
         running,
         feedback_message
-    ) { baseState, runningNow, feedback ->
+    ) { baseState, pending_changes, runningNow, feedback ->
         baseState.copy(
+            pending_phone_changes = pending_changes,
             running = runningNow,
             feedback_message = feedback
         )

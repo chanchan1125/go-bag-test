@@ -9,10 +9,12 @@ import com.gobag.domain.logic.PiConnectionStatus
 import com.gobag.domain.logic.PreparednessRules
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.SyncRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -20,6 +22,7 @@ data class SyncUiState(
     val last_sync_at: Long = 0L,
     val auto_sync_enabled: Boolean = false,
     val connection: PiConnectionSnapshot = PiConnectionStatus.empty(),
+    val pending_phone_changes: Int = 0,
     val conflicts: List<Conflict> = emptyList(),
     val selected_bag_name: String = "No bag selected",
     val alerts: List<AlertModel> = emptyList(),
@@ -27,6 +30,7 @@ data class SyncUiState(
     val feedback_message: String = ""
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SyncViewModel(
     item_repository: ItemRepository,
     private val sync_repository: SyncRepository
@@ -46,13 +50,22 @@ class SyncViewModel(
         }
     }
     private val selectedItems = selectedBagId.flatMapLatest { bag_id -> item_repository.observe_items(bag_id) }
+    private val pending_phone_changes = combine(selectedBagId, sync_repository.observe_device_state()) { bag_id, state ->
+        bag_id to state.last_sync_at
+    }.flatMapLatest { (bag_id, last_sync_at) ->
+        if (bag_id.isBlank()) {
+            flowOf(0)
+        } else {
+            item_repository.observe_pending_phone_change_count(bag_id, last_sync_at)
+        }
+    }
 
     private val baseUiState = combine(
         selectedItems,
         sync_repository.observe_device_state(),
         sync_repository.observe_conflicts(),
         bags,
-        selectedBagId,
+        selectedBagId
     ) { items, state, conflicts, bagList, selected_bag_id ->
         val selectedBag = bagList.firstOrNull { it.bag_id == selected_bag_id }
         val connection = PiConnectionStatus.from_device_state(state)
@@ -65,6 +78,7 @@ class SyncViewModel(
             last_sync_at = state.last_sync_at,
             auto_sync_enabled = state.auto_sync_enabled,
             connection = connection,
+            pending_phone_changes = 0,
             conflicts = conflicts,
             selected_bag_name = selectedBag?.name ?: "No bag selected",
             alerts = alerts,
@@ -73,10 +87,12 @@ class SyncViewModel(
 
     val ui_state: StateFlow<SyncUiState> = combine(
         baseUiState,
+        pending_phone_changes,
         running,
         feedback_message
-    ) { base_state, running_now, message ->
+    ) { base_state, pending_changes, running_now, message ->
         base_state.copy(
+            pending_phone_changes = pending_changes,
             running = running_now,
             feedback_message = message
         )

@@ -9,10 +9,12 @@ import com.gobag.domain.logic.PiConnectionStatus
 import com.gobag.domain.logic.PreparednessRules
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.SyncRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 
 data class HomeUiState(
@@ -31,9 +33,11 @@ data class HomeUiState(
     val alerts: List<String> = emptyList(),
     val expiry_alerts: List<AlertModel> = emptyList(),
     val has_conflicts: Boolean = false,
+    val pending_phone_changes: Int = 0,
     val sync_recommended: Boolean = false
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(
     item_repository: ItemRepository,
     sync_repository: SyncRepository
@@ -53,8 +57,17 @@ class HomeViewModel(
     private val selectedItems = selectedBagId.flatMapLatest { bag_id ->
         item_repository.observe_items(bag_id)
     }
+    private val pending_phone_changes = combine(selectedBagId, deviceState) { bag_id, state ->
+        bag_id to state.last_sync_at
+    }.flatMapLatest { (bag_id, last_sync_at) ->
+        if (bag_id.isBlank()) {
+            flowOf(0)
+        } else {
+            item_repository.observe_pending_phone_change_count(bag_id, last_sync_at)
+        }
+    }
 
-    val ui_state: StateFlow<HomeUiState> = combine(
+    private val base_ui_state = combine(
         selectedItems,
         deviceState,
         sync_repository.observe_conflicts(),
@@ -63,7 +76,6 @@ class HomeViewModel(
     ) { items, state, conflicts, bagList, selected_bag_id ->
         val connection = PiConnectionStatus.from_device_state(state)
         val summary = PreparednessRules.build_readiness_summary(items, connection.is_paired)
-        val syncRecommended = items.any { it.updated_at > state.last_sync_at }
         val selectedBag = bagList.firstOrNull { it.bag_id == selected_bag_id }
         val expiryAlerts = PreparednessRules.build_expiration_alerts(
             items = items,
@@ -85,7 +97,15 @@ class HomeViewModel(
             alerts = summary.alerts,
             expiry_alerts = expiryAlerts,
             has_conflicts = conflicts.isNotEmpty(),
-            sync_recommended = syncRecommended
+            pending_phone_changes = 0,
+            sync_recommended = false
+        )
+    }
+
+    val ui_state: StateFlow<HomeUiState> = combine(base_ui_state, pending_phone_changes) { base_state, pending_changes ->
+        base_state.copy(
+            pending_phone_changes = pending_changes,
+            sync_recommended = pending_changes > 0
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 }

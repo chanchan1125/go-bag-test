@@ -10,6 +10,7 @@ import com.gobag.data.local.to_entity
 import com.gobag.data.local.to_model
 import com.gobag.domain.repository.ItemRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
 class GoBagItemRepository(
@@ -22,6 +23,14 @@ class GoBagItemRepository(
 
     override fun observe_bags(): Flow<List<BagProfile>> =
         bag_dao.observe_bags().map { rows -> rows.map { it.to_model() } }
+
+    override fun observe_pending_phone_change_count(bag_id: String, last_sync_at: Long): Flow<Int> =
+        combine(
+            bag_dao.observe_pending_phone_change_count(bag_id, last_sync_at),
+            item_dao.observe_pending_phone_change_count(bag_id, last_sync_at)
+        ) { bag_changes, item_changes ->
+            bag_changes + item_changes
+        }
 
     override suspend fun get_bag(bag_id: String): BagProfile? = bag_dao.get_by_id(bag_id)?.to_model()
 

@@ -23,7 +23,6 @@ import androidx.compose.material.icons.automirrored.filled.FactCheck
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Inventory
-import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material.icons.filled.Sync
@@ -52,6 +51,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.gobag.core.model.AlertModel
 import com.gobag.domain.logic.PiConnectionSnapshot
@@ -73,6 +73,7 @@ fun HomeScreen(
 ) {
     val state by view_model.ui_state.collectAsState()
     val connection = state.connection
+    val missingCategories = state.checklist.filterNot { it.checked }.map { it.name }
     val readinessPercent = if (state.checklist_total == 0) 0 else {
         ((state.checklist_covered.toFloat() / state.checklist_total.toFloat()) * 100f).roundToInt()
     }
@@ -82,7 +83,7 @@ fun HomeScreen(
         connection.last_sync_error.isNotBlank() -> connection.last_sync_error
         connection.last_connection_error.isNotBlank() -> connection.last_connection_error
         state.has_conflicts -> "Review items before turning automatic updates back on."
-        state.expiry_alerts.isNotEmpty() -> formatExpiryAlertDetail(state.expiry_alerts.first())
+        state.expiry_alerts.isNotEmpty() -> "Review the items in Expiry Watch below."
         state.alerts.isNotEmpty() -> state.alerts.first()
         state.sync_recommended -> "Phone changes are ready to send to your bag."
         else -> "Everything looks steady right now."
@@ -94,6 +95,7 @@ fun HomeScreen(
             TopAppBar(
                 title = {
                     Row(
+                        modifier = Modifier.padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -102,19 +104,11 @@ fun HomeScreen(
                             painter = painterResource(id = R.drawable.gobag_icon),
                             contentDescription = "GO BAG icon"
                         )
-                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                            Text(
-                                "TACTICAL READY",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                "GO BAG DASHBOARD",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Black
-                            )
-                        }
+                        Text(
+                            "GO BAG DASHBOARD",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Black
+                        )
                     }
                 },
                 actions = {
@@ -158,7 +152,7 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 92.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 92.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
@@ -168,7 +162,7 @@ fun HomeScreen(
                     readinessAccent = readinessAccent,
                     bagReadiness = state.bag_readiness,
                     connectionLabel = connection.connection_label,
-                    pendingChanges = connection.pending_changes_count,
+                    pendingChanges = state.pending_phone_changes,
                     lastSync = formatTimestamp(state.last_sync_time)
                 )
             }
@@ -200,36 +194,14 @@ fun HomeScreen(
             }
 
             item {
-                Row(
+                StatusCard(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    StatusCard(
-                        modifier = Modifier.weight(1f),
-                        title = "Bag status",
-                        value = connection.connection_label,
-                        detail = connection.detail,
-                        icon = if (connection.is_online) Icons.Default.CloudDone else Icons.Default.CloudOff,
-                        accent = connectionAccent
-                    )
-                    StatusCard(
-                        modifier = Modifier.weight(1f),
-                        title = "Primary Alert",
-                        value = when {
-                            state.has_conflicts -> "Review"
-                            state.expiry_alerts.isNotEmpty() -> "Expiring"
-                            state.sync_recommended -> "Update"
-                            else -> "Stable"
-                        },
-                        detail = primaryAlert,
-                        icon = Icons.Default.Warning,
-                        accent = when {
-                            state.has_conflicts -> MaterialTheme.colorScheme.primary
-                            state.expiry_alerts.isNotEmpty() -> MaterialTheme.colorScheme.error
-                            else -> readinessAccent
-                        }
-                    )
-                }
+                    title = "Bag status",
+                    value = connection.connection_label,
+                    detail = connection.detail,
+                    icon = if (connection.is_online) Icons.Default.CloudDone else Icons.Default.CloudOff,
+                    accent = connectionAccent
+                )
             }
 
             item {
@@ -237,17 +209,10 @@ fun HomeScreen(
                     message = primaryAlert,
                     missingCount = (state.checklist_total - state.checklist_covered).coerceAtLeast(0),
                     expiringCount = state.near_expiry_count,
-                    conflictCount = if (state.has_conflicts) 1 else 0
+                    conflictCount = if (state.has_conflicts) 1 else 0,
+                    missingCategories = missingCategories,
+                    alerts = state.expiry_alerts
                 )
-            }
-
-            if (state.expiry_alerts.isNotEmpty()) {
-                item {
-                    ExpiryWatchCard(
-                        bagName = state.selected_bag_name,
-                        alerts = state.expiry_alerts
-                    )
-                }
             }
 
             item {
@@ -276,41 +241,6 @@ fun HomeScreen(
                 }
             }
 
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ActionTile(
-                        modifier = Modifier.weight(1f),
-                        title = "Connect Bag",
-                        detail = if (connection.is_paired) {
-                            "Check your bag connection and reconnect if needed"
-                        } else {
-                            "Connect this phone to your bag"
-                        },
-                        icon = Icons.Default.QrCodeScanner,
-                        onClick = on_pairing
-                    )
-                    ActionTile(
-                        modifier = Modifier.weight(1f),
-                        title = "Update Bag",
-                        detail = "Send phone changes to your bag",
-                        icon = Icons.Default.Sync,
-                        onClick = on_sync
-                    )
-                }
-            }
-
-            item {
-                ActionTile(
-                    modifier = Modifier.fillMaxWidth(),
-                    title = "Settings",
-                    detail = "Bag connections, saved locations, and app theme",
-                    icon = Icons.Default.Settings,
-                    onClick = on_settings
-                )
-            }
         }
     }
 }
@@ -368,8 +298,9 @@ private fun HomeHeroCard(
                         )
                     }
                     TacticalTopPill(
-                        text = bagReadiness.uppercase(),
-                        accent = readinessAccent
+                        text = formatBagReadinessLabel(bagReadiness),
+                        accent = readinessAccent,
+                        maxWidth = 168.dp
                     )
                 }
 
@@ -387,7 +318,7 @@ private fun HomeHeroCard(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         HeroDetailLine("Bag status", connectionLabel)
-                        HeroDetailLine("Changes waiting", pendingChanges.toString())
+                        HeroDetailLine("Phone changes", pendingChanges.toString())
                         HeroDetailLine("Last update", lastSync)
                     }
                 }
@@ -550,7 +481,9 @@ private fun AlertSummaryCard(
     message: String,
     missingCount: Int,
     expiringCount: Int,
-    conflictCount: Int
+    conflictCount: Int,
+    missingCategories: List<String>,
+    alerts: List<AlertModel>
 ) {
     Card(
         shape = RoundedCornerShape(20.dp),
@@ -602,66 +535,58 @@ private fun AlertSummaryCard(
                     accent = MaterialTheme.colorScheme.tertiary
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun ExpiryWatchCard(
-    bagName: String,
-    alerts: List<AlertModel>
-) {
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.28f))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "Expiry Watch",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                "Alerts for $bagName",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            alerts.take(3).forEach { alert ->
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+            if (missingCategories.isNotEmpty()) {
+                Text(
+                    "Missing Categories",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                missingCategories.forEach { category ->
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Text(
-                            alert.item_name,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            formatExpiryAlertDetail(alert),
+                            text = category,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
-            if (alerts.size > 3) {
+            if (alerts.isNotEmpty()) {
                 Text(
-                    "+${alerts.size - 3} more item(s) need attention",
+                    "Expiry Watch",
                     style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                alerts.take(4).forEach { alert ->
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Text(
+                            text = formatExpiryAlertDetail(alert),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (alerts.size > 4) {
+                    Text(
+                        "+${alerts.size - 4} more item(s) need attention",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
@@ -731,10 +656,11 @@ private fun SectionLabel(text: String) {
 @Composable
 private fun TacticalTopPill(
     text: String,
-    accent: Color
+    accent: Color,
+    maxWidth: Dp = 132.dp
 ) {
     Surface(
-        modifier = Modifier.widthIn(max = 132.dp),
+        modifier = Modifier.widthIn(max = maxWidth),
         shape = RoundedCornerShape(999.dp),
         color = accent.copy(alpha = 0.14f)
     ) {
@@ -758,6 +684,13 @@ private fun TacticalTopPill(
                 overflow = TextOverflow.Ellipsis
             )
         }
+    }
+}
+
+private fun formatBagReadinessLabel(value: String): String {
+    return when (value.trim()) {
+        "Attention Needed" -> "Needs Attention"
+        else -> value
     }
 }
 
@@ -786,7 +719,7 @@ private fun formatTimestamp(time: Long): String {
 }
 
 private fun formatExpiryAlertDetail(alert: AlertModel): String {
-    val status = if (alert.type == "expired") "Expired" else "Expiring soon"
+    val status = if (alert.type == "expired") "Expired" else "Expiring Soon"
     val date = PreparednessRules.format_epoch_ms_to_yyyy_mm_dd(alert.expiry_date_ms).ifBlank { "No date" }
-    return "${alert.bag_name} - $status - $date"
+    return "${alert.bag_name} - ${alert.item_name} - $status - $date"
 }

@@ -11,6 +11,9 @@ interface BagDao {
     @Query("SELECT * FROM bags ORDER BY name")
     fun observe_bags(): Flow<List<BagEntity>>
 
+    @Query("SELECT COUNT(*) FROM bags WHERE bag_id = :bag_id AND updated_at > :last_sync_at")
+    fun observe_pending_phone_change_count(bag_id: String, last_sync_at: Long): Flow<Int>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(bag: BagEntity)
 
@@ -28,6 +31,9 @@ interface BagDao {
 interface ItemDao {
     @Query("SELECT * FROM items WHERE bag_id = :bag_id AND deleted = 0 ORDER BY category, name")
     fun observe_items(bag_id: String): Flow<List<ItemEntity>>
+
+    @Query("SELECT COUNT(*) FROM items WHERE bag_id = :bag_id AND updated_at > :last_sync_at")
+    fun observe_pending_phone_change_count(bag_id: String, last_sync_at: Long): Flow<Int>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(item: ItemEntity)

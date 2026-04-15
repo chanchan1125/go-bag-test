@@ -52,6 +52,7 @@ Optional modes:
 - enables and starts the backend unless `--no-autostart` is used
 - installs the desktop launcher
 - optionally configures desktop-login autostart in kiosk mode
+- in kiosk mode on Raspberry Pi OS, also enables graphical desktop auto-login through `raspi-config` so the UI returns after reboot
 
 ## Installed paths
 
@@ -129,7 +130,15 @@ Install with:
 ./install.sh --kiosk
 ```
 
-This creates a desktop-session autostart entry so the GO BAG browser UI opens automatically after login.
+This creates a desktop-session autostart entry so the GO BAG UI opens automatically after login.
+
+On Raspberry Pi OS, kiosk mode also attempts to switch boot behavior to graphical desktop auto-login by running:
+
+```bash
+sudo raspi-config nonint do_boot_behaviour B4
+```
+
+That makes a reboot return straight to the GO BAG kiosk without a manual login. If `raspi-config` is unavailable on your Linux image, the backend still auto-starts, but the UI waits for a desktop login before opening.
 
 ## Android app build and install
 

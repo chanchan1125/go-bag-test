@@ -22,6 +22,7 @@ AUTOSTART_BACKEND=1
 ENABLE_UI_AUTOSTART=1
 ENABLE_KIOSK=0
 DESKTOP_USER=""
+CONFIGURED_DESKTOP_AUTOLOGIN=0
 
 log() {
   echo "[gobag-install] $*"
@@ -38,7 +39,7 @@ Usage: ./install.sh [--autostart] [--no-autostart] [--kiosk] [--no-ui-autostart]
 
   --autostart      Enable backend service at boot (default)
   --no-autostart   Install service but do not enable it at boot
-  --kiosk          Start the desktop app shell in kiosk mode on login
+  --kiosk          Start the desktop app shell in kiosk mode and enable desktop auto-login when available
   --no-ui-autostart  Skip desktop-login GO BAG app autostart
   --user USER      Override the detected desktop user
 EOF
@@ -142,6 +143,30 @@ render_template() {
     -e "s|__LAUNCH_CMD__|${launch_cmd}|g" \
     -e "s|__AUTO_OPEN_ARGS__|${auto_open_args}|g" \
     "${src}" | ${SUDO} tee "${dest}" >/dev/null
+}
+
+configure_desktop_autologin() {
+  if [[ "${ENABLE_KIOSK}" -ne 1 || "${ENABLE_UI_AUTOSTART}" -ne 1 ]]; then
+    return 0
+  fi
+
+  if ! command -v raspi-config >/dev/null 2>&1; then
+    log "Warning: raspi-config is unavailable, so kiosk mode will still require a desktop login before GO BAG opens."
+    return 0
+  fi
+
+  log "Enabling graphical desktop auto-login for kiosk mode..."
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    if ${SUDO} raspi-config nonint do_boot_behaviour B4 >/dev/null 2>&1; then
+      CONFIGURED_DESKTOP_AUTOLOGIN=1
+      return 0
+    fi
+  elif env SUDO_USER="${DESKTOP_USER}" raspi-config nonint do_boot_behaviour B4 >/dev/null 2>&1; then
+    CONFIGURED_DESKTOP_AUTOLOGIN=1
+    return 0
+  fi
+
+  log "Warning: could not enable desktop auto-login automatically. Run 'sudo raspi-config nonint do_boot_behaviour B4' on the Raspberry Pi to finish kiosk boot setup."
 }
 
 log "Installing system packages..."
@@ -260,6 +285,7 @@ if [[ "${ENABLE_UI_AUTOSTART}" -eq 1 ]]; then
   ${SUDO} mkdir -p "${AUTOSTART_DIR}"
   render_template "${APP_DIR}/desktop/gobag-inventory-autostart.desktop" "${AUTOSTART_FILE}" "${APP_DIR}/launch.sh" "${AUTO_OPEN_ARGS}"
   ${SUDO} chown "${DESKTOP_USER}:${DESKTOP_USER}" "${AUTOSTART_FILE}"
+  configure_desktop_autologin
 else
   ${SUDO} rm -f "${AUTOSTART_FILE}"
 fi
@@ -283,6 +309,9 @@ log "Desktop launcher: ${MENU_ENTRY}"
 if [[ "${ENABLE_UI_AUTOSTART}" -eq 1 ]]; then
   if [[ "${ENABLE_KIOSK}" -eq 1 ]]; then
     log "Desktop autostart enabled for ${DESKTOP_USER} in kiosk mode."
+    if [[ "${CONFIGURED_DESKTOP_AUTOLOGIN}" -eq 1 ]]; then
+      log "Desktop boot is set to graphical auto-login for ${DESKTOP_USER}."
+    fi
   else
     log "Desktop autostart enabled for ${DESKTOP_USER}."
   fi

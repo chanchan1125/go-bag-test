@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 interface ItemRepository {
     fun observe_items(bag_id: String): Flow<List<Item>>
     fun observe_bags(): Flow<List<BagProfile>>
+    fun observe_pending_phone_change_count(bag_id: String, last_sync_at: Long): Flow<Int>
     suspend fun get_bag(bag_id: String): BagProfile?
     suspend fun upsert_item(item: Item)
     suspend fun upsert_items(items: List<Item>)
