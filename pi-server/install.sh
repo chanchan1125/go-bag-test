@@ -276,7 +276,7 @@ else
 fi
 
 log "Initializing or migrating the database..."
-${SUDO} GOBAG_CONFIG_FILE="${CONFIG_FILE}" "${APP_DIR}/scripts/init_db.sh"
+${SUDO} env GOBAG_CONFIG_FILE="${CONFIG_FILE}" "${APP_DIR}/scripts/init_db.sh"
 
 log "Setting ownership for runtime paths..."
 ${SUDO} chown -R "${DESKTOP_USER}:${DESKTOP_USER}" "${APP_ROOT}"
