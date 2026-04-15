@@ -83,11 +83,20 @@ fun PairingScreen(
         val text = result.contents ?: return@rememberLauncherForActivityResult
         view_model.on_qr_payload(text)
     }
+    val launchScanner = {
+        runCatching {
+            launcher.launch(buildPairQrScanOptions())
+        }.onFailure {
+            view_model.on_scan_launch_failed()
+        }
+    }
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            launcher.launch(buildPairQrScanOptions())
+            launchScanner()
+        } else {
+            view_model.on_scan_permission_denied()
         }
     }
 
@@ -211,7 +220,7 @@ fun PairingScreen(
                     OutlinedButton(
                         onClick = {
                             if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                                launcher.launch(buildPairQrScanOptions())
+                                launchScanner()
                             } else {
                                 cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                             }
@@ -315,7 +324,9 @@ fun PairingScreen(
 
 private fun buildPairQrScanOptions(): ScanOptions =
     ScanOptions().apply {
+        setCaptureActivity(GoBagCaptureActivity::class.java)
         setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+        setOrientationLocked(true)
         setPrompt("Scan bag QR code")
         setBeepEnabled(false)
     }

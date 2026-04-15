@@ -122,6 +122,15 @@ class PairingViewModel(
         }
     }
 
+    fun on_scan_permission_denied() {
+        feedback_message.value = "Camera permission is needed to scan the bag QR. You can still type the 6-digit code."
+    }
+
+    fun on_scan_launch_failed() {
+        error.value = "The QR scanner could not open on this phone."
+        feedback_message.value = "The QR scanner could not open on this phone. Type the 6-digit code for now."
+    }
+
     fun pair_with_code() {
         execute_pairing {
             pairing_repository.pair_with_code(
