@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.gobag.core.model.BagProfile
 import com.gobag.core.model.SavedPiAddress
 import com.gobag.data.repository.DeviceStateStore
+import com.gobag.domain.logic.PiConnectionSnapshot
+import com.gobag.domain.logic.PiConnectionStatus
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.PairingRepository
 import com.gobag.domain.repository.SyncRepository
@@ -20,11 +22,7 @@ data class SettingsUiState(
     val endpoint_input: String = "",
     val editing_address_id: String? = null,
     val dark_theme_enabled: Boolean = true,
-    val connection_status: String = "unknown",
-    val local_ip: String = "",
-    val pending_changes_count: Int = 0,
-    val last_sync_at: Long = 0L,
-    val last_connection_error: String = "",
+    val connection: PiConnectionSnapshot = PiConnectionStatus.empty(),
     val pi_device_id: String = "",
     val selected_bag_id: String = "",
     val bags: List<BagProfile> = emptyList(),
@@ -56,11 +54,7 @@ class SettingsViewModel(
             endpoint_input = endpoint.ifBlank { deviceState.saved_addresses.firstOrNull { it.is_active }?.base_url ?: deviceState.base_url },
             editing_address_id = editingAddressId,
             dark_theme_enabled = darkThemeEnabled,
-            connection_status = deviceState.connection_status,
-            local_ip = deviceState.local_ip,
-            pending_changes_count = deviceState.pending_changes_count,
-            last_sync_at = deviceState.last_sync_at,
-            last_connection_error = deviceState.last_connection_error,
+            connection = PiConnectionStatus.from_device_state(deviceState),
             pi_device_id = deviceState.pi_device_id,
             selected_bag_id = deviceState.selected_bag_id,
             bags = bags.filter { it.bag_id in pairedBagIds },

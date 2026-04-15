@@ -15,6 +15,7 @@ import com.gobag.data.remote.RemoteDataSourceFactory
 import com.gobag.data.remote.SyncRequestDto
 import com.gobag.data.remote.to_dto
 import com.gobag.data.remote.to_model
+import com.gobag.domain.logic.PiConnectionStatus
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.SyncRepository
 import com.gobag.domain.repository.SyncRunResult
@@ -29,7 +30,8 @@ class GoBagSyncRepository(
     private val context: Context,
     private val item_repository: ItemRepository,
     private val conflict_dao: ConflictDao,
-    private val device_state_store: DeviceStateStore
+    private val device_state_store: DeviceStateStore,
+    private val pi_connection_manager: PiConnectionManager
 ) : SyncRepository {
     override fun observe_device_state(): Flow<DeviceState> = device_state_store.state
 
@@ -50,47 +52,7 @@ class GoBagSyncRepository(
     }
 
     override suspend fun refresh_remote_status(): String? {
-        device_state_store.initialize_phone_device_id_if_missing()
-        val state = device_state_store.state.first()
-        if (state.base_url.isBlank()) {
-            return "No Raspberry Pi address is saved yet."
-        }
-        return try {
-            val api = RemoteDataSourceFactory.create_api(state.base_url, state.auth_token)
-            val status = api.device_status()
-            device_state_store.set_connection_snapshot(
-                status = status.connection_status,
-                pendingChangesCount = status.pending_changes_count,
-                localIp = status.local_ip,
-                lastSyncAt = if (state.auth_token.isNotBlank()) status.last_sync_at else null,
-                bag_id = state.selected_bag_id
-            )
-            if (state.active_address_id.isNotBlank()) {
-                device_state_store.update_saved_address_status(
-                    address_id = state.active_address_id,
-                    status = "Reachable",
-                    detail = if (status.local_ip.isBlank()) {
-                        "Pi ${status.device_name} is ${status.connection_status}."
-                    } else {
-                        "Pi ${status.device_name} is ${status.connection_status} at ${status.local_ip}."
-                    },
-                    make_active = true
-                )
-            }
-            null
-        } catch (e: Exception) {
-            val message = describe_remote_exception(e, action = "Could not refresh Raspberry Pi status")
-            device_state_store.set_connection_error(message, bag_id = state.selected_bag_id)
-            if (state.active_address_id.isNotBlank()) {
-                device_state_store.update_saved_address_status(
-                    address_id = state.active_address_id,
-                    status = "Failed",
-                    detail = message,
-                    make_active = true
-                )
-            }
-            message
-        }
+        return pi_connection_manager.refresh_current_connection()
     }
 
     override suspend fun resolve_conflict_keep_phone(item: Item) {
@@ -126,9 +88,21 @@ class GoBagSyncRepository(
 
     override suspend fun run_sync_now(): SyncRunResult {
         device_state_store.initialize_phone_device_id_if_missing()
+        device_state_store.set_sync_status(PiConnectionStatus.SYNC_STATUS_SYNCING)
         val state = device_state_store.state.first()
         if (state.selected_bag_id.isBlank()) {
-            device_state_store.set_connection_error("Select a primary paired bag before syncing.")
+            device_state_store.set_connection_error(
+                message = "Select a primary paired bag before syncing.",
+                status = if (state.paired_bags.isNotEmpty()) {
+                    PiConnectionStatus.STATUS_PI_PAIRED
+                } else {
+                    PiConnectionStatus.STATUS_NO_PI_PAIRED
+                }
+            )
+            device_state_store.set_sync_status(
+                status = PiConnectionStatus.SYNC_STATUS_FAILED,
+                error = "Select a primary paired bag before syncing."
+            )
             return SyncRunResult(
                 server_time_ms = state.last_sync_at,
                 conflicts = emptyList(),
@@ -138,7 +112,15 @@ class GoBagSyncRepository(
             )
         }
         if (state.auth_token.isBlank() || state.base_url.isBlank()) {
-            device_state_store.set_connection_error("The selected primary bag is not paired to a Raspberry Pi.", bag_id = state.selected_bag_id)
+            device_state_store.set_connection_error(
+                message = "The selected primary bag is not paired to a Raspberry Pi.",
+                bag_id = state.selected_bag_id,
+                status = PiConnectionStatus.STATUS_PI_PAIRED
+            )
+            device_state_store.set_sync_status(
+                status = PiConnectionStatus.SYNC_STATUS_FAILED,
+                error = "The selected primary bag is not paired to a Raspberry Pi."
+            )
             return SyncRunResult(
                 server_time_ms = state.last_sync_at,
                 conflicts = emptyList(),
@@ -151,7 +133,19 @@ class GoBagSyncRepository(
         val selectedBagId = state.selected_bag_id
         val pairedBagIds = state.paired_bags.map { it.bag_id }.toSet()
         if (selectedBagId !in pairedBagIds) {
-            device_state_store.set_connection_error("The selected primary bag is not available in the paired bag list.", bag_id = selectedBagId)
+            device_state_store.set_connection_error(
+                message = "The selected primary bag is not available in the paired bag list.",
+                bag_id = selectedBagId,
+                status = if (pairedBagIds.isNotEmpty()) {
+                    PiConnectionStatus.STATUS_PI_PAIRED
+                } else {
+                    PiConnectionStatus.STATUS_NO_PI_PAIRED
+                }
+            )
+            device_state_store.set_sync_status(
+                status = PiConnectionStatus.SYNC_STATUS_FAILED,
+                error = "The selected primary bag is not available in the paired bag list."
+            )
             return SyncRunResult(
                 server_time_ms = state.last_sync_at,
                 conflicts = emptyList(),
@@ -166,7 +160,15 @@ class GoBagSyncRepository(
         try {
             validate_sync_payload(selectedBagId, changed_bags, changed_items)
         } catch (e: IllegalStateException) {
-            device_state_store.set_connection_error(e.message ?: "Sync validation failed.", bag_id = selectedBagId)
+            device_state_store.set_connection_error(
+                message = e.message ?: "Sync validation failed.",
+                bag_id = selectedBagId,
+                status = PiConnectionStatus.STATUS_PI_PAIRED
+            )
+            device_state_store.set_sync_status(
+                status = PiConnectionStatus.SYNC_STATUS_FAILED,
+                error = e.message ?: "Sync validation failed."
+            )
             throw e
         }
 
@@ -182,7 +184,8 @@ class GoBagSyncRepository(
             )
         } catch (e: Exception) {
             val message = describe_remote_exception(e, action = "Raspberry Pi sync failed")
-            device_state_store.set_connection_error(message, bag_id = selectedBagId)
+            device_state_store.set_connection_error(message, bag_id = selectedBagId, status = PiConnectionStatus.STATUS_PI_OFFLINE)
+            device_state_store.set_sync_status(status = PiConnectionStatus.SYNC_STATUS_FAILED, error = message)
             throw IllegalStateException(message, e)
         }
 
@@ -232,6 +235,7 @@ class GoBagSyncRepository(
         } else {
             device_state_store.set_last_sync_at(response.server_time_ms, bag_id = selectedBagId)
         }
+        device_state_store.set_sync_status(PiConnectionStatus.SYNC_STATUS_IDLE)
         return SyncRunResult(
             server_time_ms = response.server_time_ms,
             conflicts = conflicts,

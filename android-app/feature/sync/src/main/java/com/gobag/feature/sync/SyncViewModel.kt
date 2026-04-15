@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gobag.core.model.AlertModel
 import com.gobag.core.model.Conflict
+import com.gobag.domain.logic.PiConnectionSnapshot
+import com.gobag.domain.logic.PiConnectionStatus
 import com.gobag.domain.logic.PreparednessRules
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.SyncRepository
@@ -17,10 +19,7 @@ import kotlinx.coroutines.launch
 data class SyncUiState(
     val last_sync_at: Long = 0L,
     val auto_sync_enabled: Boolean = false,
-    val connection_status: String = "unknown",
-    val pending_changes_count: Int = 0,
-    val local_ip: String = "",
-    val last_connection_error: String = "",
+    val connection: PiConnectionSnapshot = PiConnectionStatus.empty(),
     val conflicts: List<Conflict> = emptyList(),
     val selected_bag_name: String = "No bag selected",
     val alerts: List<AlertModel> = emptyList(),
@@ -56,6 +55,7 @@ class SyncViewModel(
         selectedBagId,
     ) { items, state, conflicts, bagList, selected_bag_id ->
         val selectedBag = bagList.firstOrNull { it.bag_id == selected_bag_id }
+        val connection = PiConnectionStatus.from_device_state(state)
         val alerts = PreparednessRules.build_expiration_alerts(
             items = items,
             bag_id = selected_bag_id,
@@ -64,10 +64,7 @@ class SyncViewModel(
         SyncUiState(
             last_sync_at = state.last_sync_at,
             auto_sync_enabled = state.auto_sync_enabled,
-            connection_status = state.connection_status,
-            pending_changes_count = state.pending_changes_count,
-            local_ip = state.local_ip,
-            last_connection_error = state.last_connection_error,
+            connection = connection,
             conflicts = conflicts,
             selected_bag_name = selectedBag?.name ?: "No bag selected",
             alerts = alerts,
@@ -89,7 +86,11 @@ class SyncViewModel(
         viewModelScope.launch {
             running.value = true
             try {
-                sync_repository.refresh_remote_status()
+                val refreshError = sync_repository.refresh_remote_status()
+                if (refreshError != null) {
+                    feedback_message.value = refreshError
+                    return@launch
+                }
                 val result = sync_repository.run_sync_now()
                 feedback_message.value = result.skipped_reason
                     ?: "Sync completed. Raspberry Pi inventory is up to date."

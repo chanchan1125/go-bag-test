@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -54,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gobag.core.model.AlertModel
+import com.gobag.domain.logic.PiConnectionSnapshot
 import com.gobag.domain.logic.PreparednessRules
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -71,17 +71,15 @@ fun HomeScreen(
     on_settings: () -> Unit
 ) {
     val state by view_model.ui_state.collectAsState()
+    val connection = state.connection
     val readinessPercent = if (state.checklist_total == 0) 0 else {
         ((state.checklist_covered.toFloat() / state.checklist_total.toFloat()) * 100f).roundToInt()
     }
     val readinessAccent = resolveReadinessAccent(readinessPercent)
-    val connectionLabel = state.connection_status
-        .replace('_', ' ')
-        .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
-        .ifBlank { "Unknown" }
-    val paired = state.device_status == "Paired"
+    val connectionAccent = resolveConnectionAccent(connection)
     val primaryAlert = when {
-        state.last_connection_error.isNotBlank() -> state.last_connection_error
+        connection.last_sync_error.isNotBlank() -> connection.last_sync_error
+        connection.last_connection_error.isNotBlank() -> connection.last_connection_error
         state.has_conflicts -> "Sync conflicts need review before auto-sync can be trusted."
         state.expiry_alerts.isNotEmpty() -> formatExpiryAlertDetail(state.expiry_alerts.first())
         state.alerts.isNotEmpty() -> state.alerts.first()
@@ -120,8 +118,8 @@ fun HomeScreen(
                 },
                 actions = {
                     TacticalTopPill(
-                        text = if (paired) "PI LINKED" else "PI OFFLINE",
-                        accent = if (paired) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
+                        text = connection.connection_label.uppercase(),
+                        accent = connectionAccent
                     )
                     Spacer(modifier = Modifier.size(4.dp))
                     IconButton(onClick = on_pairing) {
@@ -168,9 +166,9 @@ fun HomeScreen(
                     readinessPercent = readinessPercent,
                     readinessAccent = readinessAccent,
                     bagReadiness = state.bag_readiness,
-                    connectionLabel = connectionLabel,
-                    pendingChanges = state.pending_changes_count,
-                    localIp = state.local_ip,
+                    connectionLabel = connection.connection_label,
+                    pendingChanges = connection.pending_changes_count,
+                    localIp = connection.local_ip,
                     lastSync = formatTimestamp(state.last_sync_time)
                 )
             }
@@ -209,14 +207,10 @@ fun HomeScreen(
                     StatusCard(
                         modifier = Modifier.weight(1f),
                         title = "Connection Node",
-                        value = if (paired) "Raspberry Pi Linked" else "Pairing Required",
-                        detail = if (paired) {
-                            "$connectionLabel • ${state.pending_changes_count} pending"
-                        } else {
-                            "Save a Pi address, then scan the bag QR code to authenticate."
-                        },
-                        icon = if (paired) Icons.Default.CloudDone else Icons.Default.CloudOff,
-                        accent = if (paired) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
+                        value = connection.connection_label,
+                        detail = connection.detail,
+                        icon = if (connection.is_online) Icons.Default.CloudDone else Icons.Default.CloudOff,
+                        accent = connectionAccent
                     )
                     StatusCard(
                         modifier = Modifier.weight(1f),
@@ -290,7 +284,11 @@ fun HomeScreen(
                     ActionTile(
                         modifier = Modifier.weight(1f),
                         title = "Connect Pi",
-                        detail = if (paired) "Manage pairing and bag authentication" else "Link this phone to your Raspberry Pi hub",
+                        detail = if (connection.is_paired) {
+                            "Review pairing, reconnection, and bag authentication"
+                        } else {
+                            "Link this phone to your Raspberry Pi hub"
+                        },
                         icon = Icons.Default.QrCodeScanner,
                         onClick = on_pairing
                     )
@@ -316,12 +314,7 @@ fun HomeScreen(
 
             item {
                 SystemHubCard(
-                    paired = paired,
-                    detail = if (paired) {
-                        "This phone is ready to exchange data with the Raspberry Pi over the saved local endpoint."
-                    } else {
-                        "Scan the Raspberry Pi QR code to save the local endpoint, token, and template data on this phone."
-                    }
+                    connection = connection
                 )
             }
         }
@@ -727,8 +720,7 @@ private fun ActionTile(
 
 @Composable
 private fun SystemHubCard(
-    paired: Boolean,
-    detail: String
+    connection: PiConnectionSnapshot
 ) {
     Card(
         shape = RoundedCornerShape(20.dp),
@@ -749,16 +741,16 @@ private fun SystemHubCard(
                     modifier = Modifier
                         .size(12.dp)
                         .clip(CircleShape)
-                        .background(if (paired) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary)
+                        .background(resolveConnectionAccent(connection))
                 )
                 Text(
-                    if (paired) "System hub linked and reachable" else "System hub awaiting pairing",
+                    connection.connection_label,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
             }
             Text(
-                detail,
+                connection.detail,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -811,6 +803,17 @@ private fun resolveReadinessAccent(readinessPercent: Int): Color {
         readinessPercent >= 90 -> Color(0xFF2ECC71)
         readinessPercent >= 51 -> Color(0xFFFF6B00)
         else -> Color(0xFFB3261E)
+    }
+}
+
+@Composable
+private fun resolveConnectionAccent(connection: PiConnectionSnapshot): Color {
+    return when {
+        connection.last_sync_error.isNotBlank() -> MaterialTheme.colorScheme.error
+        connection.address_needs_attention || connection.is_offline -> MaterialTheme.colorScheme.error
+        connection.is_online -> MaterialTheme.colorScheme.tertiary
+        connection.is_paired -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.primary
     }
 }
 

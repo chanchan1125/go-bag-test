@@ -1197,6 +1197,22 @@ def compute_local_ip() -> str:
     return ""
 
 
+def display_local_ip(value: str) -> str:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return "Unavailable"
+    host_value = raw_value
+    if "://" in host_value:
+        host_value = host_value.split("://", 1)[1].split("/", 1)[0]
+    if host_value.startswith("[") and "]" in host_value:
+        return host_value[1 : host_value.index("]")]
+    if host_value.count(":") == 1:
+        host, maybe_port = host_value.rsplit(":", 1)
+        if host and maybe_port.isdigit():
+            return host
+    return host_value
+
+
 def compute_base_url(request: Optional[Request] = None) -> str:
     configured = os.getenv("GOBAG_BASE_URL", "").strip()
     if configured:
@@ -4453,6 +4469,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         conn.commit()
 
     base_url = compute_base_url(request)
+    local_ip_display = display_local_ip(compute_local_ip())
     checked_count = sum(1 for row in readiness["checklist"] if row["checked"])
     missing_categories = [row["name"] for row in readiness["checklist"] if not row["checked"]]
     expiring_items = [a for a in alerts if a.type == "expiring_soon"]
@@ -4525,6 +4542,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         "preferences": preferences,
         "current_time_ms": current_time,
         "timezone_label": (time.tzname[0] if time.tzname else "Local time"),
+        "local_ip_display": local_ip_display,
         "state_version": str(
             max(
                 int(bag.updated_at or 0),
@@ -4589,6 +4607,7 @@ def ui_state(request: Request) -> dict:
         "missing_count": view_model["missing_count"],
         "inventory_group_count": view_model["inventory_group_count"],
         "batch_count": view_model["batch_count"],
+        "local_ip_display": view_model["local_ip_display"],
     }
 
 
@@ -5232,6 +5251,11 @@ def home(request: Request) -> HTMLResponse:
               <div class="status-card-value" id="sync-phone-count">{view_model['paired_phone_count']}</div>
               <div class="status-card-note">Devices allowed to sync</div>
             </div>
+            <div class="subpanel">
+              <div class="panel-subtitle">Current IP</div>
+              <div class="status-card-value" id="sync-ip-address">{escape(view_model['local_ip_display'])}</div>
+              <div class="status-card-note">Same network address reported by the Raspberry Pi</div>
+            </div>
           </div>
         </section>
 
@@ -5288,6 +5312,11 @@ def home(request: Request) -> HTMLResponse:
               <div class="panel-subtitle">Access URL</div>
               <div class="status-card-value settings-url">{escape(view_model['base_url'])}</div>
               <div class="status-card-note">Used by the Android phone app for pairing and sync</div>
+            </div>
+            <div class="subpanel status-cluster-card">
+              <div class="panel-subtitle">Current IP</div>
+              <div class="status-card-value" id="settings-ip-address">{escape(view_model['local_ip_display'])}</div>
+              <div class="status-card-note">Current Raspberry Pi network address</div>
             </div>
             <div class="subpanel status-cluster-card">
               <div class="panel-subtitle">Bag profile</div>
@@ -8337,6 +8366,8 @@ def home(request: Request) -> HTMLResponse:
       const settingsTimezoneNote = document.getElementById("settings-timezone-note");
       const settingsExpiryCount = document.getElementById("settings-expiry-count");
       const settingsLowStockCount = document.getElementById("settings-low-stock-count");
+      const settingsIpAddress = document.getElementById("settings-ip-address");
+      const syncIpAddress = document.getElementById("sync-ip-address");
       let keyboardTarget = null;
       let keyboardShift = false;
       let shutdownPending = false;
@@ -10144,6 +10175,8 @@ def home(request: Request) -> HTMLResponse:
           if (settingsPairedCount) settingsPairedCount.textContent = String(state.paired_phone_count || 0);
           if (settingsExpiryCount) settingsExpiryCount.textContent = String((Number(state.expired_count || 0) + Number(state.expiring_count || 0)) || 0);
           if (settingsLowStockCount) settingsLowStockCount.textContent = String(state.low_stock_count || 0);
+          if (syncIpAddress) syncIpAddress.textContent = state.local_ip_display || "Unavailable";
+          if (settingsIpAddress) settingsIpAddress.textContent = state.local_ip_display || "Unavailable";
           if (settingsSyncChip) {{
             const syncTone = Number(state.paired_phone_count || 0) > 0 ? "ok" : "warn";
             settingsSyncChip.className = `pill ${{syncTone}}`;

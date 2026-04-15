@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gobag.core.model.AlertModel
 import com.gobag.core.model.Conflict
+import com.gobag.domain.logic.PiConnectionSnapshot
 import com.gobag.domain.logic.PreparednessRules
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -78,14 +79,11 @@ fun SyncScreen(
     on_back: () -> Unit
 ) {
     val state by view_model.ui_state.collectAsState()
+    val connection = state.connection
     val snackbarHost = remember { SnackbarHostState() }
-    val connectionLabel = formatConnectionState(state.connection_status)
-    val connectionAccent = remember(connectionLabel, state.last_connection_error, state.conflicts.size) {
-        resolveConnectionAccent(
-            connectionLabel = connectionLabel,
-            hasError = state.last_connection_error.isNotBlank(),
-            conflictCount = state.conflicts.size
-        )
+    val connectionLabel = connection.connection_label
+    val connectionAccent = remember(connection, state.conflicts.size) {
+        resolveConnectionAccent(connection = connection, conflictCount = state.conflicts.size)
     }
     val autoSyncLocked = state.conflicts.isNotEmpty()
 
@@ -119,9 +117,9 @@ fun SyncScreen(
                 SyncHeroCard(
                     bagName = state.selected_bag_name,
                     connectionLabel = connectionLabel,
-                    localIp = state.local_ip,
+                    localIp = connection.local_ip,
                     lastSync = formatSyncTime(state.last_sync_at),
-                    pending = state.pending_changes_count,
+                    pending = connection.pending_changes_count,
                     running = state.running,
                     connectionAccent = connectionAccent
                 )
@@ -129,7 +127,7 @@ fun SyncScreen(
 
             item {
                 MetricsRow(
-                    pending = state.pending_changes_count,
+                    pending = connection.pending_changes_count,
                     conflicts = state.conflicts.size,
                     alerts = state.alerts.size,
                     connectionAccent = connectionAccent
@@ -141,16 +139,18 @@ fun SyncScreen(
                     running = state.running,
                     autoSyncEnabled = state.auto_sync_enabled,
                     autoSyncLocked = autoSyncLocked,
-                    localIp = state.local_ip,
+                    localIp = connection.local_ip,
                     connectionLabel = connectionLabel,
                     onSyncNow = view_model::sync_now,
                     onSetAutoSync = view_model::set_auto_sync
                 )
             }
 
-            if (state.last_connection_error.isNotBlank()) {
+            if (connection.last_sync_error.isNotBlank() || connection.last_connection_error.isNotBlank()) {
                 item {
-                    ErrorNoticeCard(message = state.last_connection_error)
+                    ErrorNoticeCard(
+                        message = connection.last_sync_error.ifBlank { connection.last_connection_error }
+                    )
                 }
             }
 
@@ -159,10 +159,10 @@ fun SyncScreen(
                     bagName = state.selected_bag_name,
                     connectionLabel = connectionLabel,
                     lastSync = formatSyncTime(state.last_sync_at),
-                    pending = state.pending_changes_count,
+                    pending = connection.pending_changes_count,
                     autoSyncEnabled = state.auto_sync_enabled,
                     autoSyncLocked = autoSyncLocked,
-                    localIp = state.local_ip
+                    localIp = connection.local_ip
                 )
             }
 
@@ -1034,26 +1034,16 @@ private fun buildAutoSyncMessage(
     }
 }
 
-private fun formatConnectionState(value: String): String {
-    val normalized = value.replace('_', ' ').trim()
-    return if (normalized.isBlank()) "Unknown" else normalized.replaceFirstChar {
-        if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
-    }
-}
-
 private fun resolveConnectionAccent(
-    connectionLabel: String,
-    hasError: Boolean,
+    connection: PiConnectionSnapshot,
     conflictCount: Int
 ): Color {
     return when {
-        hasError -> SyncCriticalSoft
+        connection.last_sync_error.isNotBlank() || connection.last_connection_error.isNotBlank() -> SyncCriticalSoft
         conflictCount > 0 -> SyncPrimarySoft
-        connectionLabel.contains("paired", ignoreCase = true) ||
-            connectionLabel.contains("reachable", ignoreCase = true) ||
-            connectionLabel.contains("connected", ignoreCase = true) -> SyncSecondary
-        connectionLabel.contains("offline", ignoreCase = true) -> SyncCriticalSoft
-        connectionLabel.contains("saved", ignoreCase = true) -> SyncPrimarySoft
+        connection.is_online -> SyncSecondary
+        connection.is_offline || connection.address_needs_attention -> SyncCriticalSoft
+        connection.is_paired -> SyncPrimarySoft
         else -> SyncSuccess
     }
 }

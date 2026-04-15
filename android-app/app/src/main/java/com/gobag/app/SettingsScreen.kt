@@ -58,6 +58,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gobag.core.model.BagProfile
 import com.gobag.core.model.SavedPiAddress
+import com.gobag.domain.logic.PiConnectionSnapshot
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -69,6 +70,7 @@ fun SettingsScreen(
     on_back: () -> Unit
 ) {
     val state by view_model.ui_state.collectAsState()
+    val connection = state.connection
     val snackbarHost = remember { SnackbarHostState() }
     val selectedBag = state.bags.firstOrNull { it.bag_id == state.selected_bag_id }
 
@@ -106,8 +108,8 @@ fun SettingsScreen(
                 },
                 actions = {
                     StatusPill(
-                        label = formatConnectionState(state.connection_status).uppercase(),
-                        accent = resolveConnectionAccent(state.connection_status, state.last_connection_error)
+                        label = connection.connection_label.uppercase(),
+                        accent = resolveConnectionAccent(connection)
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -128,11 +130,11 @@ fun SettingsScreen(
                 SettingsHeroCard(
                     selectedBagName = selectedBag?.name ?: "No primary bag selected",
                     endpoint = state.endpoint_input.ifBlank { "No endpoint saved" },
-                    connectionStatus = formatConnectionState(state.connection_status),
+                    connectionStatus = connection.connection_label,
                     piDeviceId = state.pi_device_id.ifBlank { "Not paired" },
-                    localIp = state.local_ip.ifBlank { "Unknown" },
-                    pendingChanges = state.pending_changes_count,
-                    lastSync = formatSettingsTime(state.last_sync_at)
+                    localIp = connection.local_ip.ifBlank { "Unknown" },
+                    pendingChanges = connection.pending_changes_count,
+                    lastSync = formatSettingsTime(connection.last_sync_at)
                 )
             }
 
@@ -264,9 +266,9 @@ fun SettingsScreen(
                 }
             }
 
-            if (state.last_connection_error.isNotBlank()) {
+            if (connection.last_sync_error.isNotBlank() || connection.last_connection_error.isNotBlank()) {
                 item {
-                    ErrorCard(message = state.last_connection_error)
+                    ErrorCard(message = connection.last_sync_error.ifBlank { connection.last_connection_error })
                 }
             }
 
@@ -756,19 +758,12 @@ private fun StatusPill(
     }
 }
 
-private fun formatConnectionState(value: String): String {
-    val normalized = value.replace('_', ' ').trim()
-    return if (normalized.isBlank()) "Unknown" else normalized.replaceFirstChar {
-        if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
-    }
-}
-
-private fun resolveConnectionAccent(connectionStatus: String, lastConnectionError: String): Color {
-    val normalized = connectionStatus.lowercase(Locale.getDefault())
+private fun resolveConnectionAccent(connection: PiConnectionSnapshot): Color {
     return when {
-        lastConnectionError.isNotBlank() -> Color(0xFFB3261E)
-        normalized.contains("paired") || normalized.contains("reachable") || normalized.contains("connected") -> Color(0xFF2ECC71)
-        normalized.contains("saved") -> Color(0xFFFF6B00)
+        connection.last_sync_error.isNotBlank() || connection.last_connection_error.isNotBlank() -> Color(0xFFB3261E)
+        connection.is_offline || connection.address_needs_attention -> Color(0xFFB3261E)
+        connection.is_online -> Color(0xFF2ECC71)
+        connection.is_paired -> Color(0xFFFF6B00)
         else -> Color(0xFFFFB693)
     }
 }

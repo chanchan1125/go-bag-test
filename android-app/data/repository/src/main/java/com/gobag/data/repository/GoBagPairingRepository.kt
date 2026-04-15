@@ -15,9 +15,6 @@ import com.gobag.domain.repository.SyncRepository
 import com.google.gson.JsonParser
 import kotlinx.coroutines.flow.first
 import retrofit2.HttpException
-import java.net.ConnectException
-import java.net.SocketTimeoutException
-import java.net.UnknownHostException
 
 private data class PairingBagSeed(
     val bag_id: String,
@@ -31,7 +28,8 @@ class GoBagPairingRepository(
     private val device_state_store: DeviceStateStore,
     private val recommended_item_dao: RecommendedItemDao,
     private val item_repository: ItemRepository,
-    private val sync_repository: SyncRepository
+    private val sync_repository: SyncRepository,
+    private val pi_connection_manager: PiConnectionManager
 ) : PairingRepository {
     override suspend fun pair_from_qr_payload(payload_json: String): PairingSetupResult {
         val payload = PairQrParser.parse(payload_json)
@@ -50,21 +48,7 @@ class GoBagPairingRepository(
     }
 
     override suspend fun test_connection(base_url: String): PairingConnectionResult {
-        val normalizedBaseUrl = normalize_base_url(base_url)
-        return try {
-            val status = RemoteDataSourceFactory.create_api(normalizedBaseUrl).device_status()
-            PairingConnectionResult(
-                endpoint = normalizedBaseUrl,
-                status = "Reachable",
-                detail = if (status.local_ip.isBlank()) {
-                    "Pi ${status.device_name} is ${status.connection_status}. Scan a pairing QR or enter the Pair Code to link this phone."
-                } else {
-                    "Pi ${status.device_name} is ${status.connection_status} at ${status.local_ip}."
-                }
-            )
-        } catch (e: Exception) {
-            throw IllegalStateException(classify_connection_error(e), e)
-        }
+        return pi_connection_manager.test_endpoint(base_url)
     }
 
     override suspend fun save_endpoint(base_url: String, address_id: String?): SavedPiAddress {
@@ -85,14 +69,11 @@ class GoBagPairingRepository(
     }
 
     override suspend fun refresh_endpoint(address_id: String, base_url: String): PairingConnectionResult {
-        val result = test_connection(base_url)
-        device_state_store.update_saved_address_status(
+        return pi_connection_manager.test_endpoint(
+            base_url = base_url,
             address_id = address_id,
-            status = result.status,
-            detail = result.detail,
-            make_active = true
+            adopt_on_success = true
         )
-        return result
     }
 
     override suspend fun unpair_bag(bag_id: String) {
@@ -107,7 +88,7 @@ class GoBagPairingRepository(
         device_state_store.initialize_phone_device_id_if_missing()
         val normalizedBaseUrl = normalize_base_url(base_url)
         val normalizedPairCode = normalize_pair_code(pair_code)
-        test_connection(normalizedBaseUrl)
+        pi_connection_manager.test_endpoint(normalizedBaseUrl, adopt_on_success = false)
 
         val state = device_state_store.state.first()
         val api = RemoteDataSourceFactory.create_api(normalizedBaseUrl)
@@ -147,21 +128,11 @@ class GoBagPairingRepository(
         val warnings = mutableListOf<String>()
         runCatching {
             val deviceStatus = api.device_status()
-            device_state_store.update_saved_address_status(
-                address_id = savedAddress.id,
-                status = "Reachable",
-                detail = if (deviceStatus.local_ip.isBlank()) {
-                    "Pi ${deviceStatus.device_name} is ${deviceStatus.connection_status}."
-                } else {
-                    "Pi ${deviceStatus.device_name} is ${deviceStatus.connection_status} at ${deviceStatus.local_ip}."
-                },
-                make_active = true
-            )
-            device_state_store.set_connection_snapshot(
-                status = deviceStatus.connection_status,
-                pendingChangesCount = deviceStatus.pending_changes_count,
-                localIp = deviceStatus.local_ip,
-                bag_id = bagProfile.bag_id
+            pi_connection_manager.adopt_successful_pairing_endpoint(
+                base_url = normalizedBaseUrl,
+                bag_id = bagProfile.bag_id,
+                pi_device_id = pair.pi_device_id,
+                device_status = deviceStatus
             )
         }.onFailure {
             warnings += "Raspberry Pi status refresh failed."
@@ -258,23 +229,6 @@ class GoBagPairingRepository(
             throw IllegalArgumentException("Enter the 6-digit Pair Code shown on the Raspberry Pi.")
         }
         return normalized
-    }
-
-    private fun classify_connection_error(error: Exception): String {
-        val message = error.message.orEmpty()
-        return when {
-            error is IllegalArgumentException -> message
-            error is UnknownHostException -> "Raspberry Pi address not found. Check the IP address and that the phone is on the same network."
-            error is ConnectException -> "Could not reach the Raspberry Pi. Check that the Pi server is running and the port is correct."
-            error is SocketTimeoutException -> "Connection timed out. The Raspberry Pi is too slow to respond or not reachable from this phone."
-            message.contains("CLEARTEXT communication", ignoreCase = true) ->
-                "Android blocked an insecure HTTP request. Enable local HTTP access or use HTTPS on the Raspberry Pi."
-            message.contains("401") || message.contains("403") ->
-                "The Raspberry Pi rejected the request. Recreate the QR code or Pair Code and try again."
-            message.contains("404") ->
-                "The Raspberry Pi responded, but the Go-Bag API path was not found. Check the Pi server URL."
-            else -> "Connection test failed: ${message.ifBlank { "unknown network error" }}"
-        }
     }
 
     private fun classify_pairing_error(error: Exception): String {

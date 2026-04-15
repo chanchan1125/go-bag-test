@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gobag.core.model.AlertModel
 import com.gobag.domain.logic.ChecklistCategoryStatus
+import com.gobag.domain.logic.PiConnectionSnapshot
+import com.gobag.domain.logic.PiConnectionStatus
 import com.gobag.domain.logic.PreparednessRules
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.SyncRepository
@@ -15,11 +17,7 @@ import kotlinx.coroutines.flow.stateIn
 
 data class HomeUiState(
     val last_sync_time: Long = 0L,
-    val device_status: String = "Not Paired",
-    val connection_status: String = "unknown",
-    val local_ip: String = "",
-    val pending_changes_count: Int = 0,
-    val last_connection_error: String = "",
+    val connection: PiConnectionSnapshot = PiConnectionStatus.empty(),
     val selected_bag_name: String = "No bag selected",
     val bag_count: Int = 0,
     val bag_readiness: String = "Incomplete",
@@ -63,8 +61,8 @@ class HomeViewModel(
         bags,
         selectedBagId
     ) { items, state, conflicts, bagList, selected_bag_id ->
-        val isConnected = state.auth_token.isNotBlank() && state.base_url.isNotBlank()
-        val summary = PreparednessRules.build_readiness_summary(items, isConnected)
+        val connection = PiConnectionStatus.from_device_state(state)
+        val summary = PreparednessRules.build_readiness_summary(items, connection.is_paired)
         val syncRecommended = items.any { it.updated_at > state.last_sync_at }
         val selectedBag = bagList.firstOrNull { it.bag_id == selected_bag_id }
         val expiryAlerts = PreparednessRules.build_expiration_alerts(
@@ -75,11 +73,7 @@ class HomeViewModel(
 
         HomeUiState(
             last_sync_time = state.last_sync_at,
-            device_status = summary.device_status,
-            connection_status = state.connection_status,
-            local_ip = state.local_ip,
-            pending_changes_count = state.pending_changes_count,
-            last_connection_error = state.last_connection_error,
+            connection = connection,
             selected_bag_name = selectedBag?.name ?: "No bag selected",
             bag_count = bagList.size,
             bag_readiness = summary.bag_readiness,

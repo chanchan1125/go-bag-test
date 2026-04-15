@@ -89,9 +89,13 @@ data class DeviceState(
     val selected_bag_id: String,
     val has_unresolved_conflicts: Boolean,
     val connection_status: String,
+    val sync_status: String,
     val pending_changes_count: Int,
     val local_ip: String,
     val last_connection_error: String,
+    val last_sync_error: String,
+    val last_connection_check_at: Long,
+    val last_connected_at: Long,
     val paired_bags: List<PairedBagConnection>,
     val saved_addresses: List<SavedPiAddress>,
     val active_address_id: String

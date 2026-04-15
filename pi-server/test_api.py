@@ -456,6 +456,9 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn('id="settings-refresh-clock-button"', body)
         self.assertIn('id="settings-restart-button"', body)
         self.assertIn('id="settings-shutdown-button"', body)
+        self.assertIn('id="settings-ip-address"', body)
+        self.assertIn('id="sync-ip-address"', body)
+        self.assertIn("Current IP", body)
         self.assertIn('name="high_contrast"', body)
         self.assertIn('name="large_text"', body)
         self.assertIn('name="low_stock_alerts"', body)
@@ -1493,6 +1496,7 @@ class PiServerApiTests(unittest.TestCase):
         payload = ui_state.json()
         self.assertIn("Emergency Blanket", payload["inventory_groups_html"])
         self.assertTrue(payload["state_version"])
+        self.assertIn("local_ip_display", payload)
 
     def test_ui_routes_redirect_instead_of_dumping_raw_json_or_500_errors(self):
         bag_id = self.client.get("/bags").json()[0]["id"]

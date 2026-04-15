@@ -12,6 +12,7 @@ import com.gobag.core.common.DeviceIdProvider
 import com.gobag.core.model.DeviceState
 import com.gobag.core.model.PairedBagConnection
 import com.gobag.core.model.SavedPiAddress
+import com.gobag.domain.logic.PiConnectionStatus
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.Flow
@@ -38,9 +39,13 @@ class DeviceStateStore(context: Context) {
         private val SELECTED_BAG_ID = stringPreferencesKey("selected_bag_id")
         private val HAS_UNRESOLVED_CONFLICTS = booleanPreferencesKey("has_unresolved_conflicts")
         private val CONNECTION_STATUS = stringPreferencesKey("connection_status")
+        private val SYNC_STATUS = stringPreferencesKey("sync_status")
         private val PENDING_CHANGES_COUNT = longPreferencesKey("pending_changes_count")
         private val LOCAL_IP = stringPreferencesKey("local_ip")
         private val LAST_CONNECTION_ERROR = stringPreferencesKey("last_connection_error")
+        private val LAST_SYNC_ERROR = stringPreferencesKey("last_sync_error")
+        private val LAST_CONNECTION_CHECK_AT = longPreferencesKey("last_connection_check_at")
+        private val LAST_CONNECTED_AT = longPreferencesKey("last_connected_at")
         private val PAIRED_BAGS_JSON = stringPreferencesKey("paired_bags_json")
         private val SAVED_ADDRESSES_JSON = stringPreferencesKey("saved_addresses_json")
         private val ACTIVE_ADDRESS_ID = stringPreferencesKey("active_address_id")
@@ -54,9 +59,20 @@ class DeviceStateStore(context: Context) {
                 parse_saved_addresses(prefs[SAVED_ADDRESSES_JSON]),
                 prefs[ACTIVE_ADDRESS_ID].orEmpty()
             )
-            val selectedBagId = prefs[SELECTED_BAG_ID].orEmpty()
+            val storedSelectedBagId = prefs[SELECTED_BAG_ID].orEmpty()
+            val selectedBagId = when {
+                storedSelectedBagId.isNotBlank() && pairedBags.any { it.bag_id == storedSelectedBagId } -> storedSelectedBagId
+                pairedBags.isNotEmpty() -> pairedBags.first().bag_id
+                else -> ""
+            }
             val activeBag = pairedBags.firstOrNull { it.bag_id == selectedBagId }
             val activeAddress = savedAddresses.firstOrNull { it.is_active }
+            val hasSavedAddress = savedAddresses.isNotEmpty() || activeBag?.base_url?.isNotBlank() == true
+            val normalizedConnectionStatus = PiConnectionStatus.normalize_connection_status(
+                value = activeBag?.connection_status ?: prefs[CONNECTION_STATUS],
+                is_paired = activeBag != null || pairedBags.isNotEmpty(),
+                has_saved_address = hasSavedAddress
+            )
             DeviceState(
                 phone_device_id = prefs[PHONE_DEVICE_ID] ?: DeviceIdProvider.generate(),
                 auth_token = activeBag?.auth_token.orEmpty(),
@@ -67,15 +83,15 @@ class DeviceStateStore(context: Context) {
                 auto_sync_enabled = prefs[AUTO_SYNC_ENABLED] ?: false,
                 selected_bag_id = selectedBagId,
                 has_unresolved_conflicts = prefs[HAS_UNRESOLVED_CONFLICTS] ?: false,
-                connection_status = activeBag?.connection_status
-                    ?: when {
-                        activeAddress != null -> "address_saved"
-                        else -> prefs[CONNECTION_STATUS] ?: "unknown"
-                    },
+                connection_status = normalizedConnectionStatus,
+                sync_status = PiConnectionStatus.normalize_sync_status(prefs[SYNC_STATUS]),
                 pending_changes_count = activeBag?.pending_changes_count ?: (prefs[PENDING_CHANGES_COUNT] ?: 0L).toInt(),
                 local_ip = activeBag?.local_ip ?: (prefs[LOCAL_IP] ?: ""),
                 last_connection_error = activeBag?.last_connection_error
                     ?: (prefs[LAST_CONNECTION_ERROR] ?: ""),
+                last_sync_error = prefs[LAST_SYNC_ERROR] ?: "",
+                last_connection_check_at = prefs[LAST_CONNECTION_CHECK_AT] ?: 0L,
+                last_connected_at = prefs[LAST_CONNECTED_AT] ?: 0L,
                 paired_bags = pairedBags,
                 saved_addresses = savedAddresses,
                 active_address_id = activeAddress?.id.orEmpty()
@@ -92,10 +108,14 @@ class DeviceStateStore(context: Context) {
             if (!prefs.contains(AUTO_SYNC_ENABLED)) prefs[AUTO_SYNC_ENABLED] = false
             if (!prefs.contains(DARK_THEME_ENABLED)) prefs[DARK_THEME_ENABLED] = true
             if (!prefs.contains(HAS_UNRESOLVED_CONFLICTS)) prefs[HAS_UNRESOLVED_CONFLICTS] = false
-            if (!prefs.contains(CONNECTION_STATUS)) prefs[CONNECTION_STATUS] = "unknown"
+            if (!prefs.contains(CONNECTION_STATUS)) prefs[CONNECTION_STATUS] = PiConnectionStatus.STATUS_NO_PI_PAIRED
+            if (!prefs.contains(SYNC_STATUS)) prefs[SYNC_STATUS] = PiConnectionStatus.SYNC_STATUS_IDLE
             if (!prefs.contains(PENDING_CHANGES_COUNT)) prefs[PENDING_CHANGES_COUNT] = 0L
             if (!prefs.contains(LOCAL_IP)) prefs[LOCAL_IP] = ""
             if (!prefs.contains(LAST_CONNECTION_ERROR)) prefs[LAST_CONNECTION_ERROR] = ""
+            if (!prefs.contains(LAST_SYNC_ERROR)) prefs[LAST_SYNC_ERROR] = ""
+            if (!prefs.contains(LAST_CONNECTION_CHECK_AT)) prefs[LAST_CONNECTION_CHECK_AT] = 0L
+            if (!prefs.contains(LAST_CONNECTED_AT)) prefs[LAST_CONNECTED_AT] = 0L
             if (!prefs.contains(PAIRED_BAGS_JSON)) prefs[PAIRED_BAGS_JSON] = "[]"
             if (!prefs.contains(SAVED_ADDRESSES_JSON)) prefs[SAVED_ADDRESSES_JSON] = "[]"
             if (!prefs.contains(ACTIVE_ADDRESS_ID)) prefs[ACTIVE_ADDRESS_ID] = ""
@@ -119,7 +139,11 @@ class DeviceStateStore(context: Context) {
                 pi_device_id = pi_device_id,
                 last_sync_at = current?.last_sync_at ?: 0L,
                 time_offset_ms = time_offset_ms,
-                connection_status = current?.connection_status ?: "paired",
+                connection_status = PiConnectionStatus.normalize_connection_status(
+                    value = current?.connection_status ?: PiConnectionStatus.STATUS_PI_PAIRED,
+                    is_paired = true,
+                    has_saved_address = true
+                ),
                 pending_changes_count = current?.pending_changes_count ?: 0,
                 local_ip = current?.local_ip ?: "",
                 last_connection_error = "",
@@ -129,7 +153,7 @@ class DeviceStateStore(context: Context) {
             existing += updated
             prefs[PAIRED_BAGS_JSON] = gson.toJson(existing)
             prefs[SELECTED_BAG_ID] = bag_id
-            prefs[CONNECTION_STATUS] = "paired"
+            prefs[CONNECTION_STATUS] = PiConnectionStatus.STATUS_PI_PAIRED
             prefs[LAST_CONNECTION_ERROR] = ""
         }
     }
@@ -137,12 +161,21 @@ class DeviceStateStore(context: Context) {
     suspend fun clear_pairing_for_bag(bag_id: String) {
         data_store.edit { prefs ->
             val pairedBags = parse_paired_bags(prefs[PAIRED_BAGS_JSON]).filterNot { it.bag_id == bag_id }
+            val savedAddresses = parse_saved_addresses(prefs[SAVED_ADDRESSES_JSON])
             prefs[PAIRED_BAGS_JSON] = gson.toJson(pairedBags)
             if ((prefs[SELECTED_BAG_ID] ?: "") == bag_id) {
                 prefs[SELECTED_BAG_ID] = pairedBags.firstOrNull()?.bag_id.orEmpty()
             }
-            prefs[CONNECTION_STATUS] = if (pairedBags.isEmpty()) "not_paired" else "paired"
+            prefs[CONNECTION_STATUS] = PiConnectionStatus.normalize_connection_status(
+                value = null,
+                is_paired = pairedBags.isNotEmpty(),
+                has_saved_address = savedAddresses.isNotEmpty()
+            )
             prefs[LAST_CONNECTION_ERROR] = ""
+            if (pairedBags.isEmpty()) {
+                prefs[SYNC_STATUS] = PiConnectionStatus.SYNC_STATUS_IDLE
+                prefs[LAST_SYNC_ERROR] = ""
+            }
         }
     }
 
@@ -174,6 +207,10 @@ class DeviceStateStore(context: Context) {
             val normalized = normalize_saved_addresses(addresses, if (saved.is_active) saved.id else prefs[ACTIVE_ADDRESS_ID].orEmpty())
             prefs[SAVED_ADDRESSES_JSON] = gson.toJson(normalized)
             prefs[ACTIVE_ADDRESS_ID] = normalized.firstOrNull { it.is_active }?.id.orEmpty()
+            if (parse_paired_bags(prefs[PAIRED_BAGS_JSON]).isEmpty()) {
+                prefs[CONNECTION_STATUS] = PiConnectionStatus.STATUS_ADDRESS_SAVED
+                prefs[LAST_CONNECTION_ERROR] = ""
+            }
         }
         return saved
     }
@@ -194,7 +231,11 @@ class DeviceStateStore(context: Context) {
             prefs[SAVED_ADDRESSES_JSON] = gson.toJson(normalized)
             prefs[ACTIVE_ADDRESS_ID] = normalized.firstOrNull { it.is_active }?.id.orEmpty()
             if (prefs[SELECTED_BAG_ID].isNullOrBlank()) {
-                prefs[CONNECTION_STATUS] = if (normalized.isEmpty()) "unknown" else "address_saved"
+                prefs[CONNECTION_STATUS] = if (normalized.isEmpty()) {
+                    PiConnectionStatus.STATUS_NO_PI_PAIRED
+                } else {
+                    PiConnectionStatus.STATUS_ADDRESS_SAVED
+                }
                 prefs[LAST_CONNECTION_ERROR] = ""
             }
         }
@@ -236,6 +277,21 @@ class DeviceStateStore(context: Context) {
         data_store.edit { it[LAST_SYNC_AT] = value }
     }
 
+    suspend fun set_connection_checking(bag_id: String? = null) {
+        val effectiveBagId = bag_id ?: state.map { it.selected_bag_id }.first_or_default("")
+        update_paired_bag_connection(effectiveBagId, preserve_when_missing = true) {
+            it.copy(
+                connection_status = PiConnectionStatus.STATUS_CHECKING_CONNECTION,
+                last_connection_error = ""
+            )
+        }
+        data_store.edit { prefs ->
+            prefs[CONNECTION_STATUS] = PiConnectionStatus.STATUS_CHECKING_CONNECTION
+            prefs[LAST_CONNECTION_ERROR] = ""
+            prefs[LAST_CONNECTION_CHECK_AT] = System.currentTimeMillis()
+        }
+    }
+
     suspend fun set_auto_sync(enabled: Boolean) {
         data_store.edit { it[AUTO_SYNC_ENABLED] = enabled }
     }
@@ -260,9 +316,10 @@ class DeviceStateStore(context: Context) {
         bag_id: String? = null
     ) {
         val effectiveBagId = bag_id ?: state.map { it.selected_bag_id }.first_or_default("")
+        val checkedAt = System.currentTimeMillis()
         update_paired_bag_connection(effectiveBagId, preserve_when_missing = true) {
             it.copy(
-                connection_status = status,
+                connection_status = PiConnectionStatus.STATUS_PI_ONLINE,
                 pending_changes_count = pendingChangesCount,
                 local_ip = localIp,
                 last_sync_at = lastSyncAt ?: it.last_sync_at,
@@ -270,22 +327,75 @@ class DeviceStateStore(context: Context) {
             )
         }
         data_store.edit { prefs ->
-            prefs[CONNECTION_STATUS] = status
+            prefs[CONNECTION_STATUS] = PiConnectionStatus.normalize_connection_status(
+                value = status,
+                is_paired = parse_paired_bags(prefs[PAIRED_BAGS_JSON]).isNotEmpty(),
+                has_saved_address = parse_saved_addresses(prefs[SAVED_ADDRESSES_JSON]).isNotEmpty()
+            )
             prefs[PENDING_CHANGES_COUNT] = pendingChangesCount.toLong()
             prefs[LOCAL_IP] = localIp
             prefs[LAST_CONNECTION_ERROR] = ""
+            prefs[LAST_CONNECTION_CHECK_AT] = checkedAt
+            prefs[LAST_CONNECTED_AT] = checkedAt
             if (lastSyncAt != null) prefs[LAST_SYNC_AT] = lastSyncAt
         }
     }
 
-    suspend fun set_connection_error(message: String, bag_id: String? = null) {
+    suspend fun set_connection_error(
+        message: String,
+        bag_id: String? = null,
+        status: String = PiConnectionStatus.STATUS_ADDRESS_UNREACHABLE
+    ) {
         val effectiveBagId = bag_id ?: state.map { it.selected_bag_id }.first_or_default("")
         update_paired_bag_connection(effectiveBagId, preserve_when_missing = true) {
-            it.copy(connection_status = "offline", last_connection_error = message)
+            it.copy(
+                connection_status = PiConnectionStatus.normalize_connection_status(
+                    value = status,
+                    is_paired = true,
+                    has_saved_address = true
+                ),
+                last_connection_error = message
+            )
         }
         data_store.edit { prefs ->
             prefs[LAST_CONNECTION_ERROR] = message
-            prefs[CONNECTION_STATUS] = "offline"
+            prefs[CONNECTION_STATUS] = PiConnectionStatus.normalize_connection_status(
+                value = status,
+                is_paired = parse_paired_bags(prefs[PAIRED_BAGS_JSON]).isNotEmpty(),
+                has_saved_address = parse_saved_addresses(prefs[SAVED_ADDRESSES_JSON]).isNotEmpty()
+            )
+            prefs[LAST_CONNECTION_CHECK_AT] = System.currentTimeMillis()
+        }
+    }
+
+    suspend fun set_sync_status(status: String, error: String = "") {
+        data_store.edit { prefs ->
+            prefs[SYNC_STATUS] = PiConnectionStatus.normalize_sync_status(status)
+            prefs[LAST_SYNC_ERROR] = error
+        }
+    }
+
+    suspend fun update_paired_bag_endpoint(
+        base_url: String,
+        bag_id: String? = null,
+        pi_device_id: String? = null
+    ) {
+        if (base_url.isBlank()) return
+        data_store.edit { prefs ->
+            val existing = parse_paired_bags(prefs[PAIRED_BAGS_JSON])
+            if (existing.isEmpty()) return@edit
+            val selectedBagId = bag_id.orEmpty()
+            val selectedPiId = pi_device_id.orEmpty()
+            val updated = existing.map { bag ->
+                val matchesBag = selectedBagId.isNotBlank() && bag.bag_id == selectedBagId
+                val matchesPi = selectedPiId.isNotBlank() && bag.pi_device_id == selectedPiId
+                if (matchesBag || matchesPi) {
+                    bag.copy(base_url = base_url)
+                } else {
+                    bag
+                }
+            }
+            prefs[PAIRED_BAGS_JSON] = gson.toJson(updated)
         }
     }
 

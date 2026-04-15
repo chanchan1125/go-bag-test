@@ -86,6 +86,14 @@ private fun GoBagApp() {
         }
     }
 
+    LaunchedEffect(container.sync_repository) {
+        val state = container.sync_repository.observe_device_state().first()
+        val hasKnownPi = state.paired_bags.isNotEmpty() || state.saved_addresses.isNotEmpty() || state.base_url.isNotBlank()
+        if (hasKnownPi) {
+            container.sync_repository.refresh_remote_status()
+        }
+    }
+
     val home_vm = remember { HomeViewModel(container.item_repository, container.sync_repository) }
     val inventory_vm = remember {
         InventoryViewModel(

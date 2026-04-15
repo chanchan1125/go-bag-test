@@ -66,14 +66,15 @@ fun PairingScreen(
     on_back: () -> Unit
 ) {
     val state by view_model.ui_state.collectAsState()
+    val connection = state.connection
     val snackbarHost = remember { SnackbarHostState() }
     val context = LocalContext.current
     val isPaired = state.paired_bag_count > 0
-    val hasSavedEndpoint = state.endpoint.isNotBlank()
     val statusAccent = when {
-        isPaired -> MaterialTheme.colorScheme.tertiary
-        state.endpoint_status.equals("Reachable", ignoreCase = true) -> MaterialTheme.colorScheme.primary
-        state.endpoint_status.equals("Failed", ignoreCase = true) -> MaterialTheme.colorScheme.error
+        connection.last_sync_error.isNotBlank() || connection.last_connection_error.isNotBlank() -> MaterialTheme.colorScheme.error
+        connection.is_offline || connection.address_needs_attention -> MaterialTheme.colorScheme.error
+        connection.is_online -> MaterialTheme.colorScheme.tertiary
+        connection.is_paired -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.secondary
     }
 
@@ -124,9 +125,9 @@ fun PairingScreen(
                 actions = {
                     StatusPill(
                         label = when {
-                            isPaired -> "PAIRED"
-                            hasSavedEndpoint -> "ADDRESS SAVED"
-                            else -> "READY TO PAIR"
+                            connection.discovery_label.isNotBlank() -> connection.discovery_label.uppercase()
+                            connection.is_paired -> connection.connection_label.uppercase()
+                            else -> connection.pairing_label.uppercase()
                         },
                         accent = statusAccent
                     )
@@ -147,9 +148,13 @@ fun PairingScreen(
         ) {
             item {
                 PairingHeroCard(
-                    endpoint = state.endpoint.ifBlank { "Raspberry Pi Hub" },
+                    endpoint = state.manual_endpoint.ifBlank { state.endpoint.ifBlank { "Raspberry Pi Hub" } },
                     pairingDetail = state.pairing_detail,
-                    statusLabel = state.status,
+                    statusLabel = when {
+                        connection.discovery_label.isNotBlank() -> connection.discovery_label
+                        connection.is_paired -> connection.connection_label
+                        else -> connection.pairing_label
+                    },
                     authStatus = state.auth_status,
                     pairedBagCount = state.paired_bag_count,
                     statusAccent = statusAccent
@@ -164,15 +169,21 @@ fun PairingScreen(
                     MiniStatusCard(
                         modifier = Modifier.weight(1f),
                         title = "Endpoint",
-                        value = state.endpoint_status,
-                        detail = if (hasSavedEndpoint) "Local Pi address is stored on this phone." else "Save or scan a Pi endpoint first.",
+                        value = connection.connection_label,
+                        detail = connection.detail,
                         accent = statusAccent
                     )
                     MiniStatusCard(
                         modifier = Modifier.weight(1f),
                         title = "Auth",
                         value = state.auth_status,
-                        detail = if (isPaired) "A bag is authenticated and ready for sync." else "Use a QR scan or manual Pair Code to authenticate.",
+                        detail = if (connection.discovery_label.isNotBlank()) {
+                            connection.discovery_label
+                        } else if (isPaired) {
+                            connection.pairing_label
+                        } else {
+                            "Use a QR scan or manual Pair Code to authenticate."
+                        },
                         accent = if (isPaired) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
                     )
                 }
@@ -191,12 +202,12 @@ fun PairingScreen(
                         singleLine = true
                     )
                     Text(
-                        state.endpoint_detail,
+                        connection.detail,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        "Pairing status: ${state.status} | Auth: ${state.auth_status}",
+                        "Pairing status: ${connection.pairing_label} | Connection: ${connection.connection_label}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
