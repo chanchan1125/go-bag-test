@@ -5,27 +5,27 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 
 interface GoBagApi {
-    @GET("/health")
+    @GET("health")
     suspend fun health(): HealthResponseDto
 
-    @GET("/device/status")
+    @GET("device/status")
     suspend fun device_status(): DeviceStatusDto
 
-    @GET("/sync/status")
+    @GET("sync/status")
     suspend fun sync_status(): SyncStatusDto
 
-    @GET("/time")
+    @GET("time")
     suspend fun time(): Map<String, Long>
 
-    @GET("/templates")
+    @GET("templates")
     suspend fun templates(): TemplatesResponseDto
 
-    @GET("/device/bag")
+    @GET("device/bag")
     suspend fun device_bag(): DeviceBagDto
 
-    @POST("/pair")
+    @POST("pair")
     suspend fun pair(@Body request: PairRequestDto): PairResponseDto
 
-    @POST("/sync")
+    @POST("sync")
     suspend fun sync(@Body request: SyncRequestDto): SyncResponseDto
 }
