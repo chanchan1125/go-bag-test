@@ -145,7 +145,7 @@ class DeviceStateStore(context: Context) {
                 base_url = base_url,
                 auth_token = auth_token,
                 pi_device_id = pi_device_id,
-                last_sync_at = current?.last_sync_at ?: 0L,
+                last_sync_at = 0L,
                 time_offset_ms = time_offset_ms,
                 connection_status = PiConnectionStatus.normalize_connection_status(
                     value = current?.connection_status ?: PiConnectionStatus.STATUS_PI_PAIRED,

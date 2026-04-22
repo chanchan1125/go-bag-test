@@ -231,6 +231,8 @@ class PiConnectionManager(
         val resolvedPiDeviceId = explicit_pi_device_id
             .ifBlank { device_status.pi_device_id }
             .ifBlank { state.pi_device_id }
+        val currentSyncAt = state.paired_bags.first_matching_bag(bag_id, resolvedPiDeviceId)?.last_sync_at
+            ?: state.last_sync_at
         if (state.paired_bags.isNotEmpty() || bag_id.isNotBlank()) {
             device_state_store.update_paired_bag_endpoint(
                 base_url = resolved_base_url,
@@ -246,7 +248,12 @@ class PiConnectionManager(
             status = device_status.connection_status,
             pendingChangesCount = device_status.pending_changes_count,
             localIp = device_status.local_ip,
-            lastSyncAt = if (state.auth_token.isNotBlank() || bag_id.isNotBlank()) device_status.last_sync_at else null,
+            // Preserve the zero baseline for the first sync after pairing or re-pairing.
+            lastSyncAt = if ((state.auth_token.isNotBlank() || bag_id.isNotBlank()) && currentSyncAt > 0L) {
+                device_status.last_sync_at
+            } else {
+                null
+            },
             bag_id = bag_id.takeIf { it.isNotBlank() },
             resolvedBaseUrl = resolved_base_url,
             localBaseUrl = normalizedLocalBaseUrl.takeIf { it.isNotBlank() },
