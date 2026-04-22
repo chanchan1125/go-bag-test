@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.GoBag" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/gobag_splash_background</item>
+    </style>
+
+    <style name="Theme.GoBag.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/gobag_splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/gobag_icon</item>
+        <item name="postSplashScreenTheme">@style/Theme.GoBag</item>
+    </style>
+</resources>

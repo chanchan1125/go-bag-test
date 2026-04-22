@@ -7131,6 +7131,11 @@ def home(request: Request) -> HTMLResponse:
       flex: 0 0 auto;
       min-width: 0;
     }}
+    .topbar-power {{
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }}
     .readiness-pill,
     .theme-toggle,
     .wifi-button,
@@ -7248,6 +7253,28 @@ def home(request: Request) -> HTMLResponse:
       text-transform: uppercase;
       font-size: 0.76rem;
       font-weight: 800;
+    }}
+    .power-menu {{
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      display: grid;
+      gap: 8px;
+      min-width: 170px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.2);
+      backdrop-filter: blur(14px);
+      z-index: 36;
+    }}
+    .power-menu-button {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      text-align: left;
+      gap: 8px;
     }}
     .view-controls {{
       display: inline-flex;
@@ -9492,10 +9519,29 @@ def home(request: Request) -> HTMLResponse:
         <span class="zoom-indicator" id="zoom-indicator">0%</span>
         <button type="button" class="zoom-toggle" id="zoom-in" aria-label="Zoom in" title="Zoom in">&gt;</button>
       </div>
-      <button type="button" class="power-button" id="power-button" aria-label="Shut down Raspberry Pi" title="Shut down Raspberry Pi">
-        <span class="power-button-icon" aria-hidden="true">&#x23FB;</span>
-        <span class="power-button-label">Power</span>
-      </button>
+      <div class="topbar-power">
+        <button
+          type="button"
+          class="power-button"
+          id="power-button"
+          aria-label="Open Raspberry Pi power options"
+          title="Open Raspberry Pi power options"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls="power-menu"
+        >
+          <span class="power-button-icon" aria-hidden="true">&#x23FB;</span>
+          <span class="power-button-label">Power</span>
+        </button>
+        <div class="power-menu hidden" id="power-menu" role="menu" aria-label="Raspberry Pi power options">
+          <button type="button" class="power-menu-button secondary" id="power-menu-restart" role="menuitem">
+            Restart Pi
+          </button>
+          <button type="button" class="power-menu-button secondary danger" id="power-menu-shutdown" role="menuitem">
+            Shut down Pi
+          </button>
+        </div>
+      </div>
       <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to dark mode" title="Switch to dark mode">
         <span class="theme-toggle-icon" id="theme-toggle-icon" aria-hidden="true">&#9791;</span>
         <span class="theme-toggle-label" id="theme-toggle-label">Dark mode</span>
@@ -9603,6 +9649,9 @@ def home(request: Request) -> HTMLResponse:
         "100": "100%",
       }};
       const powerButton = document.getElementById("power-button");
+      const powerMenu = document.getElementById("power-menu");
+      const powerMenuRestartButton = document.getElementById("power-menu-restart");
+      const powerMenuShutdownButton = document.getElementById("power-menu-shutdown");
       const shutdownModal = document.getElementById("shutdown-modal");
       const shutdownCancelButton = document.getElementById("shutdown-cancel-button");
       const shutdownConfirmButton = document.getElementById("shutdown-confirm-button");
@@ -10957,6 +11006,10 @@ def home(request: Request) -> HTMLResponse:
         return !!(shutdownModal && !shutdownModal.classList.contains("hidden"));
       }}
 
+      function powerMenuIsOpen() {{
+        return !!(powerMenu && !powerMenu.classList.contains("hidden"));
+      }}
+
       function shutdownProgressIsOpen() {{
         return !!(shutdownProgress && !shutdownProgress.classList.contains("hidden"));
       }}
@@ -10981,6 +11034,12 @@ def home(request: Request) -> HTMLResponse:
         if (powerButton) {{
           powerButton.disabled = isBusy;
         }}
+        if (powerMenuRestartButton) {{
+          powerMenuRestartButton.disabled = isBusy;
+        }}
+        if (powerMenuShutdownButton) {{
+          powerMenuShutdownButton.disabled = isBusy;
+        }}
         if (settingsRestartButton) {{
           settingsRestartButton.disabled = isBusy;
         }}
@@ -10994,6 +11053,37 @@ def home(request: Request) -> HTMLResponse:
           const powerConfig = powerActionConfig[currentPowerAction] || powerActionConfig.shutdown;
           shutdownConfirmButton.disabled = isBusy;
           shutdownConfirmButton.textContent = isBusy ? `${{powerConfig.confirm.replace(" now", "")}}...` : powerConfig.confirm;
+        }}
+      }}
+
+      function setPowerMenuExpanded(expanded) {{
+        if (powerButton) {{
+          powerButton.setAttribute("aria-expanded", expanded ? "true" : "false");
+        }}
+      }}
+
+      function openPowerMenu() {{
+        if (!powerMenu || shutdownPending || powerDialogIsOpen() || shutdownProgressIsOpen()) {{
+          return;
+        }}
+        dismissTouchKeyboard();
+        powerMenu.classList.remove("hidden");
+        setPowerMenuExpanded(true);
+      }}
+
+      function closePowerMenu() {{
+        if (!powerMenu) {{
+          return;
+        }}
+        powerMenu.classList.add("hidden");
+        setPowerMenuExpanded(false);
+      }}
+
+      function togglePowerMenu() {{
+        if (powerMenuIsOpen()) {{
+          closePowerMenu();
+        }} else {{
+          openPowerMenu();
         }}
       }}
 
@@ -11025,6 +11115,7 @@ def home(request: Request) -> HTMLResponse:
           return;
         }}
         currentPowerAction = action === "restart" ? "restart" : "shutdown";
+        closePowerMenu();
         dismissTouchKeyboard();
         setShutdownError("");
         setPowerUiBusy(false);
@@ -11616,6 +11707,16 @@ def home(request: Request) -> HTMLResponse:
       }}
       if (powerButton) {{
         powerButton.addEventListener("click", () => {{
+          togglePowerMenu();
+        }});
+      }}
+      if (powerMenuRestartButton) {{
+        powerMenuRestartButton.addEventListener("click", () => {{
+          openShutdownModal("restart");
+        }});
+      }}
+      if (powerMenuShutdownButton) {{
+        powerMenuShutdownButton.addEventListener("click", () => {{
           openShutdownModal("shutdown");
         }});
       }}
@@ -11665,6 +11766,10 @@ def home(request: Request) -> HTMLResponse:
       }});
 
       document.addEventListener("click", (event) => {{
+        const powerMenuTarget = event.target instanceof HTMLElement ? event.target.closest("#power-button, #power-menu") : null;
+        if (powerMenuIsOpen() && !powerMenuTarget) {{
+          closePowerMenu();
+        }}
         const target = event.target instanceof HTMLElement ? event.target.closest("[data-nav-screen]") : null;
         if (!(target instanceof HTMLElement)) {{
           return;
@@ -11886,6 +11991,10 @@ def home(request: Request) -> HTMLResponse:
 
       window.addEventListener("keydown", (event) => {{
         if (event.key !== "Escape") {{
+          return;
+        }}
+        if (powerMenuIsOpen()) {{
+          closePowerMenu();
           return;
         }}
         if (wifiModalIsOpen() && !wifiConnecting) {{

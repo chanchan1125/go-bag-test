@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.gobag.app.ui.theme.TacticalTheme
 import com.gobag.feature.checkmode.CheckModeScreen
 import com.gobag.feature.checkmode.CheckModeViewModel
@@ -36,6 +37,7 @@ private data class StartupState(
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         setContent {
             GoBagApp()
