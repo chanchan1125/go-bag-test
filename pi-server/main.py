@@ -5303,11 +5303,11 @@ def render_sensor_sections_html(snapshot: SensorSnapshot) -> str:
             <div class="sensor-section-card sensor-tone-{tone}">
               <div class="sensor-section-topline">
                 <span class="sensor-section-label">{escape(section.name)}</span>
-                <span class="sensor-section-percent">{escape(str(int(round(section.contribution_percent or 0))))}%</span>
+                <span class="sensor-section-state">{'Occupied' if section.detected else 'Clear'}</span>
               </div>
-              <div class="sensor-section-weight">{escape(sensor_display_weight(section.current_weight_kg))}</div>
+              <div class="sensor-section-percent">{escape(str(int(round(section.contribution_percent or 0))))}%</div>
               <div class="sensor-section-note">
-                Full {escape(f"{section.full_weight_kg:.2f} kg")} | Threshold {escape(f"{section.min_detection_weight_kg:.2f} kg")}
+                {'Contributing to bag utilization.' if section.detected else 'Below the occupied threshold.'}
               </div>
             </div>
             """
@@ -5687,9 +5687,14 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
             else "Review bag status here, then use the Android app for any inventory changes."
         )
     )
+    occupied_section_count = sum(1 for section in sensor_snapshot.sections if section.detected)
     summary_cards = [
         ("Sensor", sensor_status_label, sensor_snapshot.serial_port or "ESP32 USB serial"),
-        ("Utilization", f"{bag_utilization_percent}%" if bag_utilization_percent is not None else "Unavailable", f"{SENSOR_SECTION_COUNT} sections on live weight data" if sensor_snapshot.available else "Waiting for live load-cell data"),
+        (
+            "Utilization",
+            f"{bag_utilization_percent}%" if bag_utilization_percent is not None else "Unavailable",
+            f"{occupied_section_count}/{SENSOR_SECTION_COUNT} sections occupied" if sensor_snapshot.available else "Waiting for live load-cell data",
+        ),
         ("Status", readiness["bag_readiness"], readiness["device_status"]),
         ("Expired", str(len(expired_items)), f"{len(expiring_items)} near expiry"),
         ("Missing", str(len(missing_categories)), "Checklist categories"),
@@ -8055,16 +8060,16 @@ def home(request: Request) -> HTMLResponse:
       letter-spacing: 0.1em;
     }}
     .sensor-section-percent {{
-      color: var(--ink);
-      letter-spacing: 0;
-    }}
-    .sensor-section-weight {{
       font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
       font-size: 1.35rem;
       font-weight: 800;
       letter-spacing: -0.04em;
       line-height: 1;
       color: var(--ink);
+    }}
+    .sensor-section-state {{
+      color: var(--muted);
+      letter-spacing: 0;
     }}
     .sensor-section-note {{
       color: var(--muted);

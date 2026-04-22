@@ -390,9 +390,9 @@ private fun SensorSectionsCard(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            SectionLabel("Section Load Cells")
+            SectionLabel("Occupied Sections")
             Text(
-                "Each section contributes up to 20% of total bag utilization.",
+                "Each section contributes up to 20% of total bag utilization. Only section status and contribution are shown here.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -441,12 +441,12 @@ private fun SensorSectionTile(
                 color = accent
             )
             Text(
-                section.current_weight_kg?.let { formatWeightKg(it) } ?: "--",
+                if (section.detected) "Occupied" else "Clear",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                "Full ${formatWeightKg(section.full_weight_kg)}",
+                if (section.detected) "Contributing to utilization" else "Below occupied threshold",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -807,10 +807,6 @@ private fun resolveConnectionAccent(connection: PiConnectionSnapshot): Color {
 private fun formatTimestamp(time: Long): String {
     if (time == 0L) return "Never"
     return SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()).format(Date(time))
-}
-
-private fun formatWeightKg(weight: Double): String {
-    return String.format(Locale.getDefault(), "%.2f kg", weight)
 }
 
 private fun formatExpiryAlertDetail(alert: AlertModel): String {

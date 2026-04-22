@@ -41,7 +41,9 @@ class PiConnectionManager(
             return "No bag location is saved yet."
         }
 
-        device_state_store.set_connection_checking(state.selected_bag_id)
+        if (state.connection_status != PiConnectionStatus.STATUS_PI_ONLINE) {
+            device_state_store.set_connection_checking(state.selected_bag_id)
+        }
         var lastFailure = ""
         val probeAuthToken = connection_probe_auth_token(state)
         for (candidate in candidates) {
