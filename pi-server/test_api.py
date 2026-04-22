@@ -59,6 +59,79 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIn("connection_status", sync_payload)
         self.assertIn("local_base_url", sync_payload)
         self.assertIn("remote_base_url", sync_payload)
+        self.assertIn("sensor_snapshot", payload)
+        self.assertIn("sensor_snapshot", sync_payload)
+
+    def test_sensor_payload_updates_device_and_ui_state(self):
+        initial_ui_state = self.client.get("/ui/state")
+        self.assertEqual(initial_ui_state.status_code, 200)
+        initial_state_version = initial_ui_state.json()["state_version"]
+
+        snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
+        self.assertEqual(snapshot.total_percentage, 50)
+
+        device = self.client.get("/device/status")
+        self.assertEqual(device.status_code, 200)
+        device_payload = device.json()
+        self.assertEqual(device_payload["sensor_snapshot"]["connection_state"], "live")
+        self.assertEqual(device_payload["sensor_snapshot"]["total_percentage"], 50)
+        self.assertEqual(len(device_payload["sensor_snapshot"]["sections"]), 5)
+
+        ui_state = self.client.get("/ui/state")
+        self.assertEqual(ui_state.status_code, 200)
+        ui_payload = ui_state.json()
+        self.assertEqual(ui_payload["bag_utilization_percent"], 50)
+        self.assertIn("Section 4", ui_payload["sensor_sections_html"])
+        self.assertNotEqual(ui_payload["state_version"], initial_state_version)
+
+    def test_text_sensor_status_frame_updates_device_and_ui_state(self):
+        snapshot = self.module.sensor_serial_manager.ingest_serial_lines(
+            [
+                "----------- BAG STATUS -----------",
+                "Section 1: Raw=1000 | NetRaw=1000 | Weight=250.0 g | SectionFill=25.0% | BagContribution=5.0% | OCCUPIED",
+                "Section 2: Raw=1001 | NetRaw=1001 | Weight=500.0 g | SectionFill=50.0% | BagContribution=10.0% | OCCUPIED",
+                "Section 3: Raw=1002 | NetRaw=1002 | Weight=750.0 g | SectionFill=75.0% | BagContribution=15.0% | OCCUPIED",
+                "Section 4: Raw=1003 | NetRaw=1003 | Weight=1000.0 g | SectionFill=100.0% | BagContribution=20.0% | OCCUPIED",
+                "Section 5: Raw=1004 | NetRaw=1004 | Weight=0.0 g | SectionFill=0.0% | BagContribution=0.0% | EMPTY",
+                "Connected Sections: 5 / 5",
+                "Occupied Sections: 4 / 5",
+                "Total Bag Utilization: 50.0%",
+                "----------------------------------",
+            ]
+        )
+        self.assertEqual(snapshot.connection_state, "live")
+        self.assertEqual(snapshot.total_percentage, 50)
+        self.assertAlmostEqual(snapshot.sections[0].current_weight_kg, 0.25)
+        self.assertAlmostEqual(snapshot.sections[3].current_weight_kg, 1.0)
+
+        device = self.client.get("/device/status")
+        self.assertEqual(device.status_code, 200)
+        device_payload = device.json()
+        self.assertEqual(device_payload["sensor_snapshot"]["total_percentage"], 50)
+        self.assertEqual(device_payload["sensor_snapshot"]["sections"][1]["current_weight_kg"], 0.5)
+
+    def test_incomplete_text_sensor_status_frame_clears_utilization(self):
+        live_snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
+        self.assertEqual(live_snapshot.total_percentage, 50)
+
+        snapshot = self.module.sensor_serial_manager.ingest_serial_lines(
+            [
+                "----------- BAG STATUS -----------",
+                "Section 1: Raw=1000 | NetRaw=1000 | Weight=250.0 g | SectionFill=25.0% | BagContribution=5.0% | OCCUPIED",
+                "Section 2: NOT CONNECTED",
+                "Section 3: Raw=1002 | NetRaw=1002 | Weight=750.0 g | SectionFill=75.0% | BagContribution=15.0% | OCCUPIED",
+                "Section 4: Raw=1003 | NetRaw=1003 | Weight=1000.0 g | SectionFill=100.0% | BagContribution=20.0% | OCCUPIED",
+                "Section 5: Raw=1004 | NetRaw=1004 | Weight=0.0 g | SectionFill=0.0% | BagContribution=0.0% | EMPTY",
+                "----------------------------------",
+            ]
+        )
+        self.assertEqual(snapshot.connection_state, "connecting")
+        self.assertIsNone(snapshot.total_percentage)
+        self.assertIn("incomplete sensor frame", snapshot.last_error.lower())
+
+        ui_state = self.client.get("/ui/state")
+        self.assertEqual(ui_state.status_code, 200)
+        self.assertIsNone(ui_state.json()["bag_utilization_percent"])
 
     def test_current_device_ip_display_prefers_live_ip_over_base_url(self):
         with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": "http://192.168.1.10:8001"}, clear=False):

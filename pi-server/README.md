@@ -12,6 +12,7 @@
 - Pair-code-based phone pairing via `POST /pair`
 - Token-protected sync via `POST /sync`
 - REST CRUD for bags and items plus status endpoints for Android settings/sync screens
+- ESP32 USB-serial sensor ingestion for live 5-section bag utilization
 - Template download via `GET /templates`
 - Camera inspection, USB preview/session scan, and JPEG capture endpoints
 
@@ -84,6 +85,15 @@ The Pi installer creates the virtualenv with system site packages so the app she
 - `GOBAG_CAMERA_WARMUP_MS` default `900`
 - `GOBAG_CAMERA_TIMEOUT_S` default `12`
 - `GOBAG_BASE_URL` optional dashboard/QR base URL override
+- `GOBAG_SENSOR_SERIAL_ENABLED` default `1`
+- `GOBAG_SENSOR_SERIAL_PORT` optional explicit ESP32 serial device path
+- `GOBAG_SENSOR_SERIAL_PORT_PATTERNS` default `/dev/ttyUSB*,/dev/ttyACM*`
+- `GOBAG_SENSOR_SERIAL_BAUDRATE` default `115200`
+- `GOBAG_SENSOR_SERIAL_READ_TIMEOUT_S` default `1.0`
+- `GOBAG_SENSOR_SERIAL_RECONNECT_DELAY_S` default `2.0`
+- `GOBAG_SENSOR_STALE_TIMEOUT_MS` default `6000`
+- `GOBAG_SENSOR_SECTION_FULL_WEIGHTS_KG` comma-separated full-weight reference list for the 5 sections
+- `GOBAG_SENSOR_SECTION_MIN_THRESHOLDS_KG` one or 5 comma-separated minimum detection thresholds in kilograms
 
 ## Endpoints
 
@@ -94,6 +104,7 @@ The Pi installer creates the virtualenv with system site packages so the app she
 - `GET /system/info`
 - `GET /camera/status`
 - `GET /camera/capture.jpg`
+- `GET /sensors/status`
 
 ### App-facing
 
@@ -129,6 +140,10 @@ curl http://127.0.0.1:8080/camera/status
 ```
 
 Open `http://<pi-ip>:8080/` in a browser to confirm the dashboard and QR pairing flow.
+
+The Pi expects the ESP32 to stream 5 section weights over USB serial as either a JSON line such as `{"weights_kg":[0.4,0.2,0.0,1.1,0.6]}`, a plain 5-value line such as `0.4,0.2,0.0,1.1,0.6`, or the current human-readable `BAG STATUS` block format that prints `Section N: ... Weight=123.4 g ...` lines once per cycle. The Pi computes utilization from those live weights and exposes the resulting snapshot through `/device/status`, `/sync/status`, `/ui/state`, `/kiosk/state`, and `/sensors/status`.
+
+If your ESP32 sketch uses `SECTION_FULL_WEIGHT_G=1000.0` and `DETECT_THRESHOLD_G=100.0`, set the Pi config to match with `GOBAG_SENSOR_SECTION_FULL_WEIGHTS_KG=1,1,1,1,1` and `GOBAG_SENSOR_SECTION_MIN_THRESHOLDS_KG=0.1`.
 
 The installer creates a desktop icon and, by default, a desktop autostart entry that opens the GO BAG UI on login. On current Raspberry Pi OS desktop builds, it also installs a native `labwc` autostart hook because Raspberry Pi OS now uses `labwc` by default. The autostart wrapper logs to `/opt/gobag/logs/ui-autostart.log` and falls back to browser mode if the native app shell cannot open during login. Use `--kiosk` to launch it in kiosk mode. On Raspberry Pi OS, kiosk mode also asks `raspi-config` to boot back into a graphical desktop with auto-login so the GO BAG UI returns after reboot. On other Linux desktops, you may still need to enable desktop auto-login separately. Use `--no-ui-autostart` to skip desktop auto-open.
 

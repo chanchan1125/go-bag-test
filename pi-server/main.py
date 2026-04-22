@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
 from html import escape
-from typing import Dict, Iterator, List, Literal, Optional, Union
+from typing import Any, Dict, Iterator, List, Literal, Optional, Union
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from urllib.parse import parse_qs, quote, urlsplit
@@ -32,6 +32,15 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from pydantic import BaseModel, Field
+
+try:
+    import serial
+    from serial import SerialException
+except Exception:
+    serial = None
+
+    class SerialException(Exception):
+        pass
 
 try:
     from pyzbar.pyzbar import ZBarSymbol, decode as pyzbar_decode
@@ -49,6 +58,19 @@ PORT = int(os.getenv("GOBAG_PORT", "8080"))
 ADMIN_TOKEN = os.getenv("GOBAG_ADMIN_TOKEN", "").strip()
 PAIR_CODE_TTL_MS = 5 * 60 * 1000
 DAY_MS = 24 * 60 * 60 * 1000
+SENSOR_SECTION_COUNT = 5
+SENSOR_SECTION_PERCENT = 100 / SENSOR_SECTION_COUNT
+SENSOR_SOURCE = "esp32_usb_serial"
+SENSOR_SERIAL_ENABLED = os.getenv("GOBAG_SENSOR_SERIAL_ENABLED", "1") == "1"
+SENSOR_SERIAL_PORT = os.getenv("GOBAG_SENSOR_SERIAL_PORT", "").strip()
+SENSOR_SERIAL_PORT_PATTERNS = os.getenv("GOBAG_SENSOR_SERIAL_PORT_PATTERNS", "/dev/ttyUSB*,/dev/ttyACM*").strip()
+SENSOR_SERIAL_BAUDRATE = max(int(os.getenv("GOBAG_SENSOR_SERIAL_BAUDRATE", "115200")), 1200)
+SENSOR_SERIAL_READ_TIMEOUT_S = max(float(os.getenv("GOBAG_SENSOR_SERIAL_READ_TIMEOUT_S", "1.0")), 0.1)
+SENSOR_SERIAL_RECONNECT_DELAY_S = max(float(os.getenv("GOBAG_SENSOR_SERIAL_RECONNECT_DELAY_S", "2.0")), 0.5)
+SENSOR_STALE_TIMEOUT_MS = max(int(os.getenv("GOBAG_SENSOR_STALE_TIMEOUT_MS", "6000")), 1000)
+SENSOR_SECTION_FULL_WEIGHTS_KG_RAW = os.getenv("GOBAG_SENSOR_SECTION_FULL_WEIGHTS_KG", "1,1,1,1,1")
+SENSOR_SECTION_MIN_THRESHOLDS_KG_RAW = os.getenv("GOBAG_SENSOR_SECTION_MIN_THRESHOLDS_KG", "0.05")
+SENSOR_PAYLOAD_LOG_MAX_CHARS = max(int(os.getenv("GOBAG_SENSOR_PAYLOAD_LOG_MAX_CHARS", "240")), 80)
 EXPIRING_SOON_DAYS = 7
 CAMERA_CMD = os.getenv("GOBAG_CAMERA_CMD", "libcamera-still")
 CAMERA_ENABLED = os.getenv("GOBAG_ENABLE_CAMERA", "1") == "1"
@@ -279,6 +301,7 @@ class DeviceStatusResponse(BaseModel):
     pair_code: str
     paired_devices: int
     database_path: str
+    sensor_snapshot: "SensorSnapshot" = Field(default_factory=lambda: SensorSnapshot())
 
 
 class SyncStatusResponse(BaseModel):
@@ -291,6 +314,7 @@ class SyncStatusResponse(BaseModel):
     local_base_url: str
     remote_base_url: str
     updated_at: int
+    sensor_snapshot: "SensorSnapshot" = Field(default_factory=lambda: SensorSnapshot())
 
 
 class SettingsRecord(BaseModel):
@@ -299,6 +323,689 @@ class SettingsRecord(BaseModel):
     language: str
     notifications_enabled: bool
     last_connected_device: Optional[str] = None
+
+
+class SensorSectionState(BaseModel):
+    index: int
+    name: str
+    current_weight_kg: Optional[float] = None
+    full_weight_kg: float
+    min_detection_weight_kg: float
+    detected: bool = False
+    fill_ratio: Optional[float] = None
+    contribution_percent: Optional[float] = None
+
+
+class SensorSnapshot(BaseModel):
+    source: str = SENSOR_SOURCE
+    connection_state: Literal["connecting", "live", "stale", "disconnected"] = "disconnected"
+    available: bool = False
+    connected: bool = False
+    message: str = "ESP32 sensor link unavailable."
+    serial_port: str = ""
+    last_read_at: int = 0
+    last_live_at: int = 0
+    updated_at: int = 0
+    total_percentage: Optional[int] = None
+    total_percentage_exact: Optional[float] = None
+    raw_payload: str = ""
+    last_error: str = ""
+    sections: List[SensorSectionState] = Field(default_factory=list)
+
+
+@dataclass
+class Esp32TextStatusFrame:
+    active: bool = False
+    lines: List[str] = field(default_factory=list)
+    seen_sections: set[int] = field(default_factory=set)
+    section_weights_kg: Dict[int, float] = field(default_factory=dict)
+    section_errors: Dict[int, str] = field(default_factory=dict)
+
+
+def parse_section_weight_config(raw_value: str, default_value: float) -> List[float]:
+    tokens = [token.strip() for token in (raw_value or "").split(",") if token.strip()]
+    if not tokens:
+        return [default_value for _ in range(SENSOR_SECTION_COUNT)]
+    if len(tokens) == 1:
+        try:
+            value = float(tokens[0])
+        except ValueError:
+            logging.getLogger("gobag.pi").warning(
+                "Invalid sensor section config '%s'; using default %.3f for all sections.",
+                raw_value,
+                default_value,
+            )
+            return [default_value for _ in range(SENSOR_SECTION_COUNT)]
+        return [max(value, 0.0) for _ in range(SENSOR_SECTION_COUNT)]
+    if len(tokens) != SENSOR_SECTION_COUNT:
+        logging.getLogger("gobag.pi").warning(
+            "Expected %s sensor section values but received '%s'; using default %.3f for all sections.",
+            SENSOR_SECTION_COUNT,
+            raw_value,
+            default_value,
+        )
+        return [default_value for _ in range(SENSOR_SECTION_COUNT)]
+    values: List[float] = []
+    try:
+        values = [max(float(token), 0.0) for token in tokens]
+    except ValueError:
+        logging.getLogger("gobag.pi").warning(
+            "Invalid numeric sensor section config '%s'; using default %.3f for all sections.",
+            raw_value,
+            default_value,
+        )
+        return [default_value for _ in range(SENSOR_SECTION_COUNT)]
+    return values
+
+
+def parse_sensor_serial_patterns(raw_value: str) -> List[str]:
+    patterns = [pattern.strip() for pattern in (raw_value or "").split(",") if pattern.strip()]
+    return patterns or ["/dev/ttyUSB*", "/dev/ttyACM*"]
+
+
+def sensor_state_label(snapshot: SensorSnapshot) -> str:
+    return {
+        "connecting": "Waiting",
+        "live": "Live",
+        "stale": "Stale",
+        "disconnected": "Disconnected",
+    }.get(snapshot.connection_state, "Disconnected")
+
+
+def sensor_state_tone(snapshot: SensorSnapshot) -> str:
+    return {
+        "connecting": "warn",
+        "live": "ok",
+        "stale": "warn",
+        "disconnected": "danger",
+    }.get(snapshot.connection_state, "danger")
+
+
+def sensor_display_percent(snapshot: SensorSnapshot) -> str:
+    if snapshot.total_percentage is None:
+        return "--"
+    return str(int(snapshot.total_percentage))
+
+
+def sensor_display_weight(value: Optional[float]) -> str:
+    if value is None:
+        return "--"
+    return f"{value:.2f} kg"
+
+
+def sensor_detail_note(snapshot: SensorSnapshot) -> str:
+    if snapshot.last_live_at:
+        return f"{snapshot.message} Last live payload {format_time_ms(snapshot.last_live_at)}."
+    return snapshot.message
+
+
+def parse_sensor_numeric(value: object, label: str) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{label} is missing.")
+    try:
+        return float(text)
+    except ValueError as exc:
+        raise ValueError(f"{label} is not a number.") from exc
+
+
+def convert_payload_weight_to_kg(value: float, unit: str) -> float:
+    normalized_unit = (unit or "kg").strip().lower()
+    if normalized_unit in {"kg", "kgs", "kilogram", "kilograms"}:
+        return value
+    if normalized_unit in {"g", "gram", "grams"}:
+        return value / 1000.0
+    raise ValueError(f"Unsupported sensor unit '{unit}'.")
+
+
+def parse_section_weight_entry(entry: object, *, default_unit: str, label: str) -> float:
+    if isinstance(entry, dict):
+        if "weight_kg" in entry:
+            return parse_sensor_numeric(entry.get("weight_kg"), f"{label} weight_kg")
+        if "current_weight_kg" in entry:
+            return parse_sensor_numeric(entry.get("current_weight_kg"), f"{label} current_weight_kg")
+        if "weight_g" in entry:
+            return parse_sensor_numeric(entry.get("weight_g"), f"{label} weight_g") / 1000.0
+        if "current_weight_g" in entry:
+            return parse_sensor_numeric(entry.get("current_weight_g"), f"{label} current_weight_g") / 1000.0
+        for key in ("weight", "current_weight", "value", "reading"):
+            if key in entry:
+                return convert_payload_weight_to_kg(parse_sensor_numeric(entry.get(key), f"{label} {key}"), default_unit)
+        raise ValueError(f"{label} does not contain a supported weight field.")
+    return convert_payload_weight_to_kg(parse_sensor_numeric(entry, label), default_unit)
+
+
+def extract_named_sensor_weights(payload: Dict[str, Any], *, default_unit: str) -> List[float]:
+    aliases = [
+        ("section_1", "section1", "s1"),
+        ("section_2", "section2", "s2"),
+        ("section_3", "section3", "s3"),
+        ("section_4", "section4", "s4"),
+        ("section_5", "section5", "s5"),
+    ]
+    weights: List[float] = []
+    for index, alias_group in enumerate(aliases, start=1):
+        entry = None
+        for alias in alias_group:
+            if alias in payload:
+                entry = payload[alias]
+                break
+        if entry is None:
+            return []
+        weights.append(parse_section_weight_entry(entry, default_unit=default_unit, label=f"section_{index}"))
+    return weights
+
+
+def parse_sensor_payload_line(raw_line: str) -> List[float]:
+    stripped = raw_line.strip()
+    if not stripped:
+        raise ValueError("Sensor payload was empty.")
+    if stripped.startswith("{"):
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Sensor payload JSON is invalid.") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("Sensor payload JSON must be an object.")
+        default_unit = str(payload.get("unit") or payload.get("weight_unit") or "kg")
+        if isinstance(payload.get("weights_kg"), list):
+            weights = [parse_section_weight_entry(entry, default_unit="kg", label=f"weights_kg[{index}]") for index, entry in enumerate(payload["weights_kg"], start=1)]
+        elif isinstance(payload.get("weights_g"), list):
+            weights = [parse_section_weight_entry(entry, default_unit="g", label=f"weights_g[{index}]") for index, entry in enumerate(payload["weights_g"], start=1)]
+        elif isinstance(payload.get("weights"), list):
+            weights = [parse_section_weight_entry(entry, default_unit=default_unit, label=f"weights[{index}]") for index, entry in enumerate(payload["weights"], start=1)]
+        elif isinstance(payload.get("sections"), list):
+            sections_payload = payload["sections"]
+            indexed_entries: Dict[int, object] = {}
+            for position, entry in enumerate(sections_payload, start=1):
+                if isinstance(entry, dict):
+                    raw_index = entry.get("index") or entry.get("section") or entry.get("id") or position
+                    try:
+                        section_index = int(str(raw_index).strip())
+                    except ValueError as exc:
+                        raise ValueError("A sensor section index is invalid.") from exc
+                    indexed_entries[section_index] = entry
+                else:
+                    indexed_entries[position] = entry
+            if sorted(indexed_entries.keys()) != [1, 2, 3, 4, 5]:
+                raise ValueError("Sensor sections must include indexes 1 through 5.")
+            weights = [
+                parse_section_weight_entry(indexed_entries[index], default_unit=default_unit, label=f"sections[{index}]")
+                for index in range(1, SENSOR_SECTION_COUNT + 1)
+            ]
+        else:
+            weights = extract_named_sensor_weights(payload, default_unit=default_unit)
+        if len(weights) != SENSOR_SECTION_COUNT:
+            raise ValueError("Sensor payload must provide exactly 5 section readings.")
+        return [max(weight, 0.0) for weight in weights]
+
+    key_value_matches = re.findall(r"(?:section_?|s)(\d)\s*[:=]\s*([-+]?\d*\.?\d+)", stripped, flags=re.IGNORECASE)
+    if len(key_value_matches) == SENSOR_SECTION_COUNT:
+        ordered = [0.0 for _ in range(SENSOR_SECTION_COUNT)]
+        for index_text, value_text in key_value_matches:
+            index = int(index_text)
+            if index < 1 or index > SENSOR_SECTION_COUNT:
+                raise ValueError("Section indexes must be between 1 and 5.")
+            ordered[index - 1] = max(float(value_text), 0.0)
+        return ordered
+
+    parts = [part for part in re.split(r"[\s,]+", stripped) if part]
+    if len(parts) == SENSOR_SECTION_COUNT:
+        try:
+            return [max(float(part), 0.0) for part in parts]
+        except ValueError as exc:
+            raise ValueError("Plain sensor payloads must be five numeric values.") from exc
+
+    raise ValueError("Unsupported sensor payload format. Use JSON or five ordered numeric readings.")
+
+
+ESP32_TEXT_STATUS_HEADER_RE = re.compile(r"^-{3,}\s*BAG STATUS\s*-{3,}$", flags=re.IGNORECASE)
+ESP32_TEXT_STATUS_FOOTER_RE = re.compile(r"^-{3,}\s*$")
+ESP32_TEXT_SECTION_LINE_RE = re.compile(r"^Section\s+([1-5])\s*:\s*(.+)$", flags=re.IGNORECASE)
+ESP32_TEXT_WEIGHT_RE = re.compile(r"\bWeight\s*=\s*([-+]?\d*\.?\d+)\s*(kg|g)\b", flags=re.IGNORECASE)
+
+
+def is_ignorable_sensor_serial_line(raw_line: str) -> bool:
+    stripped = raw_line.strip()
+    if not stripped:
+        return True
+    if ESP32_TEXT_STATUS_HEADER_RE.match(stripped) or ESP32_TEXT_STATUS_FOOTER_RE.match(stripped):
+        return True
+    if ESP32_TEXT_SECTION_LINE_RE.match(stripped):
+        return True
+    if re.match(r"^(Connected|Occupied)\s+Sections\s*:", stripped, flags=re.IGNORECASE):
+        return True
+    if re.match(r"^Total\s+Bag\s+Utilization\s*:", stripped, flags=re.IGNORECASE):
+        return True
+    lower = stripped.lower()
+    if lower.startswith("commands:"):
+        return True
+    if re.match(r"^[1-5tThH]\s*=", stripped):
+        return True
+    return lower.startswith((
+        "=== smart go-bag",
+        "this version keeps checking sensors live.",
+        "place the platform first",
+        "taring all connected sensors",
+        "make sure only the platform is on each section",
+        "tare complete",
+        "sensor ",
+    ))
+
+
+class Esp32SensorSerialManager:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._full_weights_kg = parse_section_weight_config(SENSOR_SECTION_FULL_WEIGHTS_KG_RAW, 1.0)
+        self._thresholds_kg = parse_section_weight_config(SENSOR_SECTION_MIN_THRESHOLDS_KG_RAW, 0.05)
+        self._serial_patterns = parse_sensor_serial_patterns(SENSOR_SERIAL_PORT_PATTERNS)
+        self._text_frame = Esp32TextStatusFrame()
+        self._sections = [
+            {
+                "index": index + 1,
+                "name": f"Section {index + 1}",
+                "full_weight_kg": self._full_weights_kg[index],
+                "min_detection_weight_kg": self._thresholds_kg[index],
+            }
+            for index in range(SENSOR_SECTION_COUNT)
+        ]
+        self._snapshot = SensorSnapshot(
+            connection_state="disconnected",
+            available=False,
+            connected=False,
+            message=self._initial_message(),
+            updated_at=int(time.time() * 1000),
+            sections=self._empty_sections(),
+        )
+
+    def _initial_message(self) -> str:
+        if not SENSOR_SERIAL_ENABLED:
+            return "ESP32 sensor serial is disabled in configuration."
+        if serial is None:
+            return "pyserial is not installed, so the Raspberry Pi cannot read the ESP32 sensor link."
+        return "Connect the ESP32 to a Raspberry Pi USB serial port to start live sensor readings."
+
+    def _empty_sections(self) -> List[SensorSectionState]:
+        return [
+            SensorSectionState(
+                index=section["index"],
+                name=section["name"],
+                full_weight_kg=section["full_weight_kg"],
+                min_detection_weight_kg=section["min_detection_weight_kg"],
+            )
+            for section in self._sections
+        ]
+
+    def _build_snapshot(
+        self,
+        *,
+        connection_state: Literal["connecting", "live", "stale", "disconnected"],
+        available: bool,
+        connected: bool,
+        message: str,
+        serial_port: str = "",
+        last_read_at: int = 0,
+        last_live_at: int = 0,
+        total_percentage: Optional[int] = None,
+        total_percentage_exact: Optional[float] = None,
+        raw_payload: str = "",
+        last_error: str = "",
+        sections: Optional[List[SensorSectionState]] = None,
+    ) -> SensorSnapshot:
+        return SensorSnapshot(
+            connection_state=connection_state,
+            available=available,
+            connected=connected,
+            message=message,
+            serial_port=serial_port,
+            last_read_at=last_read_at,
+            last_live_at=last_live_at,
+            updated_at=now_ms(),
+            total_percentage=total_percentage,
+            total_percentage_exact=total_percentage_exact,
+            raw_payload=raw_payload,
+            last_error=last_error,
+            sections=sections or self._empty_sections(),
+        )
+
+    def _set_snapshot(self, snapshot: SensorSnapshot) -> None:
+        with self._lock:
+            self._snapshot = snapshot
+
+    def _reset_text_frame(self) -> None:
+        self._text_frame = Esp32TextStatusFrame()
+
+    def snapshot(self) -> SensorSnapshot:
+        with self._lock:
+            return self._snapshot.model_copy(deep=True)
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        if not SENSOR_SERIAL_ENABLED or serial is None:
+            self._set_snapshot(
+                self._build_snapshot(
+                    connection_state="disconnected",
+                    available=False,
+                    connected=False,
+                    message=self._initial_message(),
+                    last_error="" if SENSOR_SERIAL_ENABLED else "sensor_serial_disabled",
+                )
+            )
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._run_loop,
+            daemon=True,
+            name="gobag-esp32-serial",
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=max(SENSOR_SERIAL_READ_TIMEOUT_S + 1.0, 2.0))
+
+    def ingest_payload_line(self, raw_line: str, *, serial_port: str = "test://esp32") -> SensorSnapshot:
+        weights = parse_sensor_payload_line(raw_line)
+        snapshot = self._snapshot_from_weights(weights, raw_line=raw_line, serial_port=serial_port, read_at=now_ms())
+        self._set_snapshot(snapshot)
+        return snapshot
+
+    def ingest_serial_lines(self, raw_lines: List[str], *, serial_port: str = "test://esp32") -> SensorSnapshot:
+        for raw_line in raw_lines:
+            self._ingest_serial_line(raw_line, serial_port=serial_port)
+        return self.snapshot()
+
+    def _finalize_text_frame(self, serial_port: str) -> Optional[SensorSnapshot]:
+        frame = self._text_frame
+        if not frame.active:
+            return None
+        raw_payload = "\n".join(frame.lines)[:SENSOR_PAYLOAD_LOG_MAX_CHARS]
+        if frame.section_errors:
+            errors = ", ".join(
+                f"Section {index}: {frame.section_errors[index]}"
+                for index in sorted(frame.section_errors)
+            )
+            self._record_parse_error(
+                serial_port,
+                f"ESP32 reported an incomplete sensor frame ({errors}).",
+                clear_payload=True,
+            )
+            return None
+        if sorted(frame.section_weights_kg.keys()) != list(range(1, SENSOR_SECTION_COUNT + 1)):
+            missing = [
+                str(index)
+                for index in range(1, SENSOR_SECTION_COUNT + 1)
+                if index not in frame.section_weights_kg
+            ]
+            self._record_parse_error(
+                serial_port,
+                f"ESP32 sensor frame is incomplete; missing sections {', '.join(missing)}.",
+                clear_payload=True,
+            )
+            return None
+        weights_kg = [frame.section_weights_kg[index] for index in range(1, SENSOR_SECTION_COUNT + 1)]
+        snapshot = self._snapshot_from_weights(
+            weights_kg,
+            raw_line=raw_payload,
+            serial_port=serial_port,
+            read_at=now_ms(),
+        )
+        self._set_snapshot(snapshot)
+        return snapshot
+
+    def _consume_text_status_line(self, raw_line: str, serial_port: str) -> bool:
+        stripped = raw_line.strip()
+        if not stripped:
+            return False
+        if ESP32_TEXT_STATUS_HEADER_RE.match(stripped):
+            self._reset_text_frame()
+            self._text_frame.active = True
+            self._text_frame.lines.append(stripped)
+            return True
+        section_match = ESP32_TEXT_SECTION_LINE_RE.match(stripped)
+        if section_match:
+            if not self._text_frame.active:
+                self._reset_text_frame()
+                self._text_frame.active = True
+            section_index = int(section_match.group(1))
+            section_body = section_match.group(2).strip()
+            self._text_frame.lines.append(stripped)
+            self._text_frame.seen_sections.add(section_index)
+            if "NOT CONNECTED" in section_body.upper():
+                self._text_frame.section_errors[section_index] = "not connected"
+            elif "AUTO-TARED" in section_body.upper():
+                self._text_frame.section_errors[section_index] = "auto-tared"
+            else:
+                weight_match = ESP32_TEXT_WEIGHT_RE.search(section_body)
+                if weight_match:
+                    raw_weight = float(weight_match.group(1))
+                    unit = weight_match.group(2).strip().lower()
+                    weight_kg = raw_weight / 1000.0 if unit == "g" else raw_weight
+                    self._text_frame.section_weights_kg[section_index] = max(weight_kg, 0.0)
+                else:
+                    self._text_frame.section_errors[section_index] = "weight missing"
+            if len(self._text_frame.seen_sections) == SENSOR_SECTION_COUNT:
+                self._finalize_text_frame(serial_port)
+                self._reset_text_frame()
+            return True
+        if self._text_frame.active:
+            self._text_frame.lines.append(stripped)
+            if ESP32_TEXT_STATUS_FOOTER_RE.match(stripped):
+                self._finalize_text_frame(serial_port)
+                self._reset_text_frame()
+                return True
+            if re.match(r"^(Connected|Occupied)\s+Sections\s*:", stripped, flags=re.IGNORECASE):
+                return True
+            if re.match(r"^Total\s+Bag\s+Utilization\s*:", stripped, flags=re.IGNORECASE):
+                return True
+            return True
+        return False
+
+    def _ingest_serial_line(self, raw_line: str, *, serial_port: str) -> Optional[SensorSnapshot]:
+        stripped = raw_line.strip()
+        if not stripped:
+            return None
+        if self._consume_text_status_line(stripped, serial_port):
+            return self.snapshot()
+        try:
+            weights_kg = parse_sensor_payload_line(stripped)
+        except ValueError as exc:
+            if is_ignorable_sensor_serial_line(stripped):
+                return None
+            logger.warning("Sensor payload parse failed on %s: %s", serial_port, exc)
+            self._record_parse_error(serial_port, str(exc))
+            return None
+        snapshot = self._snapshot_from_weights(
+            weights_kg,
+            raw_line=stripped,
+            serial_port=serial_port,
+            read_at=now_ms(),
+        )
+        self._set_snapshot(snapshot)
+        return snapshot
+
+    def _available_serial_ports(self) -> List[str]:
+        if SENSOR_SERIAL_PORT:
+            return [SENSOR_SERIAL_PORT]
+        ports: List[str] = []
+        for pattern in self._serial_patterns:
+            ports.extend(glob.glob(pattern))
+        unique_ports = []
+        for port in sorted(set(ports)):
+            if port not in unique_ports:
+                unique_ports.append(port)
+        return unique_ports
+
+    def _snapshot_from_weights(self, weights_kg: List[float], *, raw_line: str, serial_port: str, read_at: int) -> SensorSnapshot:
+        sections: List[SensorSectionState] = []
+        contributions: List[float] = []
+        for index, section in enumerate(self._sections):
+            full_weight_kg = section["full_weight_kg"] or 1.0
+            threshold_kg = section["min_detection_weight_kg"]
+            current_weight_kg = max(float(weights_kg[index]), 0.0)
+            detected = current_weight_kg >= threshold_kg
+            effective_weight_kg = current_weight_kg if detected else 0.0
+            fill_ratio = min(effective_weight_kg / full_weight_kg, 1.0) if full_weight_kg > 0 else 0.0
+            contribution_percent = fill_ratio * SENSOR_SECTION_PERCENT
+            contributions.append(contribution_percent)
+            sections.append(
+                SensorSectionState(
+                    index=section["index"],
+                    name=section["name"],
+                    current_weight_kg=current_weight_kg,
+                    full_weight_kg=full_weight_kg,
+                    min_detection_weight_kg=threshold_kg,
+                    detected=detected,
+                    fill_ratio=fill_ratio,
+                    contribution_percent=contribution_percent,
+                )
+            )
+        total_percentage_exact = min(sum(contributions), 100.0)
+        total_percentage = min(int(round(total_percentage_exact)), 100)
+        logger.info(
+            "Sensor weights parsed from %s: %s | section percents=%s | total=%s%%",
+            serial_port,
+            [round(weight, 3) for weight in weights_kg],
+            [round(value, 2) for value in contributions],
+            total_percentage,
+        )
+        return self._build_snapshot(
+            connection_state="live",
+            available=True,
+            connected=True,
+            message=f"Live sensor data from {serial_port}.",
+            serial_port=serial_port,
+            last_read_at=read_at,
+            last_live_at=read_at,
+            total_percentage=total_percentage,
+            total_percentage_exact=total_percentage_exact,
+            raw_payload=raw_line[:SENSOR_PAYLOAD_LOG_MAX_CHARS],
+            sections=sections,
+        )
+
+    def _set_disconnected(self, *, message: str, last_error: str = "", serial_port: str = "") -> None:
+        previous = self.snapshot()
+        self._set_snapshot(
+            self._build_snapshot(
+                connection_state="disconnected",
+                available=False,
+                connected=False,
+                message=message,
+                serial_port=serial_port,
+                last_read_at=previous.last_read_at,
+                last_live_at=previous.last_live_at,
+                last_error=last_error,
+            )
+        )
+
+    def _set_connecting(self, serial_port: str) -> None:
+        previous = self.snapshot()
+        self._set_snapshot(
+            self._build_snapshot(
+                connection_state="connecting",
+                available=False,
+                connected=True,
+                message=f"Connected to {serial_port}. Waiting for sensor payloads from the ESP32.",
+                serial_port=serial_port,
+                last_read_at=previous.last_read_at,
+                last_live_at=previous.last_live_at,
+                last_error=previous.last_error,
+            )
+        )
+
+    def _mark_stale_if_needed(self, serial_port: str) -> None:
+        snapshot = self.snapshot()
+        if snapshot.connection_state != "live":
+            return
+        if not snapshot.last_read_at:
+            return
+        if now_ms() - snapshot.last_read_at < SENSOR_STALE_TIMEOUT_MS:
+            return
+        self._set_snapshot(
+            self._build_snapshot(
+                connection_state="stale",
+                available=False,
+                connected=True,
+                message=f"Waiting for a fresh payload from the ESP32 on {serial_port}.",
+                serial_port=serial_port,
+                last_read_at=snapshot.last_read_at,
+                last_live_at=snapshot.last_live_at,
+                last_error=snapshot.last_error,
+            )
+        )
+
+    def _record_parse_error(self, serial_port: str, error_text: str, *, clear_payload: bool = False) -> None:
+        snapshot = self.snapshot()
+        if clear_payload:
+            next_state = "connecting"
+        else:
+            next_state = snapshot.connection_state if snapshot.connection_state in {"live", "stale"} else "connecting"
+        self._set_snapshot(
+            self._build_snapshot(
+                connection_state=next_state,
+                available=next_state == "live",
+                connected=True,
+                message=snapshot.message if snapshot.message else f"Connected to {serial_port}. Waiting for valid sensor payloads.",
+                serial_port=serial_port,
+                last_read_at=snapshot.last_read_at,
+                last_live_at=snapshot.last_live_at,
+                total_percentage=snapshot.total_percentage if next_state == "live" else None,
+                total_percentage_exact=snapshot.total_percentage_exact if next_state == "live" else None,
+                raw_payload=snapshot.raw_payload if next_state == "live" else "",
+                last_error=error_text,
+                sections=snapshot.sections if next_state == "live" else self._empty_sections(),
+            )
+        )
+
+    def _run_loop(self) -> None:
+        while not self._stop_event.is_set():
+            available_ports = self._available_serial_ports()
+            if not available_ports:
+                self._set_disconnected(
+                    message="ESP32 not detected on USB serial. Connect it to /dev/ttyUSB0 or /dev/ttyACM0.",
+                    last_error="serial_port_not_found",
+                )
+                self._stop_event.wait(SENSOR_SERIAL_RECONNECT_DELAY_S)
+                continue
+            serial_port = available_ports[0]
+            try:
+                logger.info("Opening ESP32 sensor serial on %s at %s baud.", serial_port, SENSOR_SERIAL_BAUDRATE)
+                with serial.Serial(serial_port, SENSOR_SERIAL_BAUDRATE, timeout=SENSOR_SERIAL_READ_TIMEOUT_S) as port:
+                    logger.info("ESP32 sensor serial connected on %s.", serial_port)
+                    self._set_connecting(serial_port)
+                    while not self._stop_event.is_set():
+                        raw_bytes = port.readline()
+                        if not raw_bytes:
+                            self._mark_stale_if_needed(serial_port)
+                            continue
+                        raw_line = raw_bytes.decode("utf-8", errors="replace").strip()
+                        if not raw_line:
+                            continue
+                        logger.info(
+                            "Received sensor payload from %s: %s",
+                            serial_port,
+                            raw_line[:SENSOR_PAYLOAD_LOG_MAX_CHARS],
+                        )
+                        self._ingest_serial_line(raw_line, serial_port=serial_port)
+            except (SerialException, OSError) as exc:
+                logger.warning("ESP32 sensor serial connection failed on %s: %s", serial_port, exc)
+                self._set_disconnected(
+                    message=f"ESP32 sensor link disconnected from {serial_port}. Waiting to reconnect.",
+                    last_error=str(exc),
+                    serial_port=serial_port,
+                )
+                self._stop_event.wait(SENSOR_SERIAL_RECONNECT_DELAY_S)
+
+
+sensor_serial_manager = Esp32SensorSerialManager()
+DeviceStatusResponse.model_rebuild()
+SyncStatusResponse.model_rebuild()
 
 
 @dataclass
@@ -3784,6 +4491,7 @@ def get_device_status_payload(conn: sqlite3.Connection, request: Optional[Reques
     update_device_state(conn)
     row = conn.execute("SELECT * FROM device_state WHERE id = 'primary'").fetchone()
     pair = active_pair_code(conn) or create_pair_code(conn)
+    sensor_snapshot = sensor_serial_manager.snapshot()
     conn.commit()
     return DeviceStatusResponse(
         id=row["id"],
@@ -3799,6 +4507,7 @@ def get_device_status_payload(conn: sqlite3.Connection, request: Optional[Reques
         pair_code=pair["code"],
         paired_devices=conn.execute("SELECT COUNT(*) AS c FROM tokens WHERE revoked = 0").fetchone()["c"],
         database_path=os.path.join(os.getenv("GOBAG_DATA_DIR", DEFAULT_DATA_DIR), "gobag.db"),
+        sensor_snapshot=sensor_snapshot,
     )
 
 
@@ -3868,17 +4577,20 @@ def capture_camera_jpeg() -> bytes:
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    sensor_serial_manager.start()
     relay_client_manager.start()
 
 
 @app.on_event("shutdown")
 def shutdown() -> None:
     relay_client_manager.stop()
+    sensor_serial_manager.stop()
     usb_camera_session_manager.stop(clear_state=True)
 
 
 @app.get("/health")
 def health() -> dict:
+    sensor_snapshot = sensor_serial_manager.snapshot()
     return {
         "status": "ok",
         "camera_enabled": CAMERA_ENABLED,
@@ -3886,11 +4598,15 @@ def health() -> dict:
         "usb_scan_cmd_available": usb_scan_available(),
         "usb_stream_cmd_available": usb_stream_available(),
         "qr_decode_cmd_available": qr_decode_available(),
+        "sensor_serial_enabled": SENSOR_SERIAL_ENABLED,
+        "sensor_connection_state": sensor_snapshot.connection_state,
+        "sensor_serial_port": sensor_snapshot.serial_port,
     }
 
 
 @app.get("/system/info")
 def system_info() -> dict:
+    sensor_snapshot = sensor_serial_manager.snapshot()
     return {
         "platform": platform.platform(),
         "machine": platform.machine(),
@@ -3905,7 +4621,19 @@ def system_info() -> dict:
         "usb_stream_cmd_available": usb_stream_available(),
         "qr_decode_cmd": QR_DECODE_CMD,
         "qr_decode_cmd_available": qr_decode_available(),
+        "sensor_serial_enabled": SENSOR_SERIAL_ENABLED,
+        "sensor_serial_port": sensor_snapshot.serial_port,
+        "sensor_connection_state": sensor_snapshot.connection_state,
+        "sensor_serial_baudrate": SENSOR_SERIAL_BAUDRATE,
+        "sensor_stale_timeout_ms": SENSOR_STALE_TIMEOUT_MS,
+        "sensor_section_full_weights_kg": [section.full_weight_kg for section in sensor_snapshot.sections],
+        "sensor_section_min_thresholds_kg": [section.min_detection_weight_kg for section in sensor_snapshot.sections],
     }
+
+
+@app.get("/sensors/status", response_model=SensorSnapshot)
+def sensor_status() -> SensorSnapshot:
+    return sensor_serial_manager.snapshot()
 
 
 @app.get("/camera/status")
@@ -4234,6 +4962,7 @@ def get_alerts() -> List[AlertItem]:
 def get_sync_status_payload(conn: sqlite3.Connection, request: Optional[Request] = None) -> SyncStatusResponse:
     update_device_state(conn)
     row = conn.execute("SELECT * FROM device_state WHERE id = 'primary'").fetchone()
+    sensor_snapshot = sensor_serial_manager.snapshot()
     return SyncStatusResponse(
         id=row["id"],
         device_name=row["device_name"],
@@ -4244,6 +4973,7 @@ def get_sync_status_payload(conn: sqlite3.Connection, request: Optional[Request]
         local_base_url=compute_local_base_url(request),
         remote_base_url=compute_remote_base_url(),
         updated_at=row["updated_at"],
+        sensor_snapshot=sensor_snapshot,
     )
 
 
@@ -4455,6 +5185,7 @@ def relay_sync_payload(payload: dict, authorization: str) -> dict:
 
 @app.get("/kiosk/state")
 def kiosk_state(request: Request) -> dict:
+    sensor_snapshot = sensor_serial_manager.snapshot()
     with db_conn() as conn:
         pair = active_pair_code(conn) or create_pair_code(conn)
         bag_row = ensure_single_bag(conn)
@@ -4488,6 +5219,9 @@ def kiosk_state(request: Request) -> dict:
         "near_expiry_count": readiness["near_expiry_count"],
         "readiness_alerts": readiness["alerts"],
         "last_sync_time_ms": last_sync_time_ms,
+        "bag_utilization_percent": sensor_snapshot.total_percentage,
+        "sensor_status": sensor_state_label(sensor_snapshot),
+        "sensor_snapshot": sensor_snapshot.model_dump(),
         "bags": bags,
         "items": items,
         "templates": templates,
@@ -4533,6 +5267,8 @@ def pair_qr_payload(base_url: str, pair_code: str, pi_device_id: str, bag: Bag, 
 def render_summary_html(summary_cards: List[tuple[str, str, str]]) -> str:
     tone_map = {
         "status": "accent",
+        "sensor": "accent",
+        "utilization": "success",
         "readiness": "warn",
         "expired": "danger",
         "missing": "warn",
@@ -4549,6 +5285,33 @@ def render_summary_html(summary_cards: List[tuple[str, str, str]]) -> str:
             </div>
             """
             for label, value, note in summary_cards
+        ]
+    )
+
+
+def render_sensor_sections_html(snapshot: SensorSnapshot) -> str:
+    tone = sensor_state_tone(snapshot)
+    if not snapshot.available:
+        return f"""
+        <div class="empty-state sensor-empty-state">
+          <strong>{escape(sensor_state_label(snapshot))}</strong><br>{escape(sensor_detail_note(snapshot))}
+        </div>
+        """
+    return "".join(
+        [
+            f"""
+            <div class="sensor-section-card sensor-tone-{tone}">
+              <div class="sensor-section-topline">
+                <span class="sensor-section-label">{escape(section.name)}</span>
+                <span class="sensor-section-percent">{escape(str(int(round(section.contribution_percent or 0))))}%</span>
+              </div>
+              <div class="sensor-section-weight">{escape(sensor_display_weight(section.current_weight_kg))}</div>
+              <div class="sensor-section-note">
+                Full {escape(f"{section.full_weight_kg:.2f} kg")} | Threshold {escape(f"{section.min_detection_weight_kg:.2f} kg")}
+              </div>
+            </div>
+            """
+            for section in snapshot.sections
         ]
     )
 
@@ -4850,10 +5613,12 @@ def render_wifi_inline_keyboard_html() -> str:
     """
 
 
-def render_hero_tags_html(paired: bool, readiness: dict, bag: Bag, item_count: int) -> str:
+def render_hero_tags_html(paired: bool, readiness: dict, bag: Bag, item_count: int, sensor_snapshot: SensorSnapshot) -> str:
+    sensor_tag_tone = "ok" if sensor_snapshot.connection_state == "live" else "warn" if sensor_snapshot.connection_state == "stale" else "danger"
     return "".join(
         [
             f'<span class="tag {"ok" if paired else "warn"}">{escape(readiness["device_status"])}</span>',
+            f'<span class="tag {sensor_tag_tone}">{escape(sensor_state_label(sensor_snapshot))} sensor</span>',
             f'<span class="tag {"ok" if readiness["bag_readiness"] == "Ready" else "warn"}">{escape(readiness["bag_readiness"])}</span>',
             f'<span class="tag">{escape(bag_size_label(bag.size_liters))} bag</span>',
             f'<span class="tag">{item_count} active item(s)</span>',
@@ -4862,6 +5627,7 @@ def render_hero_tags_html(paired: bool, readiness: dict, bag: Bag, item_count: i
 
 
 def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict:
+    sensor_snapshot = sensor_serial_manager.snapshot()
     with db_conn() as conn:
         pair = active_pair_code(conn) or create_pair_code(conn)
         bag_row = ensure_single_bag(conn)
@@ -4903,17 +5669,27 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
     expiring_items = [a for a in alerts if a.type == "expiring_soon"]
     expired_items = [a for a in alerts if a.type == "expired"]
     readiness_percent = round((checked_count / readiness["checklist_total"]) * 100) if readiness["checklist_total"] else 0
+    bag_utilization_percent = sensor_snapshot.total_percentage
+    sensor_status_label = sensor_state_label(sensor_snapshot)
+    sensor_status_note = sensor_detail_note(sensor_snapshot)
+    sensor_sections_html = render_sensor_sections_html(sensor_snapshot)
     paired_phone_count = len(paired_rows)
     low_stock_count = len(low_stock_items)
     batch_count = len(items)
     inventory_group_count = len(inventory_groups)
     sync_status_label = format_time_ms(last_sync_time_ms) if last_sync_time_ms else "Awaiting first sync"
     next_step = (
-        "Pair a phone to enable sync and live monitoring for this GO BAG."
-        if not paired
-        else "Review bag status here, then use the Android app for any inventory changes."
+        sensor_snapshot.message
+        if sensor_snapshot.connection_state != "live"
+        else (
+            "Pair a phone to enable sync and live monitoring for this GO BAG."
+            if not paired
+            else "Review bag status here, then use the Android app for any inventory changes."
+        )
     )
     summary_cards = [
+        ("Sensor", sensor_status_label, sensor_snapshot.serial_port or "ESP32 USB serial"),
+        ("Utilization", f"{bag_utilization_percent}%" if bag_utilization_percent is not None else "Unavailable", f"{SENSOR_SECTION_COUNT} sections on live weight data" if sensor_snapshot.available else "Waiting for live load-cell data"),
         ("Status", readiness["bag_readiness"], readiness["device_status"]),
         ("Expired", str(len(expired_items)), f"{len(expiring_items)} near expiry"),
         ("Missing", str(len(missing_categories)), "Checklist categories"),
@@ -4945,12 +5721,17 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         "readiness_percent": readiness_percent,
         "last_sync_time_ms": last_sync_time_ms,
         "sync_status_label": sync_status_label,
+        "bag_utilization_percent": bag_utilization_percent,
+        "sensor_snapshot": sensor_snapshot,
+        "sensor_status_label": sensor_status_label,
+        "sensor_status_note": sensor_status_note,
+        "sensor_sections_html": sensor_sections_html,
         "pair": pair,
         "paired": paired,
         "paired_phone_count": paired_phone_count,
         "next_step": next_step,
         "summary_html": render_summary_html(summary_cards),
-        "hero_tags_html": render_hero_tags_html(paired, readiness, bag, len(items)),
+        "hero_tags_html": render_hero_tags_html(paired, readiness, bag, len(items), sensor_snapshot),
         "checklist_rows_html": render_checklist_rows_html(readiness["checklist"]),
         "readiness_alert_rows": readiness_alert_rows,
         "expiry_alert_rows": expiry_alert_rows,
@@ -4979,6 +5760,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
                 int(last_sync_time_ms or 0),
                 int(pair["created_at"] or 0),
                 max((int(row["issued_at"]) for row in paired_rows), default=0),
+                int(sensor_snapshot.updated_at or 0),
             )
         ),
         "base_url": base_url,
@@ -5028,6 +5810,11 @@ def ui_state(request: Request) -> dict:
         "checked_count": view_model["checked_count"],
         "checklist_total": view_model["checklist_total"],
         "readiness_percent": view_model["readiness_percent"],
+        "bag_utilization_percent": view_model["bag_utilization_percent"],
+        "sensor_snapshot": view_model["sensor_snapshot"].model_dump(),
+        "sensor_status_label": view_model["sensor_status_label"],
+        "sensor_status_note": view_model["sensor_status_note"],
+        "sensor_sections_html": view_model["sensor_sections_html"],
         "sync_status_label": view_model["sync_status_label"],
         "paired_phone_count": view_model["paired_phone_count"],
         "expired_count": view_model["expired_count"],
@@ -5411,19 +6198,30 @@ def home(request: Request) -> HTMLResponse:
     view_model = build_dashboard_view_model(request, edit_item_id=edit_item_id)
     bag = view_model["bag"]
     readiness = view_model["readiness"]
+    sensor_snapshot = view_model["sensor_snapshot"]
     notice = request.query_params.get("notice", "").strip()
     error = request.query_params.get("error", "").strip()
     admin_query = f"?token={ADMIN_TOKEN}" if ADMIN_TOKEN else ""
     inventory_groups = view_model["inventory_groups"]
     readiness_percent = view_model["readiness_percent"]
+    bag_utilization_percent = view_model["bag_utilization_percent"]
+    utilization_numeric = int(bag_utilization_percent or 0)
+    utilization_score_markup = f"{bag_utilization_percent}<span>%</span>" if bag_utilization_percent is not None else "--"
     readiness_color = (
         "var(--success)"
-        if readiness_percent >= 90
+        if bag_utilization_percent is not None and bag_utilization_percent >= 90
         else "var(--warn)"
-        if readiness_percent >= 51
+        if bag_utilization_percent is not None and bag_utilization_percent >= 51
         else "var(--danger)"
     )
     readiness_tone = "ok" if readiness_percent >= 90 else "warn" if readiness_percent >= 51 else "danger"
+    utilization_tone = (
+        "ok"
+        if bag_utilization_percent is not None and bag_utilization_percent >= 90
+        else "warn"
+        if bag_utilization_percent is not None and bag_utilization_percent >= 51
+        else sensor_state_tone(sensor_snapshot)
+    )
     sync_tone = "ok" if view_model["paired"] else "warn"
     missing_categories = [row["name"] for row in readiness["checklist"] if not row["checked"]]
     inventory_categories = sorted({normalize_category(group.category) for group in inventory_groups})
@@ -5483,8 +6281,8 @@ def home(request: Request) -> HTMLResponse:
           <div class="hero-shell-inner">
             <div class="hero-kicker">Mission dashboard</div>
             <div class="hero-score-row">
-              <div class="readiness-ring" id="dashboard-readiness-ring" style="--score-color: {readiness_color}; --readiness-angle: {round(readiness_percent * 3.6)}deg;">
-                <div class="readiness-score" id="dashboard-readiness-score">{readiness_percent}<span>%</span></div>
+              <div class="readiness-ring" id="dashboard-readiness-ring" style="--score-color: {readiness_color}; --readiness-angle: {round(utilization_numeric * 3.6)}deg;">
+                <div class="readiness-score" id="dashboard-readiness-score">{utilization_score_markup}</div>
               </div>
               <div class="hero-text">
                 <h1 id="dashboard-title"><span id="hero-bag-name">{escape(bag.name)}</span></h1>
@@ -5494,10 +6292,10 @@ def home(request: Request) -> HTMLResponse:
             </div>
             <div class="hero-progress">
               <div class="progress-meta">
-                <span>Checklist coverage</span>
-                <strong id="coverage-label">{view_model['checked_count']}/{readiness['checklist_total']} categories covered</strong>
+                <span>Live bag utilization</span>
+                <strong id="coverage-label">{escape(view_model['sensor_status_note'])}</strong>
               </div>
-              <div class="progress-bar"><span id="coverage-progress" style="width: {readiness_percent}%; --score-color: {readiness_color};"></span></div>
+              <div class="progress-bar"><span id="coverage-progress" style="width: {utilization_numeric}%; --score-color: {readiness_color};"></span></div>
             </div>
             <section class="summary-grid" aria-label="Status" id="summary-grid">
               {view_model['summary_html']}
@@ -5509,20 +6307,20 @@ def home(request: Request) -> HTMLResponse:
           <section class="panel mission-panel">
             <div class="panel-head">
               <div>
-                <div class="panel-title">Missing categories</div>
-                <div class="panel-note">These core checklist categories still need attention before the bag is mission-ready.</div>
+                <div class="panel-title">Section load sensors</div>
+                <div class="panel-note">Each monitored bag section contributes up to 20% based on its live load-cell weight.</div>
               </div>
-              <div class="pill {readiness_tone}" id="bag-size-badge">{escape(bag_size_label(bag.size_liters))}</div>
+              <div class="pill {utilization_tone}" id="bag-size-badge">{escape(sensor_state_label(sensor_snapshot))}</div>
             </div>
-            <div class="panel-subtitle">Missing categories</div>
-            <div class="tag-row" id="missing-tags">{view_model['missing_html']}</div>
+            <div class="panel-subtitle">Per-section fill</div>
+            <div class="sensor-sections-grid" id="sensor-sections-grid">{view_model['sensor_sections_html']}</div>
           </section>
 
           <section class="panel status-cluster-panel">
             <div class="panel-head">
               <div>
                 <div class="panel-title">Bag at a glance</div>
-                <div class="panel-note">The Pi stays view-only here. Make inventory changes from the Android phone app.</div>
+                <div class="panel-note">The Pi owns live sensor utilization. Inventory edits still happen from the Android phone app.</div>
               </div>
             </div>
             <div class="status-cluster-grid">
@@ -5530,6 +6328,11 @@ def home(request: Request) -> HTMLResponse:
                 <div class="panel-subtitle">Current bag</div>
                 <div class="status-card-value" id="bag-name-label">{escape(bag.name)}</div>
                 <div class="status-card-note">{escape(bag_size_label(bag.size_liters))} loadout on this Raspberry Pi</div>
+              </div>
+              <div class="subpanel status-cluster-card">
+                <div class="panel-subtitle">Sensor link</div>
+                <div class="status-card-value" id="sensor-status-label">{escape(view_model['sensor_status_label'])}</div>
+                <div class="status-card-note" id="sensor-status-note">{escape(view_model['sensor_status_note'])}</div>
               </div>
               <div class="subpanel status-cluster-card">
                 <div class="panel-subtitle">Last sync</div>
@@ -5612,7 +6415,9 @@ def home(request: Request) -> HTMLResponse:
               <div class="panel-title" id="check-title">Check Mode</div>
               <div class="panel-note">Review category coverage and tap any alert to see what needs attention before leaving.</div>
             </div>
-            <div class="pill {readiness_tone}"><span id="check-readiness-percent">{readiness_percent}</span>% ready</div>
+            <div class="pill {utilization_tone}">
+              <span id="check-readiness-percent">{sensor_display_percent(sensor_snapshot)}</span><span id="check-readiness-percent-symbol">{'%' if bag_utilization_percent is not None else ''}</span> utilized
+            </div>
           </div>
           <div class="screen-meta-grid">
             <div class="subpanel">
@@ -7222,6 +8027,62 @@ def home(request: Request) -> HTMLResponse:
       color: var(--muted);
       line-height: 1.45;
       font-size: 0.92rem;
+    }}
+    .sensor-sections-grid {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }}
+    .sensor-section-card {{
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--panel-muted);
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+    }}
+    .sensor-section-topline {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: var(--muted);
+    }}
+    .sensor-section-label {{
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }}
+    .sensor-section-percent {{
+      color: var(--ink);
+      letter-spacing: 0;
+    }}
+    .sensor-section-weight {{
+      font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
+      font-size: 1.35rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1;
+      color: var(--ink);
+    }}
+    .sensor-section-note {{
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 0.86rem;
+    }}
+    .sensor-tone-ok {{
+      box-shadow: inset 0 0 0 1px rgba(0, 184, 116, 0.12);
+    }}
+    .sensor-tone-warn {{
+      box-shadow: inset 0 0 0 1px rgba(255, 160, 0, 0.12);
+    }}
+    .sensor-tone-danger {{
+      box-shadow: inset 0 0 0 1px rgba(224, 77, 77, 0.12);
+    }}
+    .sensor-empty-state {{
+      grid-column: 1 / -1;
+      padding: 8px 0 2px;
     }}
     .secondary-pill {{
       color: var(--ink);
@@ -10637,6 +11498,9 @@ def home(request: Request) -> HTMLResponse:
           const heroBagName = document.getElementById("hero-bag-name");
           const bagNameLabel = document.getElementById("bag-name-label");
           const bagSizeBadge = document.getElementById("bag-size-badge");
+          const sensorSectionsGrid = document.getElementById("sensor-sections-grid");
+          const sensorStatusLabel = document.getElementById("sensor-status-label");
+          const sensorStatusNote = document.getElementById("sensor-status-note");
           const dashboardReadinessRing = document.getElementById("dashboard-readiness-ring");
           const dashboardReadinessScore = document.getElementById("dashboard-readiness-score");
           const syncStatusLabel = document.getElementById("sync-status-label");
@@ -10649,6 +11513,7 @@ def home(request: Request) -> HTMLResponse:
           const inventoryGroupCount = document.getElementById("inventory-group-count");
           const batchCount = document.getElementById("batch-count");
           const checkReadinessPercent = document.getElementById("check-readiness-percent");
+          const checkReadinessPercentSymbol = document.getElementById("check-readiness-percent-symbol");
           const coverageLabel = document.getElementById("coverage-label");
           const coverageProgress = document.getElementById("coverage-progress");
           const checkCoverageValue = document.getElementById("check-coverage-value");
@@ -10668,14 +11533,24 @@ def home(request: Request) -> HTMLResponse:
           if (pairedPhones) pairedPhones.innerHTML = state.phone_rows_html || "";
           if (heroBagName) heroBagName.textContent = state.bag_name || "";
           if (bagNameLabel) bagNameLabel.textContent = state.bag_name || "";
-          if (bagSizeBadge) bagSizeBadge.textContent = state.bag_size_label || "";
+          if (bagSizeBadge) bagSizeBadge.textContent = state.sensor_status_label || "";
+          if (sensorSectionsGrid) sensorSectionsGrid.innerHTML = state.sensor_sections_html || "";
+          if (sensorStatusLabel) sensorStatusLabel.textContent = state.sensor_status_label || "";
+          if (sensorStatusNote) sensorStatusNote.textContent = state.sensor_status_note || "";
           if (dashboardReadinessScore) {{
-            dashboardReadinessScore.innerHTML = `${{state.readiness_percent || 0}}<span>%</span>`;
+            if (state.bag_utilization_percent === null || typeof state.bag_utilization_percent === "undefined") {{
+              dashboardReadinessScore.textContent = "--";
+            }} else {{
+              dashboardReadinessScore.innerHTML = `${{state.bag_utilization_percent || 0}}<span>%</span>`;
+            }}
           }}
           if (dashboardReadinessRing) {{
-            const scoreColor = readinessColorForPercent(Number(state.readiness_percent || 0));
+            const displayPercent = Number(state.bag_utilization_percent || 0);
+            const scoreColor = state.bag_utilization_percent === null || typeof state.bag_utilization_percent === "undefined"
+              ? "var(--danger)"
+              : readinessColorForPercent(displayPercent);
             dashboardReadinessRing.style.setProperty("--score-color", scoreColor);
-            dashboardReadinessRing.style.setProperty("--readiness-angle", `${{Math.round(Number(state.readiness_percent || 0) * 3.6)}}deg`);
+            dashboardReadinessRing.style.setProperty("--readiness-angle", `${{Math.round(displayPercent * 3.6)}}deg`);
           }}
           if (syncStatusLabel) syncStatusLabel.textContent = state.sync_status_label || "";
           if (syncStatusDetail) syncStatusDetail.textContent = state.sync_status_label || "";
@@ -10686,12 +11561,22 @@ def home(request: Request) -> HTMLResponse:
           if (missingCount) missingCount.textContent = String(state.missing_count || 0);
           if (inventoryGroupCount) inventoryGroupCount.textContent = String(state.inventory_group_count || 0);
           if (batchCount) batchCount.textContent = String(state.batch_count || 0);
-          if (checkReadinessPercent) checkReadinessPercent.textContent = String(state.readiness_percent || 0);
-          if (coverageLabel) coverageLabel.textContent = `${{state.checked_count || 0}}/${{state.checklist_total || 0}} categories covered`;
+          if (checkReadinessPercent) checkReadinessPercent.textContent = state.bag_utilization_percent === null || typeof state.bag_utilization_percent === "undefined"
+            ? "--"
+            : String(state.bag_utilization_percent || 0);
+          if (checkReadinessPercentSymbol) checkReadinessPercentSymbol.textContent =
+            state.bag_utilization_percent === null || typeof state.bag_utilization_percent === "undefined" ? "" : "%";
+          if (coverageLabel) coverageLabel.textContent = state.sensor_status_note || "";
           if (checkCoverageValue) checkCoverageValue.textContent = `${{state.checked_count || 0}}/${{state.checklist_total || 0}}`;
           if (coverageProgress) {{
-            coverageProgress.style.width = `${{state.readiness_percent || 0}}%`;
-            coverageProgress.style.setProperty("--score-color", readinessColorForPercent(Number(state.readiness_percent || 0)));
+            const displayPercent = Number(state.bag_utilization_percent || 0);
+            coverageProgress.style.width = `${{displayPercent}}%`;
+            coverageProgress.style.setProperty(
+              "--score-color",
+              state.bag_utilization_percent === null || typeof state.bag_utilization_percent === "undefined"
+                ? "var(--danger)"
+                : readinessColorForPercent(displayPercent)
+            );
           }}
           maybeShowOperationalReminder(state);
           applyInventoryFilters();

@@ -6,6 +6,8 @@ import com.gobag.core.model.BagProfile
 import com.gobag.core.model.Conflict
 import com.gobag.core.model.Item
 import com.gobag.core.model.RecommendedItem
+import com.gobag.core.model.SensorSectionSnapshot
+import com.gobag.core.model.SensorSnapshot
 
 fun BagProfile.to_dto(): BagDto = BagDto(
     bag_id = bag_id,
@@ -84,4 +86,32 @@ fun AlertDto.to_model(): AlertModel = AlertModel(
     type = type,
     days_left = days_left,
     expiry_date_ms = expiry_date_ms
+)
+
+fun SensorSectionSnapshotDto.to_model(): SensorSectionSnapshot = SensorSectionSnapshot(
+    index = index,
+    name = name,
+    current_weight_kg = current_weight_kg,
+    full_weight_kg = full_weight_kg,
+    min_detection_weight_kg = min_detection_weight_kg,
+    detected = detected,
+    fill_ratio = fill_ratio,
+    contribution_percent = contribution_percent
+)
+
+fun SensorSnapshotDto.to_model(): SensorSnapshot = SensorSnapshot(
+    source = source,
+    connection_state = connection_state,
+    available = available,
+    connected = connected,
+    message = message,
+    serial_port = serial_port,
+    last_read_at = last_read_at,
+    last_live_at = last_live_at,
+    updated_at = updated_at,
+    total_percentage = total_percentage,
+    total_percentage_exact = total_percentage_exact,
+    raw_payload = raw_payload,
+    last_error = last_error,
+    sections = sections.map { it.to_model() }
 )

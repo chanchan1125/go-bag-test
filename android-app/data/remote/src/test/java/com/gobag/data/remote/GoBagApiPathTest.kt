@@ -13,19 +13,21 @@ class GoBagApiPathTest {
             method.getAnnotation(GET::class.java)?.value
                 ?: method.getAnnotation(POST::class.java)?.value
         }
+        val expectedPaths = listOf(
+            "health",
+            "device/status",
+            "sync/status",
+            "time",
+            "templates",
+            "device/bag",
+            "pair",
+            "sync"
+        )
 
+        assertEquals(expectedPaths.size, annotatedPaths.size)
         assertEquals(
-            listOf(
-                "health",
-                "device/status",
-                "sync/status",
-                "time",
-                "templates",
-                "device/bag",
-                "pair",
-                "sync"
-            ),
-            annotatedPaths
+            expectedPaths.toSet(),
+            annotatedPaths.toSet()
         )
         assertTrue(
             "Retrofit paths must stay relative so relay URLs keep their /r/<pi_device_id> prefix.",

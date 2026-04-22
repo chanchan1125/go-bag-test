@@ -12,6 +12,7 @@ import com.gobag.core.common.DeviceIdProvider
 import com.gobag.core.model.DeviceState
 import com.gobag.core.model.PairedBagConnection
 import com.gobag.core.model.SavedPiAddress
+import com.gobag.core.model.SensorSnapshot
 import com.gobag.domain.logic.PiConnectionStatus
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -95,6 +96,7 @@ class DeviceStateStore(context: Context) {
                 last_sync_error = prefs[LAST_SYNC_ERROR] ?: "",
                 last_connection_check_at = prefs[LAST_CONNECTION_CHECK_AT] ?: 0L,
                 last_connected_at = prefs[LAST_CONNECTED_AT] ?: 0L,
+                sensor_snapshot = activeBag?.sensor_snapshot,
                 paired_bags = pairedBags,
                 saved_addresses = savedAddresses,
                 active_address_id = activeAddress?.id.orEmpty()
@@ -156,7 +158,8 @@ class DeviceStateStore(context: Context) {
                 paired_at = current?.paired_at ?: System.currentTimeMillis(),
                 local_base_url = local_base_url ?: current?.local_base_url,
                 remote_base_url = remote_base_url ?: current?.remote_base_url,
-                last_connection_mode = last_connection_mode ?: current?.last_connection_mode
+                last_connection_mode = last_connection_mode ?: current?.last_connection_mode,
+                sensor_snapshot = current?.sensor_snapshot
             )
             existing.removeAll { it.bag_id == bag_id }
             existing += updated
@@ -326,7 +329,8 @@ class DeviceStateStore(context: Context) {
         resolvedBaseUrl: String? = null,
         localBaseUrl: String? = null,
         remoteBaseUrl: String? = null,
-        connectionMode: String? = null
+        connectionMode: String? = null,
+        sensorSnapshot: SensorSnapshot? = null
     ) {
         val effectiveBagId = bag_id ?: state.map { it.selected_bag_id }.first_or_default("")
         val checkedAt = System.currentTimeMillis()
@@ -340,7 +344,8 @@ class DeviceStateStore(context: Context) {
                 last_connection_error = "",
                 local_base_url = localBaseUrl ?: it.local_base_url,
                 remote_base_url = remoteBaseUrl ?: it.remote_base_url,
-                last_connection_mode = connectionMode ?: it.last_connection_mode
+                last_connection_mode = connectionMode ?: it.last_connection_mode,
+                sensor_snapshot = sensorSnapshot ?: it.sensor_snapshot
             )
         }
         data_store.edit { prefs ->

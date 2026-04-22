@@ -23,6 +23,7 @@ import com.gobag.feature.pairing.PairingScreen
 import com.gobag.feature.pairing.PairingViewModel
 import com.gobag.feature.sync.SyncScreen
 import com.gobag.feature.sync.SyncViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -87,10 +88,15 @@ private fun GoBagApp() {
     }
 
     LaunchedEffect(container.sync_repository) {
-        val state = container.sync_repository.observe_device_state().first()
-        val hasKnownPi = state.paired_bags.isNotEmpty() || state.saved_addresses.isNotEmpty() || state.base_url.isNotBlank()
-        if (hasKnownPi) {
-            container.sync_repository.refresh_remote_status()
+        while (true) {
+            val state = container.sync_repository.observe_device_state().first()
+            val hasKnownPi = state.paired_bags.isNotEmpty() || state.saved_addresses.isNotEmpty() || state.base_url.isNotBlank()
+            if (hasKnownPi) {
+                runCatching { container.sync_repository.refresh_remote_status() }
+                delay(5000)
+            } else {
+                delay(15000)
+            }
         }
     }
 

@@ -129,6 +129,21 @@ class RelayApiTests(unittest.TestCase):
                     "pair_code": "123456",
                     "paired_devices": 1,
                     "database_path": "/opt/gobag/data/gobag.db",
+                    "sensor_snapshot": {
+                        "connection_state": "live",
+                        "available": True,
+                        "connected": True,
+                        "message": "Live sensor data from /dev/ttyUSB0.",
+                        "serial_port": "/dev/ttyUSB0",
+                        "last_read_at": 1000,
+                        "last_live_at": 1000,
+                        "updated_at": 1000,
+                        "total_percentage": 50,
+                        "total_percentage_exact": 50.0,
+                        "raw_payload": "0.25,0.50,0.75,1.00,0.00",
+                        "last_error": "",
+                        "sections": [],
+                    },
                 },
             },
         )
@@ -138,6 +153,7 @@ class RelayApiTests(unittest.TestCase):
         remote_response = result_holder["response"]
         self.assertEqual(remote_response.status_code, 200)
         self.assertEqual(remote_response.json()["pi_device_id"], "pi-1")
+        self.assertEqual(remote_response.json()["sensor_snapshot"]["total_percentage"], 50)
 
 
 if __name__ == "__main__":

@@ -55,6 +55,34 @@ data class AutoResolved(
     val rule: String
 )
 
+data class SensorSectionSnapshot(
+    val index: Int,
+    val name: String,
+    val current_weight_kg: Double? = null,
+    val full_weight_kg: Double,
+    val min_detection_weight_kg: Double,
+    val detected: Boolean = false,
+    val fill_ratio: Double? = null,
+    val contribution_percent: Double? = null
+)
+
+data class SensorSnapshot(
+    val source: String = "esp32_usb_serial",
+    val connection_state: String = "disconnected",
+    val available: Boolean = false,
+    val connected: Boolean = false,
+    val message: String = "",
+    val serial_port: String = "",
+    val last_read_at: Long = 0L,
+    val last_live_at: Long = 0L,
+    val updated_at: Long = 0L,
+    val total_percentage: Int? = null,
+    val total_percentage_exact: Double? = null,
+    val raw_payload: String = "",
+    val last_error: String = "",
+    val sections: List<SensorSectionSnapshot> = emptyList()
+)
+
 data class PairedBagConnection(
     val bag_id: String,
     val base_url: String,
@@ -69,7 +97,8 @@ data class PairedBagConnection(
     val paired_at: Long,
     val local_base_url: String? = null,
     val remote_base_url: String? = null,
-    val last_connection_mode: String? = null
+    val last_connection_mode: String? = null,
+    val sensor_snapshot: SensorSnapshot? = null
 )
 
 data class SavedPiAddress(
@@ -102,6 +131,7 @@ data class DeviceState(
     val last_sync_error: String,
     val last_connection_check_at: Long,
     val last_connected_at: Long,
+    val sensor_snapshot: SensorSnapshot?,
     val paired_bags: List<PairedBagConnection>,
     val saved_addresses: List<SavedPiAddress>,
     val active_address_id: String

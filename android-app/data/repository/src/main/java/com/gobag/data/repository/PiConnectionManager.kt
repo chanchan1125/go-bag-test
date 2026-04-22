@@ -4,6 +4,7 @@ import com.gobag.core.model.DeviceState
 import com.gobag.core.model.PairedBagConnection
 import com.gobag.data.remote.DeviceStatusDto
 import com.gobag.data.remote.RemoteDataSourceFactory
+import com.gobag.data.remote.to_model
 import com.gobag.domain.logic.PiConnectionStatus
 import com.gobag.domain.repository.PairingConnectionResult
 import com.google.gson.JsonParser
@@ -248,7 +249,8 @@ class PiConnectionManager(
             resolvedBaseUrl = resolved_base_url,
             localBaseUrl = normalizedLocalBaseUrl.takeIf { it.isNotBlank() },
             remoteBaseUrl = normalizedRemoteBaseUrl.takeIf { it.isNotBlank() },
-            connectionMode = connection_mode
+            connectionMode = connection_mode,
+            sensorSnapshot = device_status.sensor_snapshot?.to_model()
         )
     }
 

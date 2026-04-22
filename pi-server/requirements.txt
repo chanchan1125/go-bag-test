@@ -5,3 +5,4 @@ pyzbar==0.1.9
 pywebview==5.4
 python-multipart==0.0.20
 qrcode[pil]==7.4.2
+pyserial==3.5

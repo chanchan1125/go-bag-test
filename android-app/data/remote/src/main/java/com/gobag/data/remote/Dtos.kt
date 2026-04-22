@@ -73,7 +73,8 @@ data class DeviceStatusDto(
     @SerializedName("pi_device_id") val pi_device_id: String,
     @SerializedName("pair_code") val pair_code: String,
     @SerializedName("paired_devices") val paired_devices: Int,
-    @SerializedName("database_path") val database_path: String
+    @SerializedName("database_path") val database_path: String,
+    @SerializedName("sensor_snapshot") val sensor_snapshot: SensorSnapshotDto? = null
 )
 
 data class SyncStatusDto(
@@ -85,7 +86,36 @@ data class SyncStatusDto(
     @SerializedName("local_ip") val local_ip: String,
     @SerializedName("local_base_url") val local_base_url: String = "",
     @SerializedName("remote_base_url") val remote_base_url: String = "",
-    @SerializedName("updated_at") val updated_at: Long
+    @SerializedName("updated_at") val updated_at: Long,
+    @SerializedName("sensor_snapshot") val sensor_snapshot: SensorSnapshotDto? = null
+)
+
+data class SensorSectionSnapshotDto(
+    @SerializedName("index") val index: Int,
+    @SerializedName("name") val name: String,
+    @SerializedName("current_weight_kg") val current_weight_kg: Double? = null,
+    @SerializedName("full_weight_kg") val full_weight_kg: Double,
+    @SerializedName("min_detection_weight_kg") val min_detection_weight_kg: Double,
+    @SerializedName("detected") val detected: Boolean,
+    @SerializedName("fill_ratio") val fill_ratio: Double? = null,
+    @SerializedName("contribution_percent") val contribution_percent: Double? = null
+)
+
+data class SensorSnapshotDto(
+    @SerializedName("source") val source: String = "esp32_usb_serial",
+    @SerializedName("connection_state") val connection_state: String = "disconnected",
+    @SerializedName("available") val available: Boolean = false,
+    @SerializedName("connected") val connected: Boolean = false,
+    @SerializedName("message") val message: String = "",
+    @SerializedName("serial_port") val serial_port: String = "",
+    @SerializedName("last_read_at") val last_read_at: Long = 0L,
+    @SerializedName("last_live_at") val last_live_at: Long = 0L,
+    @SerializedName("updated_at") val updated_at: Long = 0L,
+    @SerializedName("total_percentage") val total_percentage: Int? = null,
+    @SerializedName("total_percentage_exact") val total_percentage_exact: Double? = null,
+    @SerializedName("raw_payload") val raw_payload: String = "",
+    @SerializedName("last_error") val last_error: String = "",
+    @SerializedName("sections") val sections: List<SensorSectionSnapshotDto> = emptyList()
 )
 
 data class AlertDto(

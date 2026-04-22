@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -54,12 +56,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.gobag.core.model.AlertModel
+import com.gobag.core.model.SensorSectionSnapshot
 import com.gobag.domain.logic.PiConnectionSnapshot
 import com.gobag.domain.logic.PreparednessRules
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,12 +76,12 @@ fun HomeScreen(
     val state by view_model.ui_state.collectAsState()
     val connection = state.connection
     val missingCategories = state.checklist.filterNot { it.checked }.map { it.name }
-    val readinessPercent = if (state.checklist_total == 0) 0 else {
-        ((state.checklist_covered.toFloat() / state.checklist_total.toFloat()) * 100f).roundToInt()
-    }
-    val readinessAccent = resolveReadinessAccent(readinessPercent)
+    val utilizationPercent = state.bag_utilization_percent
+    val readinessAccent = resolveUtilizationAccent(utilizationPercent, state.sensor_status_label)
     val connectionAccent = resolveConnectionAccent(connection)
+    val detectedSections = state.sensor_sections.count { it.detected }
     val primaryAlert = when {
+        utilizationPercent == null && state.sensor_status_detail.isNotBlank() -> state.sensor_status_detail
         connection.last_sync_error.isNotBlank() -> connection.last_sync_error
         connection.last_connection_error.isNotBlank() -> connection.last_connection_error
         state.has_conflicts -> "Review items before turning automatic updates back on."
@@ -158,12 +160,11 @@ fun HomeScreen(
             item {
                 HomeHeroCard(
                     bagName = state.selected_bag_name,
-                    readinessPercent = readinessPercent,
+                    utilizationPercent = utilizationPercent,
                     readinessAccent = readinessAccent,
-                    bagReadiness = state.bag_readiness,
+                    sensorStatusLabel = state.sensor_status_label,
                     connectionLabel = connection.connection_label,
-                    pendingChanges = state.pending_phone_changes,
-                    lastSync = formatTimestamp(state.last_sync_time)
+                    lastSensorRead = formatTimestamp(state.sensor_last_read_at)
                 )
             }
 
@@ -174,14 +175,14 @@ fun HomeScreen(
                 ) {
                     MetricCard(
                         modifier = Modifier.weight(1f),
-                        value = state.bag_count.toString(),
-                        label = "Bags",
-                        accent = MaterialTheme.colorScheme.primary
+                        value = state.bag_utilization_percent?.let { "$it%" } ?: "--",
+                        label = "Utilization",
+                        accent = readinessAccent
                     )
                     MetricCard(
                         modifier = Modifier.weight(1f),
-                        value = "${state.checklist_covered}/${state.checklist_total}",
-                        label = "Coverage",
+                        value = "$detectedSections/${state.sensor_sections.size.coerceAtLeast(5)}",
+                        label = "Loaded Sections",
                         accent = readinessAccent
                     )
                     MetricCard(
@@ -196,11 +197,20 @@ fun HomeScreen(
             item {
                 StatusCard(
                     modifier = Modifier.fillMaxWidth(),
-                    title = "Bag status",
-                    value = connection.connection_label,
-                    detail = connection.detail,
-                    icon = if (connection.is_online) Icons.Default.CloudDone else Icons.Default.CloudOff,
-                    accent = connectionAccent
+                    title = "Sensor status",
+                    value = state.sensor_status_label,
+                    detail = state.sensor_status_detail,
+                    icon = if (utilizationPercent != null) Icons.Default.Inventory else Icons.Default.Warning,
+                    accent = readinessAccent
+                )
+            }
+
+            item {
+                SensorSectionsCard(
+                    sections = state.sensor_sections,
+                    utilizationPercent = utilizationPercent,
+                    detail = state.sensor_status_detail,
+                    accent = readinessAccent
                 )
             }
 
@@ -248,12 +258,11 @@ fun HomeScreen(
 @Composable
 private fun HomeHeroCard(
     bagName: String,
-    readinessPercent: Int,
+    utilizationPercent: Int?,
     readinessAccent: Color,
-    bagReadiness: String,
+    sensorStatusLabel: String,
     connectionLabel: String,
-    pendingChanges: Int,
-    lastSync: String
+    lastSensorRead: String
 ) {
     Card(
         shape = RoundedCornerShape(20.dp),
@@ -292,13 +301,13 @@ private fun HomeHeroCard(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            "Your bag summary and recent updates.",
+                            "Live bag utilization from the Raspberry Pi load cells.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     TacticalTopPill(
-                        text = formatBagReadinessLabel(bagReadiness),
+                        text = sensorStatusLabel,
                         accent = readinessAccent,
                         maxWidth = 168.dp
                     )
@@ -310,16 +319,16 @@ private fun HomeHeroCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     ReadinessDial(
-                        percent = readinessPercent,
+                        percent = utilizationPercent,
                         accent = readinessAccent
                     )
                     Column(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        HeroDetailLine("Bag status", connectionLabel)
-                        HeroDetailLine("Phone changes", pendingChanges.toString())
-                        HeroDetailLine("Last update", lastSync)
+                        HeroDetailLine("Sensor status", sensorStatusLabel)
+                        HeroDetailLine("Bag link", connectionLabel)
+                        HeroDetailLine("Last sensor read", lastSensorRead)
                     }
                 }
             }
@@ -329,7 +338,7 @@ private fun HomeHeroCard(
 
 @Composable
 private fun ReadinessDial(
-    percent: Int,
+    percent: Int?,
     accent: Color
 ) {
     Box(
@@ -348,17 +357,99 @@ private fun ReadinessDial(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    "$percent%",
+                    percent?.let { "$it%" } ?: "--",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Black
                 )
                 Text(
-                    "READY",
+                    if (percent != null) "LOAD" else "SENSOR",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     color = accent
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SensorSectionsCard(
+    sections: List<SensorSectionSnapshot>,
+    utilizationPercent: Int?,
+    detail: String,
+    accent: Color
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SectionLabel("Section Load Cells")
+            Text(
+                "Each section contributes up to 20% of total bag utilization.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (utilizationPercent == null || sections.isEmpty()) {
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(sections, key = { it.index }) { section ->
+                        SensorSectionTile(section = section, accent = accent)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SensorSectionTile(
+    section: SensorSectionSnapshot,
+    accent: Color
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(min = 132.dp)
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                section.name.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "${section.contribution_percent?.toInt() ?: 0}%",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Black,
+                color = accent
+            )
+            Text(
+                section.current_weight_kg?.let { formatWeightKg(it) } ?: "--",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                "Full ${formatWeightKg(section.full_weight_kg)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -687,17 +778,17 @@ private fun TacticalTopPill(
     }
 }
 
-private fun formatBagReadinessLabel(value: String): String {
-    return when (value.trim()) {
-        "Attention Needed" -> "Needs Attention"
-        else -> value
+private fun resolveUtilizationAccent(utilizationPercent: Int?, sensorStatusLabel: String): Color {
+    if (utilizationPercent == null) {
+        return if (sensorStatusLabel.contains("Waiting", ignoreCase = true)) {
+            Color(0xFFFF6B00)
+        } else {
+            Color(0xFFB3261E)
+        }
     }
-}
-
-private fun resolveReadinessAccent(readinessPercent: Int): Color {
     return when {
-        readinessPercent >= 90 -> Color(0xFF2ECC71)
-        readinessPercent >= 51 -> Color(0xFFFF6B00)
+        utilizationPercent >= 90 -> Color(0xFF2ECC71)
+        utilizationPercent >= 51 -> Color(0xFFFF6B00)
         else -> Color(0xFFB3261E)
     }
 }
@@ -716,6 +807,10 @@ private fun resolveConnectionAccent(connection: PiConnectionSnapshot): Color {
 private fun formatTimestamp(time: Long): String {
     if (time == 0L) return "Never"
     return SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()).format(Date(time))
+}
+
+private fun formatWeightKg(weight: Double): String {
+    return String.format(Locale.getDefault(), "%.2f kg", weight)
 }
 
 private fun formatExpiryAlertDetail(alert: AlertModel): String {

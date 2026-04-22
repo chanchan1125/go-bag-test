@@ -17,6 +17,7 @@ import com.gobag.data.remote.ConflictDto
 import com.gobag.data.remote.ItemDto
 import com.gobag.data.remote.RemoteDataSourceFactory
 import com.gobag.data.remote.SyncRequestDto
+import com.gobag.data.remote.to_model
 import com.gobag.domain.logic.PiConnectionStatus
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.SyncRepository
@@ -246,7 +247,8 @@ class GoBagSyncRepository(
                 resolvedBaseUrl = activeState.base_url,
                 localBaseUrl = syncStatus.local_base_url.ifBlank { null },
                 remoteBaseUrl = syncStatus.remote_base_url.ifBlank { null },
-                connectionMode = activeState.last_connection_mode.ifBlank { null }
+                connectionMode = activeState.last_connection_mode.ifBlank { null },
+                sensorSnapshot = syncStatus.sensor_snapshot?.to_model()
             )
         } else {
             device_state_store.set_last_sync_at(response.server_time_ms, bag_id = selectedBagId)
