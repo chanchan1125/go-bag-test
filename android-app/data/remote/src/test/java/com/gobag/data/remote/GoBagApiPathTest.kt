@@ -21,6 +21,7 @@ class GoBagApiPathTest {
             "templates",
             "device/bag",
             "pair",
+            "unpair",
             "sync"
         )
 

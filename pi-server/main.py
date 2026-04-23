@@ -182,6 +182,10 @@ class PairRequest(BaseModel):
     pair_code: str
 
 
+class UnpairRequest(BaseModel):
+    phone_device_id: str
+
+
 class PairResponse(BaseModel):
     auth_token: str
     pi_device_id: str
@@ -5105,12 +5109,31 @@ def pair(req: PairRequest) -> PairResponse:
         code_row = active_pair_code(conn)
         if not code_row or code_row["code"] != req.pair_code or code_row["expires_at"] < now_ms():
             raise HTTPException(status_code=400, detail="Pair code invalid or expired")
+        phone_device_id = req.phone_device_id.strip()
+        if not phone_device_id:
+            raise HTTPException(status_code=400, detail="Phone device id is required")
         token = secrets.token_urlsafe(32)
-        conn.execute("INSERT INTO tokens(token, phone_device_id, issued_at, revoked) VALUES(?, ?, ?, 0)", (token, req.phone_device_id, now_ms()))
-        conn.execute("UPDATE settings SET last_connected_device = ? WHERE id = 'primary'", (req.phone_device_id,))
+        conn.execute("UPDATE tokens SET revoked = 1 WHERE phone_device_id = ? AND revoked = 0", (phone_device_id,))
+        conn.execute("INSERT INTO tokens(token, phone_device_id, issued_at, revoked) VALUES(?, ?, ?, 0)", (token, phone_device_id, now_ms()))
+        conn.execute("UPDATE settings SET last_connected_device = ? WHERE id = 'primary'", (phone_device_id,))
         update_device_state(conn, "paired")
         conn.commit()
         return PairResponse(auth_token=token, pi_device_id=get_meta(conn, "pi_device_id") or "", server_time_ms=now_ms())
+
+
+@app.post("/unpair")
+def unpair(req: UnpairRequest, _: str = Depends(require_token)) -> dict:
+    phone_device_id = req.phone_device_id.strip()
+    if not phone_device_id:
+        raise HTTPException(status_code=400, detail="Phone device id is required")
+    with db_conn() as conn:
+        conn.execute("UPDATE tokens SET revoked = 1 WHERE phone_device_id = ? AND revoked = 0", (phone_device_id,))
+        last_connected = conn.execute("SELECT last_connected_device FROM settings WHERE id = 'primary'").fetchone()
+        if last_connected and last_connected["last_connected_device"] == phone_device_id:
+            conn.execute("UPDATE settings SET last_connected_device = NULL WHERE id = 'primary'")
+        update_device_state(conn)
+        conn.commit()
+    return {"unpaired": True}
 
 
 def run_sync_request(req: SyncRequest) -> SyncResponse:

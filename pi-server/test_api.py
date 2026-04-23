@@ -394,6 +394,44 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(len(items.json()), 1)
         self.assertEqual(items.json()[0]["name"], "Bandage Roll")
 
+    def test_pair_replaces_same_phone_token_and_unpair_revokes_it(self):
+        device_status = self.client.get("/device/status")
+        self.assertEqual(device_status.status_code, 200)
+        pair_code = device_status.json()["pair_code"]
+
+        first_pair = self.client.post(
+            "/pair",
+            json={"phone_device_id": "phone-repeat-test", "pair_code": pair_code},
+        )
+        self.assertEqual(first_pair.status_code, 200)
+        first_token = first_pair.json()["auth_token"]
+        self.assertEqual(self.client.get("/device/status").json()["paired_devices"], 1)
+
+        second_pair = self.client.post(
+            "/pair",
+            json={"phone_device_id": "phone-repeat-test", "pair_code": pair_code},
+        )
+        self.assertEqual(second_pair.status_code, 200)
+        second_token = second_pair.json()["auth_token"]
+        self.assertNotEqual(first_token, second_token)
+        self.assertEqual(self.client.get("/device/status").json()["paired_devices"], 1)
+
+        old_token_sync = self.client.post(
+            "/sync",
+            headers={"Authorization": f"Bearer {first_token}"},
+            json={"phone_device_id": "phone-repeat-test", "last_sync_at": 0, "changed_bags": [], "changed_items": []},
+        )
+        self.assertEqual(old_token_sync.status_code, 401)
+
+        unpair = self.client.post(
+            "/unpair",
+            headers={"Authorization": f"Bearer {second_token}"},
+            json={"phone_device_id": "phone-repeat-test"},
+        )
+        self.assertEqual(unpair.status_code, 200)
+        self.assertTrue(unpair.json()["unpaired"])
+        self.assertEqual(self.client.get("/device/status").json()["paired_devices"], 0)
+
     def test_alerts_include_item_bag_and_expiry_details(self):
         category_id = self.client.get("/categories").json()[0]["id"]
         bag = self.client.post("/bags", json={"name": "Medic Bag", "bag_type": "46l"})

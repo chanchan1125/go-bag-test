@@ -172,16 +172,33 @@ class DeviceStateStore(context: Context) {
 
     suspend fun clear_pairing_for_bag(bag_id: String) {
         data_store.edit { prefs ->
-            val pairedBags = parse_paired_bags(prefs[PAIRED_BAGS_JSON]).filterNot { it.bag_id == bag_id }
+            val existingPairedBags = parse_paired_bags(prefs[PAIRED_BAGS_JSON])
+            val removedBag = existingPairedBags.firstOrNull { it.bag_id == bag_id }
+            val pairedBags = existingPairedBags.filterNot { it.bag_id == bag_id }
+            val removedEndpoints = listOfNotNull(
+                removedBag?.base_url,
+                removedBag?.local_base_url,
+                removedBag?.remote_base_url
+            )
             val savedAddresses = parse_saved_addresses(prefs[SAVED_ADDRESSES_JSON])
+                .filterNot { address -> removedEndpoints.any { it.equals(address.base_url, ignoreCase = true) } }
             prefs[PAIRED_BAGS_JSON] = gson.toJson(pairedBags)
+            val normalizedAddresses = normalize_saved_addresses(
+                savedAddresses,
+                prefs[ACTIVE_ADDRESS_ID].orEmpty().takeUnless { activeId ->
+                    parse_saved_addresses(prefs[SAVED_ADDRESSES_JSON])
+                        .any { it.id == activeId && removedEndpoints.any { endpoint -> endpoint.equals(it.base_url, ignoreCase = true) } }
+                }.orEmpty()
+            )
+            prefs[SAVED_ADDRESSES_JSON] = gson.toJson(normalizedAddresses)
+            prefs[ACTIVE_ADDRESS_ID] = normalizedAddresses.firstOrNull { it.is_active }?.id.orEmpty()
             if ((prefs[SELECTED_BAG_ID] ?: "") == bag_id) {
                 prefs[SELECTED_BAG_ID] = pairedBags.firstOrNull()?.bag_id.orEmpty()
             }
             prefs[CONNECTION_STATUS] = PiConnectionStatus.normalize_connection_status(
                 value = null,
                 is_paired = pairedBags.isNotEmpty(),
-                has_saved_address = savedAddresses.isNotEmpty()
+                has_saved_address = normalizedAddresses.isNotEmpty()
             )
             prefs[LAST_CONNECTION_ERROR] = ""
             if (pairedBags.isEmpty()) {

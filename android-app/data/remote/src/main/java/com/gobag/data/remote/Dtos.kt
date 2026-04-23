@@ -41,6 +41,10 @@ data class PairRequestDto(
     @SerializedName("pair_code") val pair_code: String
 )
 
+data class UnpairRequestDto(
+    @SerializedName("phone_device_id") val phone_device_id: String
+)
+
 data class PairResponseDto(
     @SerializedName("auth_token") val auth_token: String,
     @SerializedName("pi_device_id") val pi_device_id: String,

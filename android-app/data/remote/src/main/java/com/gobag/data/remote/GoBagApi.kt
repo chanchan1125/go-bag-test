@@ -26,6 +26,9 @@ interface GoBagApi {
     @POST("pair")
     suspend fun pair(@Body request: PairRequestDto): PairResponseDto
 
+    @POST("unpair")
+    suspend fun unpair(@Body request: UnpairRequestDto): Map<String, Boolean>
+
     @POST("sync")
     suspend fun sync(@Body request: SyncRequestDto): SyncResponseDto
 }

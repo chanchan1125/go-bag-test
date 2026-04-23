@@ -11,6 +11,7 @@ import com.gobag.data.local.RecommendedItemDao
 import com.gobag.data.local.to_entity
 import com.gobag.data.remote.PairRequestDto
 import com.gobag.data.remote.RemoteDataSourceFactory
+import com.gobag.data.remote.UnpairRequestDto
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.PairingConnectionResult
 import com.gobag.domain.repository.PairingRepository
@@ -60,7 +61,9 @@ class GoBagPairingRepository(
                     )
                 }
             } catch (e: Exception) {
-                lastFailure = e
+                if (!is_different_bag_error(e) || lastFailure == null) {
+                    lastFailure = e
+                }
             }
         }
 
@@ -108,6 +111,15 @@ class GoBagPairingRepository(
     }
 
     override suspend fun unpair_bag(bag_id: String) {
+        val state = device_state_store.state.first()
+        val bagConnection = state.paired_bags.firstOrNull { it.bag_id == bag_id }
+        if (bagConnection != null && bagConnection.base_url.isNotBlank() && bagConnection.auth_token.isNotBlank()) {
+            runCatching {
+                RemoteDataSourceFactory
+                    .create_api(bagConnection.base_url, bagConnection.auth_token)
+                    .unpair(UnpairRequestDto(phone_device_id = state.phone_device_id))
+            }
+        }
         device_state_store.clear_pairing_for_bag(bag_id)
     }
 
@@ -360,6 +372,10 @@ class GoBagPairingRepository(
             }
         }
         return classify_connection_error(error)
+    }
+
+    private fun is_different_bag_error(error: Exception): Boolean {
+        return error.message.orEmpty().contains("different GO BAG", ignoreCase = true)
     }
 
     private fun parse_fastapi_detail(raw: String): String {
