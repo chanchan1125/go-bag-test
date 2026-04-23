@@ -1,5 +1,5 @@
-val appVersionCode = 5
-val appVersionName = "0.5"
+val appVersionCode = 10
+val appVersionName = "1.0"
 
 plugins {
     id("com.android.application")
