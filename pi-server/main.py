@@ -2062,6 +2062,15 @@ def compute_local_base_url(request: Optional[Request] = None) -> str:
     return f"http://127.0.0.1:{PORT}"
 
 
+def request_host_base_url(request: Optional[Request] = None) -> str:
+    if request is None:
+        return ""
+    host = request.headers.get("host", "").strip()
+    if not host or "127.0.0.1" in host or "localhost" in host:
+        return ""
+    return normalize_base_url_value(f"http://{host}")
+
+
 def current_pi_device_id() -> str:
     with db_conn() as conn:
         return get_meta(conn, "pi_device_id") or ""
@@ -2228,6 +2237,12 @@ def compute_remote_base_url() -> str:
 
 
 def compute_pairing_base_url(request: Optional[Request] = None) -> str:
+    configured = normalize_base_url_value(os.getenv("GOBAG_BASE_URL", ""))
+    if configured:
+        return configured
+    request_base_url = request_host_base_url(request)
+    if request_base_url:
+        return request_base_url
     local_base_url = compute_local_base_url(request)
     if local_base_url and "127.0.0.1" not in local_base_url and "localhost" not in local_base_url:
         return local_base_url

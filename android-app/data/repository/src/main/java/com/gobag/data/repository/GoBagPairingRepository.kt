@@ -37,10 +37,14 @@ class GoBagPairingRepository(
     private val sync_repository: SyncRepository,
     private val pi_connection_manager: PiConnectionManager
     ) : PairingRepository {
-    override suspend fun pair_from_qr_payload(payload_json: String): PairingSetupResult {
+    override suspend fun pair_from_qr_payload(payload_json: String, preferred_base_url: String): PairingSetupResult {
         val payload = PairQrParser.parse(payload_json)
         val normalizedQrBaseUrl = runCatching { normalize_base_url(payload.base_url) }.getOrNull()
-        val candidateEndpoints = build_qr_pairing_candidates(payload.base_url, payload.remote_base_url)
+        val candidateEndpoints = build_qr_pairing_candidates(
+            qr_base_url = payload.base_url,
+            qr_remote_base_url = payload.remote_base_url,
+            preferred_base_url = preferred_base_url
+        )
         if (candidateEndpoints.isEmpty()) {
             normalize_base_url(payload.base_url)
         }
@@ -281,7 +285,11 @@ class GoBagPairingRepository(
             throw IllegalStateException("The bag did not send its details. Refresh the bag screen and try again.")
     }
 
-    private suspend fun build_qr_pairing_candidates(qr_base_url: String, qr_remote_base_url: String): List<String> {
+    private suspend fun build_qr_pairing_candidates(
+        qr_base_url: String,
+        qr_remote_base_url: String,
+        preferred_base_url: String
+    ): List<String> {
         val state = device_state_store.state.first()
         val localCandidates = linkedSetOf<String>()
         val remoteCandidates = linkedSetOf<String>()
@@ -296,6 +304,7 @@ class GoBagPairingRepository(
             }
         }
 
+        add_candidate(localCandidates, preferred_base_url)
         add_candidate(localCandidates, qr_base_url)
         add_candidate(localCandidates, state.local_base_url)
         add_candidate(localCandidates, state.base_url.takeIf { !is_remote_candidate(it) })

@@ -147,6 +147,12 @@ class PiServerApiTests(unittest.TestCase):
     def test_normalize_base_url_value_rejects_duplicate_port(self):
         self.assertEqual(self.module.normalize_base_url_value("http://192.168.1.20:8080:8080"), "")
 
+    def test_pairing_base_url_prefers_reachable_request_host(self):
+        request = mock.Mock(headers={"host": "192.168.1.55:8080"})
+        with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": ""}, clear=False):
+            with mock.patch.object(self.module, "preferred_non_loopback_ip", return_value="10.0.0.99"):
+                self.assertEqual(self.module.compute_pairing_base_url(request), "http://192.168.1.55:8080")
+
     def test_device_status_exposes_secure_remote_base_url(self):
         with mock.patch.dict(
             os.environ,

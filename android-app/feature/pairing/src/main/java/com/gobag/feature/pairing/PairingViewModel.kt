@@ -157,8 +157,12 @@ class PairingViewModel(
     }
 
     fun on_qr_payload(payload_json: String) {
+        val preferredEndpoint = manualEndpoint.value
         execute_pairing {
-            pairing_repository.pair_from_qr_payload(payload_json)
+            pairing_repository.pair_from_qr_payload(
+                payload_json = payload_json,
+                preferred_base_url = preferredEndpoint
+            )
         }
     }
 
