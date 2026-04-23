@@ -8,12 +8,14 @@ import com.gobag.core.model.Item
 import com.gobag.core.model.RecommendedItem
 import com.gobag.core.model.SensorSectionSnapshot
 import com.gobag.core.model.SensorSnapshot
+import com.gobag.core.model.normalize_bag_size_liters
+import com.gobag.core.model.normalize_bag_template_id
 
 fun BagProfile.to_dto(): BagDto = BagDto(
     bag_id = bag_id,
     name = name,
-    size_liters = size_liters,
-    template_id = template_id,
+    size_liters = normalize_bag_size_liters(size_liters),
+    template_id = normalize_bag_template_id(template_id),
     updated_at = updated_at,
     updated_by = updated_by
 )
@@ -21,8 +23,8 @@ fun BagProfile.to_dto(): BagDto = BagDto(
 fun BagDto.to_model(): BagProfile = BagProfile(
     bag_id = bag_id,
     name = name,
-    size_liters = size_liters,
-    template_id = template_id,
+    size_liters = normalize_bag_size_liters(size_liters),
+    template_id = normalize_bag_template_id(template_id),
     updated_at = updated_at,
     updated_by = updated_by
 )
@@ -58,7 +60,7 @@ fun ItemDto.to_model(): Item = Item(
 )
 
 fun RecommendedItemDto.to_model(): RecommendedItem = RecommendedItem(
-    template_id = template_id,
+    template_id = normalize_bag_template_id(template_id),
     category = category,
     name = name,
     recommended_qty = recommended_qty,

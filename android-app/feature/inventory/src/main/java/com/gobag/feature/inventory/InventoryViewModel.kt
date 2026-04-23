@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.gobag.core.common.nowMs
 import com.gobag.core.model.BagProfile
 import com.gobag.core.model.Item
+import com.gobag.core.model.is_supported_bag_size_liters
+import com.gobag.core.model.normalize_bag_size_liters
+import com.gobag.core.model.template_id_for_bag_size_liters
 import com.gobag.domain.logic.PreparednessRules
 import com.gobag.domain.repository.ItemRepository
 import com.gobag.domain.repository.SyncRepository
@@ -34,7 +37,7 @@ data class InventoryUiState(
     val selected_bag_name: String = "",
     val bags: List<BagProfile> = emptyList(),
     val primary_bag_name_input: String = "",
-    val primary_bag_size_input: String = "44",
+    val primary_bag_size_input: String = "46",
     val search: String = "",
     val category_filter: String = "",
     val name_input: String = "",
@@ -48,7 +51,7 @@ data class InventoryUiState(
     val item_groups: List<InventoryItemGroup> = emptyList(),
     val category_options: List<String> = PreparednessRules.checklist_categories,
     val unit_options: List<String> = PreparednessRules.unit_options,
-    val bag_size_options: List<String> = listOf("25", "44", "66"),
+    val bag_size_options: List<String> = listOf("46", "66"),
     val feedback_message: String = ""
 )
 
@@ -61,7 +64,7 @@ class InventoryViewModel(
 ) : ViewModel() {
     private val bag_id = MutableStateFlow(initial_bag_id)
     private val primary_bag_name_input = MutableStateFlow("")
-    private val primary_bag_size_input = MutableStateFlow("44")
+    private val primary_bag_size_input = MutableStateFlow("46")
     private val search = MutableStateFlow("")
     private val category_filter = MutableStateFlow("")
     private val name_input = MutableStateFlow("")
@@ -94,14 +97,14 @@ class InventoryViewModel(
                 if (selectedBag == null) {
                     bag_id.value = ""
                     primary_bag_name_input.value = ""
-                    primary_bag_size_input.value = "44"
+                    primary_bag_size_input.value = "46"
                     return@collect
                 }
                 if (selectedBag.bag_id != bag_id.value) {
                     bag_id.value = selectedBag.bag_id
                 }
                 primary_bag_name_input.value = selectedBag.name
-                primary_bag_size_input.value = selectedBag.size_liters.toString()
+                primary_bag_size_input.value = normalize_bag_size_liters(selectedBag.size_liters).toString()
             }
         }
     }
@@ -197,21 +200,21 @@ class InventoryViewModel(
                 return@launch
             }
             val name = primary_bag_name_input.value.trim()
-            val liters = primary_bag_size_input.value.toIntOrNull()
+            val liters = primary_bag_size_input.value.toIntOrNull()?.let(::normalize_bag_size_liters)
             if (name.isBlank()) {
                 feedback_message.value = "Bag name is required."
                 return@launch
             }
-            if (liters !in allowed_bag_sizes) {
-                feedback_message.value = "Bag size must be 25L, 44L, or 66L."
+            if (liters == null || !is_supported_bag_size_liters(liters)) {
+                feedback_message.value = "Bag size must be 46L or 66L."
                 return@launch
             }
 
             item_repository.upsert_bag(
                 currentBag.copy(
                     name = name,
-                    size_liters = liters!!,
-                    template_id = template_id_for_size(liters),
+                    size_liters = liters,
+                    template_id = template_id_for_bag_size_liters(liters),
                     updated_at = nowMs(),
                     updated_by = phone_device_id
                 )
@@ -451,14 +454,4 @@ class InventoryViewModel(
         }
     }
 
-    private fun template_id_for_size(liters: Int): String = when (liters) {
-        25 -> "template_25l"
-        44 -> "template_44l"
-        66 -> "template_66l"
-        else -> "template_44l"
-    }
-
-    private companion object {
-        val allowed_bag_sizes = setOf(25, 44, 66)
-    }
 }

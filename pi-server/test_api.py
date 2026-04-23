@@ -139,6 +139,14 @@ class PiServerApiTests(unittest.TestCase):
                 self.assertEqual(self.module.current_device_ip_display(), "192.168.1.9")
                 self.assertEqual(self.module.current_device_base_url_display(), "http://192.168.1.9:8001")
 
+    def test_compute_local_ip_omits_port_from_configured_base_url(self):
+        with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": "http://192.168.1.20:8080"}, clear=False):
+            self.assertEqual(self.module.compute_local_ip(), "192.168.1.20")
+            self.assertEqual(self.module.compute_local_base_url(), "http://192.168.1.20:8080")
+
+    def test_normalize_base_url_value_rejects_duplicate_port(self):
+        self.assertEqual(self.module.normalize_base_url_value("http://192.168.1.20:8080:8080"), "")
+
     def test_device_status_exposes_secure_remote_base_url(self):
         with mock.patch.dict(
             os.environ,
@@ -229,8 +237,8 @@ class PiServerApiTests(unittest.TestCase):
         bag = self.module.Bag(
             bag_id="bag-1",
             name="Field Bag",
-            size_liters=44,
-            template_id="template_44l",
+            size_liters=46,
+            template_id="template_46l",
             updated_at=1,
             updated_by="pi-1",
         )
@@ -248,7 +256,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(categories.status_code, 200)
         category_id = categories.json()[0]["id"]
 
-        bag = self.client.post("/bags", json={"name": "Family Bag", "bag_type": "44l"})
+        bag = self.client.post("/bags", json={"name": "Family Bag", "bag_type": "46l"})
         self.assertEqual(bag.status_code, 201)
         bag_id = bag.json()["id"]
 
@@ -302,7 +310,7 @@ class PiServerApiTests(unittest.TestCase):
 
     def test_data_persists_after_reload(self):
         categories = self.client.get("/categories").json()
-        bag = self.client.post("/bags", json={"name": "Reload Bag", "bag_type": "44l"}).json()
+        bag = self.client.post("/bags", json={"name": "Reload Bag", "bag_type": "46l"}).json()
         self.client.post(
             f"/bags/{bag['id']}/items",
             json={
@@ -356,8 +364,8 @@ class PiServerApiTests(unittest.TestCase):
                     {
                         "bag_id": bag_id,
                         "name": "Sync Bag",
-                        "size_liters": 44,
-                        "template_id": "template_44l",
+                        "size_liters": 46,
+                        "template_id": "template_46l",
                         "updated_at": 1000,
                         "updated_by": "phone-sync-test",
                     }
@@ -388,7 +396,7 @@ class PiServerApiTests(unittest.TestCase):
 
     def test_alerts_include_item_bag_and_expiry_details(self):
         category_id = self.client.get("/categories").json()[0]["id"]
-        bag = self.client.post("/bags", json={"name": "Medic Bag", "bag_type": "44l"})
+        bag = self.client.post("/bags", json={"name": "Medic Bag", "bag_type": "46l"})
         self.assertEqual(bag.status_code, 201)
         bag_id = bag.json()["id"]
 
@@ -422,7 +430,7 @@ class PiServerApiTests(unittest.TestCase):
 
     def test_manual_add_merges_same_batch_and_preserves_separate_expiry_batches(self):
         category_id = self.client.get("/categories").json()[0]["id"]
-        bag = self.client.post("/bags", json={"name": "Merge Bag", "bag_type": "25l"})
+        bag = self.client.post("/bags", json={"name": "Merge Bag", "bag_type": "46l"})
         self.assertEqual(bag.status_code, 201)
         bag_id = bag.json()["id"]
 
@@ -1615,7 +1623,7 @@ class PiServerApiTests(unittest.TestCase):
         created = self.client.post("/bags", json={"name": "Field Bag", "bag_type": "25l"})
         self.assertEqual(created.status_code, 201)
         self.assertEqual(created.json()["id"], bag_id)
-        self.assertEqual(created.json()["bag_type"], "25l")
+        self.assertEqual(created.json()["bag_type"], "46l")
 
         updated = self.client.put("/device/bag", json={"name": "Field Bag", "bag_type": "66l", "last_checked_at": None})
         self.assertEqual(updated.status_code, 200)
@@ -1656,8 +1664,8 @@ class PiServerApiTests(unittest.TestCase):
                     {
                         "bag_id": bag_id,
                         "name": "Field Bag",
-                        "size_liters": 44,
-                        "template_id": "template_44l",
+                        "size_liters": 46,
+                        "template_id": "template_46l",
                         "updated_at": 1000,
                         "updated_by": "phone-kiosk-refresh",
                     }

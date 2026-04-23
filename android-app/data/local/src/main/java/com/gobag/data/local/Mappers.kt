@@ -4,6 +4,8 @@ import com.gobag.core.model.BagProfile
 import com.gobag.core.model.Conflict
 import com.gobag.core.model.Item
 import com.gobag.core.model.RecommendedItem
+import com.gobag.core.model.normalize_bag_size_liters
+import com.gobag.core.model.normalize_bag_template_id
 import com.google.gson.Gson
 
 private val gson = Gson()
@@ -11,8 +13,8 @@ private val gson = Gson()
 fun BagEntity.to_model(): BagProfile = BagProfile(
     bag_id = bag_id,
     name = name,
-    size_liters = size_liters,
-    template_id = template_id,
+    size_liters = normalize_bag_size_liters(size_liters),
+    template_id = normalize_bag_template_id(template_id),
     updated_at = updated_at,
     updated_by = updated_by
 )
@@ -20,8 +22,8 @@ fun BagEntity.to_model(): BagProfile = BagProfile(
 fun BagProfile.to_entity(): BagEntity = BagEntity(
     bag_id = bag_id,
     name = name,
-    size_liters = size_liters,
-    template_id = template_id,
+    size_liters = normalize_bag_size_liters(size_liters),
+    template_id = normalize_bag_template_id(template_id),
     updated_at = updated_at,
     updated_by = updated_by
 )
@@ -57,7 +59,7 @@ fun Item.to_entity(): ItemEntity = ItemEntity(
 )
 
 fun RecommendedItemEntity.to_model(): RecommendedItem = RecommendedItem(
-    template_id = template_id,
+    template_id = normalize_bag_template_id(template_id),
     category = category,
     name = name,
     recommended_qty = recommended_qty,
@@ -67,7 +69,7 @@ fun RecommendedItemEntity.to_model(): RecommendedItem = RecommendedItem(
 )
 
 fun RecommendedItem.to_entity(): RecommendedItemEntity = RecommendedItemEntity(
-    template_id = template_id,
+    template_id = normalize_bag_template_id(template_id),
     category = category,
     name = name,
     recommended_qty = recommended_qty,

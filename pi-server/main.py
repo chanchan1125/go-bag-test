@@ -248,7 +248,7 @@ class BagRecord(BaseModel):
 
 class BagCreateRequest(BaseModel):
     name: str
-    bag_type: str = "44l"
+    bag_type: str = "46l"
 
 
 class BagUpdateRequest(BaseModel):
@@ -1305,6 +1305,39 @@ def bag_size_label(size_liters: int) -> str:
     return f"{size_liters}L"
 
 
+SUPPORTED_BAG_SIZES_LITERS = {46, 66}
+DEFAULT_BAG_SIZE_LITERS = 46
+
+
+def normalize_supported_size_liters(size_liters: Optional[int]) -> Optional[int]:
+    if size_liters is None:
+        return None
+    normalized = int(size_liters)
+    if normalized in {25, 44, 46}:
+        return 46
+    if normalized == 66:
+        return 66
+    return None
+
+
+def normalize_template_id(template_id: str) -> str:
+    normalized = (template_id or "").strip().lower()
+    if normalized in {"template_25l", "template_44l", "template_46l"}:
+        return "template_46l"
+    if normalized == "template_66l":
+        return "template_66l"
+    return normalized
+
+
+def normalize_bag_type_value(bag_type: str) -> str:
+    normalized = (bag_type or "").strip().lower()
+    if normalized in {"25l", "44l", "46l"}:
+        return "46l"
+    if normalized == "66l":
+        return "66l"
+    return normalized
+
+
 def default_bag_name_for_size(size_liters: int) -> str:
     return f"{bag_size_label(size_liters)} Bag"
 
@@ -1314,6 +1347,7 @@ def is_default_bag_name(name: str) -> bool:
     return normalized in {
         "25l bag",
         "44l bag",
+        "46l bag",
         "66l bag",
         "go bag",
         "go-bag",
@@ -1450,13 +1484,13 @@ def iso_date_from_epoch_ms(value: Optional[int]) -> Optional[str]:
 
 
 def bag_type_for_template(template_id: str, size_liters: int) -> str:
-    if template_id == "template_25l":
-        return "25l"
-    if template_id == "template_44l":
-        return "44l"
-    if template_id == "template_66l":
+    normalized_template_id = normalize_template_id(template_id)
+    if normalized_template_id == "template_46l":
+        return "46l"
+    if normalized_template_id == "template_66l":
         return "66l"
-    return f"{size_liters}l" if size_liters in {25, 44, 66} else "44l"
+    normalized_size_liters = normalize_supported_size_liters(size_liters)
+    return f"{normalized_size_liters}l" if normalized_size_liters in SUPPORTED_BAG_SIZES_LITERS else "46l"
 
 
 def row_to_bag(row: sqlite3.Row) -> Bag:
@@ -1719,7 +1753,9 @@ def preferred_single_bag_row(conn: sqlite3.Connection, preferred_bag_id: Optiona
         rows,
         key=lambda row: (
             -int(row["item_count"] or 0),
-            0 if int(row["size_liters"] or 44) == 44 else 1,
+            0
+            if normalize_supported_size_liters(int(row["size_liters"] or DEFAULT_BAG_SIZE_LITERS)) == DEFAULT_BAG_SIZE_LITERS
+            else 1,
             int(row["created_at"] or row["updated_at"] or 0),
             (row["name"] or "").lower(),
         ),
@@ -1758,9 +1794,10 @@ def ensure_single_bag(
     preferred_name: Optional[str] = None,
 ) -> sqlite3.Row:
     canonical = preferred_single_bag_row(conn, preferred_bag_id=preferred_bag_id)
+    normalized_preferred_size_liters = normalize_supported_size_liters(preferred_size_liters)
     if canonical is None:
         current_time = now_ms()
-        size_liters = preferred_size_liters if preferred_size_liters in {25, 44, 66} else 44
+        size_liters = normalized_preferred_size_liters or DEFAULT_BAG_SIZE_LITERS
         upsert_bag(
             conn,
             Bag(
@@ -1794,13 +1831,14 @@ def ensure_single_bag(
         conn.executemany("DELETE FROM bags WHERE bag_id = ?", [(row["bag_id"],) for row in extras])
         canonical = conn.execute("SELECT * FROM bags WHERE bag_id = ?", (canonical["bag_id"],)).fetchone()
 
-    target_size = preferred_size_liters if preferred_size_liters in {25, 44, 66} else int(canonical["size_liters"] or 44)
+    current_size = normalize_supported_size_liters(int(canonical["size_liters"] or DEFAULT_BAG_SIZE_LITERS)) or DEFAULT_BAG_SIZE_LITERS
+    target_size = normalized_preferred_size_liters or current_size
     target_name = (preferred_name or "").strip()
     if not target_name:
         current_name = (canonical["name"] or "").strip()
         if not current_name:
             target_name = default_bag_name_for_size(target_size)
-        elif is_default_bag_name(current_name) and int(canonical["size_liters"] or target_size) != target_size:
+        elif is_default_bag_name(current_name) and current_size != target_size:
             target_name = default_bag_name_for_size(target_size)
         else:
             target_name = current_name
@@ -1809,7 +1847,7 @@ def ensure_single_bag(
     target_bag_type = bag_type_for_template(target_template_id, target_size)
     if (
         canonical["name"] != target_name
-        or int(canonical["size_liters"] or 44) != target_size
+        or current_size != target_size
         or canonical["template_id"] != target_template_id
         or (canonical["bag_type"] or "") != target_bag_type
         or canonical["created_at"] is None
@@ -1905,19 +1943,29 @@ def preferred_non_loopback_ip() -> str:
     return ""
 
 
+def format_url_host(host: str) -> str:
+    normalized = str(host or "").strip().strip("[]")
+    if not normalized:
+        return ""
+    if ":" in normalized:
+        return f"[{normalized}]"
+    return normalized
+
+
 def compute_local_ip() -> str:
-    base_url = os.getenv("GOBAG_BASE_URL", "").strip()
-    if "://" in base_url:
-        host_port = base_url.split("://", 1)[1].split("/", 1)[0]
-        if host_port and "127.0.0.1" not in host_port and "localhost" not in host_port:
-            return host_port
+    configured = normalize_base_url_value(os.getenv("GOBAG_BASE_URL", ""))
+    if configured:
+        parsed = urlsplit(configured)
+        host = (parsed.hostname or "").strip()
+        if host and host not in {"127.0.0.1", "localhost"}:
+            return host
 
     detected_ip = preferred_non_loopback_ip()
     if detected_ip:
-        return f"{detected_ip}:{PORT}"
+        return detected_ip
 
     if HOST not in {"127.0.0.1", "localhost"} and HOST != "0.0.0.0":
-        return f"{HOST}:{PORT}"
+        return str(HOST).strip().strip("[]")
 
     return ""
 
@@ -1949,11 +1997,19 @@ def normalize_base_url_value(raw_value: str) -> str:
     value = str(raw_value or "").strip().rstrip("/")
     if not value:
         return ""
-    parsed = urlsplit(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    try:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").strip()
+        port = parsed.port
+    except ValueError:
+        return ""
+    if parsed.scheme not in {"http", "https"} or not host:
         return ""
     path = parsed.path.rstrip("/")
-    return f"{parsed.scheme}://{parsed.netloc}{path}"
+    authority = format_url_host(host)
+    if port is not None:
+        authority = f"{authority}:{port}"
+    return f"{parsed.scheme}://{authority}{path}"
 
 
 def is_trusted_private_or_mesh_host(host: str) -> bool:
@@ -1990,12 +2046,14 @@ def compute_local_base_url(request: Optional[Request] = None) -> str:
 
     detected = compute_local_ip()
     if detected:
-        return f"http://{detected}"
+        return f"http://{format_url_host(detected)}:{PORT}"
 
     if request is not None:
         host = request.headers.get("host", "").strip()
         if host and "127.0.0.1" not in host and "localhost" not in host:
-            return f"http://{host}"
+            normalized = normalize_base_url_value(f"http://{host}")
+            if normalized:
+                return normalized
 
     return f"http://127.0.0.1:{PORT}"
 
@@ -2180,7 +2238,7 @@ def current_device_base_url_display(request: Optional[Request] = None) -> str:
     parsed = urlsplit(fallback_base_url if "://" in fallback_base_url else f"http://{fallback_base_url}")
     scheme = parsed.scheme or "http"
     port = parsed.port or PORT
-    return f"{scheme}://{live_ip}:{port}"
+    return f"{scheme}://{format_url_host(live_ip)}:{port}"
 
 
 def compute_base_url(request: Optional[Request] = None) -> str:
@@ -2458,18 +2516,42 @@ def init_db() -> None:
         conn.executemany(
             "INSERT INTO templates(template_id, category, name, recommended_qty, unit, priority, tips) VALUES(?, ?, ?, ?, ?, ?, ?)",
             [
-                ("template_25l", "Water & Food", "Drinking Water", 2, "L", "critical", "Rotate every 6 months."),
-                ("template_25l", "Medical & Health", "First Aid Kit", 1, "set", "important", "Keep medications current."),
-                ("template_44l", "Water & Food", "Drinking Water", 3, "L", "critical", "Rotate every 6 months."),
-                ("template_44l", "Water & Food", "Energy Bars", 6, "pcs", "critical", "Heat stable bars."),
+                ("template_46l", "Water & Food", "Drinking Water", 3, "L", "critical", "Rotate every 6 months."),
+                ("template_46l", "Water & Food", "Energy Bars", 6, "pcs", "critical", "Heat stable bars."),
                 ("template_66l", "Water & Food", "Drinking Water", 6, "L", "critical", "Use sealed bottles."),
                 ("template_66l", "Medical & Health", "First Aid Kit", 1, "set", "critical", "Include meds."),
-                ("template_44l", "Tools & Protection", "Multi Tool", 1, "pcs", "important", "Rust resistant."),
+                ("template_46l", "Medical & Health", "First Aid Kit", 1, "set", "important", "Keep medications current."),
+                ("template_46l", "Tools & Protection", "Multi Tool", 1, "pcs", "important", "Rust resistant."),
             ],
+        )
+        conn.execute(
+            """
+            UPDATE bags
+            SET
+              size_liters = CASE
+                WHEN size_liters IN (25, 44) THEN 46
+                WHEN size_liters IN (46, 66) THEN size_liters
+                ELSE 46
+              END,
+              template_id = CASE
+                WHEN LOWER(COALESCE(template_id, '')) IN ('template_25l', 'template_44l', 'template_46l') THEN 'template_46l'
+                WHEN LOWER(COALESCE(template_id, '')) = 'template_66l' THEN 'template_66l'
+                ELSE 'template_46l'
+              END,
+              bag_type = CASE
+                WHEN LOWER(COALESCE(bag_type, '')) IN ('25l', '44l', '46l') THEN '46l'
+                WHEN LOWER(COALESCE(bag_type, '')) = '66l' THEN '66l'
+                ELSE '46l'
+              END,
+              name = CASE
+                WHEN LOWER(TRIM(COALESCE(name, ''))) IN ('25l bag', '44l bag') THEN '46L Bag'
+                ELSE name
+              END
+            """
         )
         if conn.execute("SELECT COUNT(*) AS c FROM bags").fetchone()["c"] == 0:
             t = now_ms()
-            size_liters = 44
+            size_liters = DEFAULT_BAG_SIZE_LITERS
             upsert_bag(
                 conn,
                 Bag(
@@ -2486,10 +2568,9 @@ def init_db() -> None:
             UPDATE bags
             SET
               bag_type = COALESCE(bag_type, CASE
-                WHEN template_id = 'template_25l' THEN '25l'
-                WHEN template_id = 'template_44l' THEN '44l'
+                WHEN template_id = 'template_46l' THEN '46l'
                 WHEN template_id = 'template_66l' THEN '66l'
-                ELSE '44l'
+                ELSE '46l'
               END),
               readiness_status = COALESCE(readiness_status, 'incomplete'),
               created_at = COALESCE(created_at, updated_at)
@@ -3280,24 +3361,21 @@ def compute_low_stock_items(conn: sqlite3.Connection) -> List[sqlite3.Row]:
 
 
 def size_liters_for_bag_type(bag_type: str) -> int:
-    normalized = bag_type.strip().lower()
-    if normalized == "25l":
-        return 25
-    if normalized == "44l":
-        return 44
+    normalized = normalize_bag_type_value(bag_type)
+    if normalized == "46l":
+        return 46
     if normalized == "66l":
         return 66
-    raise HTTPException(status_code=400, detail="Bag size must be 25L, 44L, or 66L")
+    raise HTTPException(status_code=400, detail="Bag size must be 46L or 66L")
 
 
 def template_id_for_size(size_liters: int) -> str:
-    if size_liters == 25:
-        return "template_25l"
-    if size_liters == 44:
-        return "template_44l"
-    if size_liters == 66:
+    normalized_size_liters = normalize_supported_size_liters(size_liters)
+    if normalized_size_liters == 46:
+        return "template_46l"
+    if normalized_size_liters == 66:
         return "template_66l"
-    raise HTTPException(status_code=400, detail="Bag size must be 25L, 44L, or 66L")
+    raise HTTPException(status_code=400, detail="Bag size must be 46L or 66L")
 
 
 def normalized_identity_key(name: str, unit: str, category: str) -> str:
@@ -4395,7 +4473,7 @@ def get_category_name(conn: sqlite3.Connection, category_id: str) -> str:
 
 def write_bag_record(conn: sqlite3.Connection, bag_id: str, payload: Union[BagCreateRequest, BagUpdateRequest]) -> BagRecord:
     current_time = now_ms()
-    bag_type = payload.bag_type.strip().lower() or "44l"
+    bag_type = normalize_bag_type_value(payload.bag_type) or "46l"
     size_liters = size_liters_for_bag_type(bag_type)
     template_id = template_id_for_size(size_liters)
     existing = conn.execute("SELECT created_at FROM bags WHERE bag_id = ?", (bag_id,)).fetchone()
@@ -5711,7 +5789,7 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
     bag_size_options = "".join(
         [
             f'<option value="{bag_type}" {"selected" if bag.bag_id and bag_type == bag_type_for_template(bag.template_id, bag.size_liters) else ""}>{escape(label)}</option>'
-            for _, bag_type, label in [(25, "25l", "25L"), (44, "44l", "44L"), (66, "66l", "66L")]
+            for _, bag_type, label in [(46, "46l", "46L"), (66, "66l", "66L")]
         ]
     )
     inventory_notice = "This Raspberry Pi stays display-only. Inventory updates appear here after the paired phone syncs them."

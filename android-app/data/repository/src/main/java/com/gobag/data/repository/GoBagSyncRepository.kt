@@ -8,6 +8,9 @@ import com.gobag.core.model.BagProfile
 import com.gobag.core.model.Conflict
 import com.gobag.core.model.DeviceState
 import com.gobag.core.model.Item
+import com.gobag.core.model.is_supported_bag_size_liters
+import com.gobag.core.model.normalize_bag_size_liters
+import com.gobag.core.model.normalize_bag_template_id
 import com.gobag.data.local.ConflictDao
 import com.gobag.data.local.to_entity
 import com.gobag.data.local.to_model
@@ -268,7 +271,7 @@ class GoBagSyncRepository(
             it.bag_id.isBlank() ||
                 it.name.isBlank() ||
                 it.bag_id != selectedBagId ||
-                it.size_liters !in setOf(25, 44, 66) ||
+                !is_supported_bag_size_liters(it.size_liters) ||
                 it.template_id.isBlank() ||
                 it.updated_by.isBlank()
         }
@@ -353,8 +356,8 @@ class GoBagSyncRepository(
 private fun BagProfile.as_remote_dto(): BagDto = BagDto(
     bag_id = bag_id,
     name = name,
-    size_liters = size_liters,
-    template_id = template_id,
+    size_liters = normalize_bag_size_liters(size_liters),
+    template_id = normalize_bag_template_id(template_id),
     updated_at = updated_at,
     updated_by = updated_by
 )
@@ -377,8 +380,8 @@ private fun Item.as_remote_dto(): ItemDto = ItemDto(
 private fun BagDto.as_remote_model(): BagProfile = BagProfile(
     bag_id = bag_id,
     name = name,
-    size_liters = size_liters,
-    template_id = template_id,
+    size_liters = normalize_bag_size_liters(size_liters),
+    template_id = normalize_bag_template_id(template_id),
     updated_at = updated_at,
     updated_by = updated_by
 )

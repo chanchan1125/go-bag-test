@@ -3,6 +3,10 @@ package com.gobag.data.repository
 import com.gobag.core.model.BagProfile
 import com.gobag.core.model.RecommendedItem
 import com.gobag.core.model.SavedPiAddress
+import com.gobag.core.model.is_supported_bag_size_liters
+import com.gobag.core.model.normalize_bag_size_liters
+import com.gobag.core.model.normalize_bag_template_id
+import com.gobag.core.model.template_id_for_bag_size_liters
 import com.gobag.data.local.RecommendedItemDao
 import com.gobag.data.local.to_entity
 import com.gobag.data.remote.PairRequestDto
@@ -147,8 +151,10 @@ class GoBagPairingRepository(
         val bagProfile = BagProfile(
             bag_id = bagSeed.bag_id,
             name = bagSeed.bag_name,
-            size_liters = bagSeed.size_liters,
-            template_id = bagSeed.template_id.ifBlank { template_id_for_size(bagSeed.size_liters) },
+            size_liters = normalize_bag_size_liters(bagSeed.size_liters),
+            template_id = normalize_bag_template_id(bagSeed.template_id).ifBlank {
+                template_id_for_bag_size_liters(bagSeed.size_liters)
+            },
             updated_at = if (bagSeed.updated_at > 0L) bagSeed.updated_at else phone_time_ms,
             updated_by = resolvedPiDeviceId
         )
@@ -192,7 +198,7 @@ class GoBagPairingRepository(
         runCatching {
             val templates = api.templates().templates.map { template ->
                 RecommendedItem(
-                    template_id = template.template_id,
+                    template_id = normalize_bag_template_id(template.template_id),
                     category = template.category,
                     name = template.name,
                     recommended_qty = template.recommended_qty,
@@ -233,15 +239,19 @@ class GoBagPairingRepository(
         qr_payload: PairQrPayload?
     ): PairingBagSeed {
         val remoteBag = runCatching { api.device_bag() }.getOrNull()
+        val qrSizeLiters = qr_payload?.size_liters
+            ?.let(::normalize_bag_size_liters)
+            ?.takeIf(::is_supported_bag_size_liters)
+        val qrTemplateId = normalize_bag_template_id(qr_payload?.template_id.orEmpty())
         if (remoteBag != null) {
             val sizeLiters = size_liters_for_bag_type(remoteBag.bag_type)
-                ?: qr_payload?.size_liters
-                ?: 44
+                ?: qrSizeLiters
+                ?: 46
             return PairingBagSeed(
                 bag_id = remoteBag.id.trim(),
                 bag_name = remoteBag.name.trim().ifBlank { qr_payload?.bag_name?.trim().orEmpty().ifBlank { "GO BAG" } },
                 size_liters = sizeLiters,
-                template_id = qr_payload?.template_id?.takeIf { it.isNotBlank() } ?: template_id_for_size(sizeLiters),
+                template_id = qrTemplateId.ifBlank { template_id_for_bag_size_liters(sizeLiters) },
                 updated_at = remoteBag.updated_at
             )
         }
@@ -249,8 +259,10 @@ class GoBagPairingRepository(
             return PairingBagSeed(
                 bag_id = qr_payload.bag_id.trim(),
                 bag_name = qr_payload.bag_name.trim(),
-                size_liters = qr_payload.size_liters ?: 44,
-                template_id = qr_payload.template_id.ifBlank { template_id_for_size(qr_payload.size_liters ?: 44) },
+                size_liters = qrSizeLiters ?: 46,
+                template_id = qrTemplateId.ifBlank {
+                    template_id_for_bag_size_liters(qrSizeLiters ?: 46)
+                },
                 updated_at = 0L
             )
         }
@@ -326,17 +338,6 @@ class GoBagPairingRepository(
         return parts[0] == 100 && parts[1] in 64..127
     }
 
-    private fun normalize_base_url(base_url: String): String {
-        val normalizedBaseUrl = base_url.trim().removeSuffix("/")
-        if (normalizedBaseUrl.isBlank()) {
-            throw IllegalArgumentException("Enter the bag location first.")
-        }
-        if (!normalizedBaseUrl.startsWith("http://") && !normalizedBaseUrl.startsWith("https://")) {
-            throw IllegalArgumentException("Use a full location like http://192.168.1.20:8080.")
-        }
-        return normalizedBaseUrl
-    }
-
     private fun normalize_pair_code(pair_code: String): String {
         val normalized = pair_code.trim().filter { !it.isWhitespace() }
         if (!normalized.matches(Regex("\\d{6}"))) {
@@ -396,16 +397,8 @@ class GoBagPairingRepository(
     }
 
     private fun size_liters_for_bag_type(bag_type: String): Int? = when (bag_type.trim().lowercase()) {
-        "25l" -> 25
-        "44l" -> 44
+        "25l", "44l", "46l" -> 46
         "66l" -> 66
         else -> null
-    }
-
-    private fun template_id_for_size(liters: Int): String = when (liters) {
-        25 -> "template_25l"
-        44 -> "template_44l"
-        66 -> "template_66l"
-        else -> "template_44l"
     }
 }

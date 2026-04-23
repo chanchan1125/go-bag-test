@@ -1,5 +1,8 @@
 package com.gobag.data.repository
 
+import com.gobag.core.model.is_supported_bag_size_liters
+import com.gobag.core.model.normalize_bag_size_liters
+import com.gobag.core.model.normalize_bag_template_id
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 
@@ -16,7 +19,7 @@ data class PairQrPayload(
     fun has_complete_bag_identity(): Boolean {
         return bag_id.isNotBlank() &&
             bag_name.isNotBlank() &&
-            size_liters in setOf(25, 44, 66)
+            size_liters?.let(::is_supported_bag_size_liters) == true
     }
 }
 
@@ -47,8 +50,10 @@ object PairQrParser {
             pi_device_id = payload.read_string("pi_device_id"),
             bag_id = payload.read_string("bag_id"),
             bag_name = payload.read_string("bag_name"),
-            size_liters = payload.read_int("size_liters"),
-            template_id = payload.read_string("template_id")
+            size_liters = payload.read_int("size_liters")
+                ?.let(::normalize_bag_size_liters)
+                ?.takeIf(::is_supported_bag_size_liters),
+            template_id = normalize_bag_template_id(payload.read_string("template_id"))
         )
     }
 }

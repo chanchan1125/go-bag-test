@@ -401,10 +401,24 @@ internal fun normalize_base_url(base_url: String): String {
     if (normalizedBaseUrl.isBlank()) {
         throw IllegalArgumentException("Enter the bag location first.")
     }
-    if (!normalizedBaseUrl.startsWith("http://") && !normalizedBaseUrl.startsWith("https://")) {
+    val uri = runCatching { URI(normalizedBaseUrl) }.getOrElse {
+        throw IllegalArgumentException("That bag location is not valid.")
+    }
+    val scheme = uri.scheme?.lowercase().orEmpty()
+    if (scheme != "http" && scheme != "https") {
         throw IllegalArgumentException("Use a full location like http://192.168.1.20:8080.")
     }
-    return normalizedBaseUrl
+    val host = uri.host?.trim()?.trim('[', ']').orEmpty()
+    if (host.isBlank()) {
+        throw IllegalArgumentException("That bag location is not valid.")
+    }
+    val port = if (uri.port == -1) "" else ":${uri.port}"
+    val path = uri.rawPath
+        ?.trim()
+        ?.takeIf { it.isNotBlank() && it != "/" }
+        ?.trimEnd('/')
+        .orEmpty()
+    return "$scheme://${format_url_host(host)}$port$path"
 }
 
 internal fun classify_connection_error(error: Exception): String {
@@ -457,11 +471,15 @@ private fun rebuild_endpoint_with_local_ip(base_url: String, local_ip: String): 
     if (base_url.isBlank() || local_ip.isBlank()) return null
     val uri = runCatching { URI(normalize_base_url(base_url)) }.getOrNull() ?: return null
     val scheme = uri.scheme?.ifBlank { "http" } ?: "http"
-    val host = local_ip.trim()
+    val host = normalize_local_host(local_ip)
     if (host.isBlank()) return null
     val port = if (uri.port == -1) "" else ":${uri.port}"
-    val path = uri.path?.trim()?.takeIf { it.isNotBlank() && it != "/" }.orEmpty()
-    return "$scheme://$host$port$path".removeSuffix("/")
+    val path = uri.rawPath
+        ?.trim()
+        ?.takeIf { it.isNotBlank() && it != "/" }
+        ?.trimEnd('/')
+        .orEmpty()
+    return "$scheme://${format_url_host(host)}$port$path"
 }
 
 private fun parse_fastapi_detail(raw: String): String {
@@ -480,6 +498,36 @@ private fun normalize_optional_base_url(base_url: String?): String {
         ?.takeIf { it.isNotBlank() }
         ?.let { runCatching { normalize_base_url(it) }.getOrNull() }
         .orEmpty()
+}
+
+private fun normalize_local_host(local_ip: String): String {
+    val normalizedLocalIp = local_ip.trim().removeSuffix("/")
+    if (normalizedLocalIp.isBlank()) return ""
+    if (
+        normalizedLocalIp.startsWith("http://", ignoreCase = true) ||
+        normalizedLocalIp.startsWith("https://", ignoreCase = true)
+    ) {
+        return runCatching { URI(normalizedLocalIp) }.getOrNull()?.host.orEmpty()
+    }
+    if (normalizedLocalIp.startsWith("[") && normalizedLocalIp.contains("]")) {
+        return normalizedLocalIp.substringAfter("[").substringBefore("]").trim()
+    }
+    if (normalizedLocalIp.count { it == ':' } == 1) {
+        val host = normalizedLocalIp.substringBeforeLast(':').trim()
+        val maybePort = normalizedLocalIp.substringAfterLast(':').trim()
+        if (host.isNotBlank() && maybePort.isNotBlank() && maybePort.all(Char::isDigit)) {
+            return host
+        }
+    }
+    return normalizedLocalIp
+}
+
+private fun format_url_host(host: String): String {
+    val normalizedHost = host.trim().trim('[', ']')
+    if (normalizedHost.contains(':')) {
+        return "[$normalizedHost]"
+    }
+    return normalizedHost
 }
 
 private fun derive_relay_base_url(pi_device_id: String): String {
