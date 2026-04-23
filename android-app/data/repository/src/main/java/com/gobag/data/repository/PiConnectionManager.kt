@@ -351,15 +351,12 @@ class PiConnectionManager(
     }
 
     private fun build_refresh_failure_message(state: DeviceState, last_failure: String): String {
-        val selectedPairedBag = selected_paired_bag(state)
-        val hasRemotePath = state.remote_base_url.isNotBlank() ||
-            !selectedPairedBag?.remote_base_url.isNullOrBlank() ||
-            derive_relay_base_url(state.pi_device_id.ifBlank { selectedPairedBag?.pi_device_id.orEmpty() }).isNotBlank()
+        val hasRemotePath = selected_has_remote_path(state)
         return when {
             state.paired_bags.isNotEmpty() && hasRemotePath ->
                 "Your bag is offline right now on both its local and remote links. ${last_failure.ifBlank { "Try reconnecting." }}"
             state.paired_bags.isNotEmpty() ->
-                "Your bag is offline right now. ${last_failure.ifBlank { "Try reconnecting." }}"
+                "Your bag is offline right now. This selected bag does not have a saved remote link, so cellular sync needs that Raspberry Pi to advertise one first. ${last_failure.ifBlank { "Try reconnecting on the same Wi-Fi." }}"
             state.saved_addresses.isNotEmpty() ->
                 "We could not reach the saved bag location. ${last_failure.ifBlank { "Try again." }}"
             else ->
@@ -551,18 +548,21 @@ private fun connection_probe_auth_token(state: DeviceState): String {
 }
 
 private fun should_prefer_remote_candidates(state: DeviceState): Boolean {
-    val selectedPairedBag = selected_paired_bag(state)
-    val selectedHasRemotePath = state.remote_base_url.isNotBlank() ||
-        !selectedPairedBag?.remote_base_url.isNullOrBlank() ||
-        derive_relay_base_url(state.pi_device_id.ifBlank { selectedPairedBag?.pi_device_id.orEmpty() }).isNotBlank()
     if (state.last_connection_mode == CONNECTION_MODE_REMOTE) return true
     if (infer_endpoint_mode(state.base_url, state) == CONNECTION_MODE_REMOTE) return true
-    return selectedHasRemotePath && state.paired_bags.any { it.last_connection_mode == CONNECTION_MODE_REMOTE }
+    return selected_has_remote_path(state) && state.paired_bags.any { it.last_connection_mode == CONNECTION_MODE_REMOTE }
 }
 
 private fun selected_paired_bag(state: DeviceState): PairedBagConnection? {
     return state.paired_bags.firstOrNull { it.bag_id == state.selected_bag_id }
         ?: state.paired_bags.firstOrNull { state.pi_device_id.isNotBlank() && it.pi_device_id == state.pi_device_id }
+}
+
+private fun selected_has_remote_path(state: DeviceState): Boolean {
+    val selectedPairedBag = selected_paired_bag(state)
+    return state.remote_base_url.isNotBlank() ||
+        !selectedPairedBag?.remote_base_url.isNullOrBlank() ||
+        derive_relay_base_url(state.pi_device_id.ifBlank { selectedPairedBag?.pi_device_id.orEmpty() }).isNotBlank()
 }
 
 private fun urls_equivalent(left: String, right: String): Boolean {

@@ -948,14 +948,18 @@ private fun InventoryGroupCard(
     val normalizedCategory = PreparednessRules.normalize_category(group.category)
     val allPacked = group.batches.all { it.packed_status }
     val hasUnpacked = group.batches.any { !it.packed_status }
-    val expiryState = group.batches
-        .map { PreparednessRules.expiration_state(it) }
-        .firstOrNull { it == "EXPIRED" || it == "NEAR_EXPIRY" }
-    val statusLabel = if (hasUnpacked) "NEEDS PACK" else "PACKED"
+    val hasExpired = group.batches.any { PreparednessRules.expiration_state(it) == "EXPIRED" }
+    val hasNearExpiry = group.batches.any { PreparednessRules.expiration_state(it) == "NEAR_EXPIRY" }
+    val expiryState = when {
+        hasExpired -> "EXPIRED"
+        hasNearExpiry -> "NEAR_EXPIRY"
+        else -> null
+    }
+    val statusLabel = if (hasUnpacked) "Needs pack" else "Packed"
     val statusColor = if (hasUnpacked) InventoryPrimarySoft else InventorySuccess
     val expiryLabel = when (expiryState) {
-        "EXPIRED" -> "EXPIRED"
-        "NEAR_EXPIRY" -> "EXPIRING SOON"
+        "EXPIRED" -> "Expired"
+        "NEAR_EXPIRY" -> "Expiring soon"
         else -> null
     }
     val expiryColor = when (expiryState) {
@@ -1015,12 +1019,14 @@ private fun InventoryGroupCard(
                 }
             }
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 StatusPill(text = statusLabel, accent = statusColor)
                 StatusPill(
-                    text = "TOTAL ${formatQuantity(group.total_quantity)} ${group.unit.uppercase()}",
+                    text = "Total ${formatQuantity(group.total_quantity)} ${group.unit}",
                     accent = InventorySecondary
                 )
                 if (expiryLabel != null) {
@@ -1089,7 +1095,7 @@ private fun InventoryBatchCard(
                     )
                 }
                 StatusPill(
-                    text = if (batch.packed_status) "PACKED" else "UNPACKED",
+                    text = if (batch.packed_status) "Packed" else "Needs pack",
                     accent = packedAccent
                 )
             }
@@ -1224,7 +1230,9 @@ private fun StatusPill(
                 text,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                color = accent
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -1311,7 +1319,13 @@ private fun categoryAccent(category: String): Color = when (category) {
 }
 
 private fun formatBatchExpiry(expiryDateMs: Long?): String {
-    return PreparednessRules.format_epoch_ms_to_yyyy_mm_dd(expiryDateMs).ifBlank { "No expiration" }
+    val date = PreparednessRules.format_epoch_ms_to_yyyy_mm_dd(expiryDateMs)
+    if (date.isBlank()) return "No expiration"
+    return when (PreparednessRules.expiration_state_for_expiry(expiryDateMs)) {
+        "EXPIRED" -> "Expired $date"
+        "NEAR_EXPIRY" -> "Expiring soon $date"
+        else -> "Expires $date"
+    }
 }
 
 private fun formatQuantity(quantity: Double): String {

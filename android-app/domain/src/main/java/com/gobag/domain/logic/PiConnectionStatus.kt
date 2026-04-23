@@ -122,7 +122,9 @@ object PiConnectionStatus {
     fun from_device_state(state: DeviceState): PiConnectionSnapshot {
         val isPaired = state.paired_bags.isNotEmpty()
         val hasSavedAddress = state.saved_addresses.isNotEmpty() || state.base_url.isNotBlank()
-        val hasRemotePath = state.remote_base_url.isNotBlank() || state.paired_bags.any { !it.remote_base_url.isNullOrBlank() }
+        val selectedPairedBag = state.paired_bags.firstOrNull { it.bag_id == state.selected_bag_id }
+            ?: state.paired_bags.firstOrNull { state.pi_device_id.isNotBlank() && it.pi_device_id == state.pi_device_id }
+        val hasRemotePath = state.remote_base_url.isNotBlank() || !selectedPairedBag?.remote_base_url.isNullOrBlank()
         val connectionMode = state.last_connection_mode.trim().lowercase(Locale.ROOT)
         val connectionStatus = normalize_connection_status(
             value = state.connection_status,

@@ -20,6 +20,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from functools import lru_cache
 from html import escape
 from typing import Any, Dict, Iterator, List, Literal, Optional, Union
@@ -129,7 +130,6 @@ CHECKLIST_CATEGORIES = [
     "Hygiene",
     "Other",
 ]
-DAY_MS = 24 * 60 * 60 * 1000
 
 app = FastAPI(title="Go-Bag Pi Server", version="2.0.0")
 logger = logging.getLogger("gobag.pi")
@@ -345,7 +345,7 @@ class SensorSnapshot(BaseModel):
     connection_state: Literal["connecting", "live", "stale", "disconnected"] = "disconnected"
     available: bool = False
     connected: bool = False
-    message: str = "ESP32 sensor link unavailable."
+    message: str = "Bag sensors are not sending data yet."
     serial_port: str = ""
     last_read_at: int = 0
     last_live_at: int = 0
@@ -628,10 +628,10 @@ class Esp32SensorSerialManager:
 
     def _initial_message(self) -> str:
         if not SENSOR_SERIAL_ENABLED:
-            return "ESP32 sensor serial is disabled in configuration."
+            return "Bag sensor readings are turned off in settings."
         if serial is None:
-            return "pyserial is not installed, so the Raspberry Pi cannot read the ESP32 sensor link."
-        return "Connect the ESP32 to a Raspberry Pi USB serial port to start live sensor readings."
+            return "Bag sensor support is not installed on this Raspberry Pi."
+        return "Plug the bag sensor cable into the Raspberry Pi to start live readings."
 
     def _empty_sections(self) -> List[SensorSectionState]:
         return [
@@ -883,7 +883,7 @@ class Esp32SensorSerialManager:
             connection_state="live",
             available=True,
             connected=True,
-            message=f"Live sensor data from {serial_port}.",
+            message="Live bag sensor readings are updating.",
             serial_port=serial_port,
             last_read_at=read_at,
             last_live_at=read_at,
@@ -915,7 +915,7 @@ class Esp32SensorSerialManager:
                 connection_state="connecting",
                 available=False,
                 connected=True,
-                message=f"Connected to {serial_port}. Waiting for sensor payloads from the ESP32.",
+                message="Bag sensors found. Waiting for the first reading.",
                 serial_port=serial_port,
                 last_read_at=previous.last_read_at,
                 last_live_at=previous.last_live_at,
@@ -936,7 +936,7 @@ class Esp32SensorSerialManager:
                 connection_state="stale",
                 available=False,
                 connected=True,
-                message=f"Waiting for a fresh payload from the ESP32 on {serial_port}.",
+                message="Waiting for fresh bag sensor readings.",
                 serial_port=serial_port,
                 last_read_at=snapshot.last_read_at,
                 last_live_at=snapshot.last_live_at,
@@ -955,7 +955,7 @@ class Esp32SensorSerialManager:
                 connection_state=next_state,
                 available=next_state == "live",
                 connected=True,
-                message=snapshot.message if snapshot.message else f"Connected to {serial_port}. Waiting for valid sensor payloads.",
+                message=snapshot.message if snapshot.message else "Bag sensors found. Waiting for a valid reading.",
                 serial_port=serial_port,
                 last_read_at=snapshot.last_read_at,
                 last_live_at=snapshot.last_live_at,
@@ -972,7 +972,7 @@ class Esp32SensorSerialManager:
             available_ports = self._available_serial_ports()
             if not available_ports:
                 self._set_disconnected(
-                    message="ESP32 not detected on USB serial. Connect it to /dev/ttyUSB0 or /dev/ttyACM0.",
+                    message="Bag sensor cable not detected. Check the USB connection.",
                     last_error="serial_port_not_found",
                 )
                 self._stop_event.wait(SENSOR_SERIAL_RECONNECT_DELAY_S)
@@ -1000,7 +1000,7 @@ class Esp32SensorSerialManager:
             except (SerialException, OSError) as exc:
                 logger.warning("ESP32 sensor serial connection failed on %s: %s", serial_port, exc)
                 self._set_disconnected(
-                    message=f"ESP32 sensor link disconnected from {serial_port}. Waiting to reconnect.",
+                    message="Bag sensor cable disconnected. Waiting to reconnect.",
                     last_error=str(exc),
                     serial_port=serial_port,
                 )
@@ -1031,6 +1031,7 @@ class ParsedItemQr:
 class InventoryBatchView:
     item: ItemRecord
     expiry_label: str
+    expiry_state: Literal["NO_EXPIRATION", "OK", "NEAR_EXPIRY", "EXPIRED"]
 
 
 @dataclass
@@ -1580,12 +1581,10 @@ def parse_yyyy_mm_dd_to_epoch_ms(value: str) -> Optional[int]:
         return None
 
 
-def utc_day_number(value_ms: int) -> int:
-    return value_ms // DAY_MS
-
-
 def days_until_expiry(expiry_date_ms: int, current_time_ms: int) -> int:
-    return utc_day_number(expiry_date_ms) - utc_day_number(current_time_ms)
+    expiry_date = datetime.fromtimestamp(expiry_date_ms / 1000, timezone.utc).date()
+    current_date = datetime.fromtimestamp(current_time_ms / 1000).date()
+    return (expiry_date - current_date).days
 
 
 def format_expiry_date_ms(value: Optional[int]) -> str:
@@ -4498,9 +4497,11 @@ def build_inventory_groups(item_rows: List[sqlite3.Row]) -> List[InventoryGroupV
     for row in item_rows:
         grouped.setdefault(normalized_identity_key(row["name"], row["unit"], row["category"]), []).append(row)
 
+    current_time = now_ms()
     groups: List[InventoryGroupView] = []
     for rows in grouped.values():
-        ordered = [row_to_item_record(row) for row in sorted(rows, key=lambda item: (item["expiry_date_ms"] or 2**62, item["name"].lower()))]
+        ordered_rows = sorted(rows, key=lambda item: (item["expiry_date_ms"] or 2**62, item["name"].lower()))
+        ordered = [row_to_item_record(row) for row in ordered_rows]
         first = ordered[0]
         groups.append(
             InventoryGroupView(
@@ -4513,8 +4514,9 @@ def build_inventory_groups(item_rows: List[sqlite3.Row]) -> List[InventoryGroupV
                     InventoryBatchView(
                         item=item,
                         expiry_label=item.expiry_date or "No expiration",
+                        expiry_state=expiration_state_for_expiry(ordered_rows[index]["expiry_date_ms"], current_time),
                     )
-                    for item in ordered
+                    for index, item in enumerate(ordered)
                 ],
             )
         )
@@ -5485,6 +5487,7 @@ def render_summary_html(summary_cards: List[tuple[str, str, str]]) -> str:
     tone_map = {
         "status": "accent",
         "sensor": "accent",
+        "bag sensors": "accent",
         "utilization": "success",
         "readiness": "warn",
         "expired": "danger",
@@ -5617,6 +5620,24 @@ def inventory_category_tone(category: str) -> str:
     }.get(normalize_category(category), "neutral")
 
 
+def inventory_batch_expiry_text(batch: InventoryBatchView) -> str:
+    if batch.expiry_state == "NO_EXPIRATION":
+        return "No expiration"
+    if batch.expiry_state == "EXPIRED":
+        return f"Expired {batch.expiry_label}"
+    if batch.expiry_state == "NEAR_EXPIRY":
+        return f"Expiring soon {batch.expiry_label}"
+    return f"Expires {batch.expiry_label}"
+
+
+def inventory_batch_expiry_tone(batch: InventoryBatchView) -> str:
+    if batch.expiry_state == "EXPIRED":
+        return "danger"
+    if batch.expiry_state == "NEAR_EXPIRY":
+        return "warn"
+    return "neutral"
+
+
 def render_inventory_groups_html(inventory_groups: List[InventoryGroupView]) -> str:
     return "".join(
         [
@@ -5639,11 +5660,13 @@ def render_inventory_groups_html(inventory_groups: List[InventoryGroupView]) -> 
                           <span class="micro-chip">{len(group.batches)} batch{'es' if len(group.batches) != 1 else ''}</span>
                           <span class="micro-chip ok">{sum(1 for batch in group.batches if batch.item.packed_status)} packed</span>
                           {f'<span class="micro-chip warn">{sum(1 for batch in group.batches if not batch.item.packed_status)} unpacked</span>' if any(not batch.item.packed_status for batch in group.batches) else ''}
+                          {f'<span class="micro-chip danger">{sum(1 for batch in group.batches if batch.expiry_state == "EXPIRED")} expired</span>' if any(batch.expiry_state == "EXPIRED" for batch in group.batches) else ''}
+                          {f'<span class="micro-chip warn">{sum(1 for batch in group.batches if batch.expiry_state == "NEAR_EXPIRY")} expiring soon</span>' if any(batch.expiry_state == "NEAR_EXPIRY" for batch in group.batches) else ''}
                         </div>
                       </div>
                       <div class="inventory-group-total">
                         <div class="inventory-group-total-value">{group.total_quantity:g}</div>
-                        <div class="inventory-group-total-label">{escape(group.unit)} total</div>
+                        <div class="inventory-group-total-label">total {escape(group.unit)}</div>
                       </div>
                     </div>
                   </div>
@@ -5658,7 +5681,7 @@ def render_inventory_groups_html(inventory_groups: List[InventoryGroupView]) -> 
                             <div class="batch-card-head">
                               <div>
                                 <div class="batch-card-quantity">{batch.item.quantity:g} {escape(batch.item.unit)}</div>
-                                <div class="batch-card-subtitle">{escape("No expiration" if batch.expiry_label == "No expiration" else f"Expiry {batch.expiry_label}")}</div>
+                                <div class="batch-card-subtitle expiry-{inventory_batch_expiry_tone(batch)}">{escape(inventory_batch_expiry_text(batch))}</div>
                               </div>
                               <div class="pill {'ok' if batch.item.packed_status else 'warn'}">{'Packed' if batch.item.packed_status else 'Needs pack'}</div>
                             </div>
@@ -5851,7 +5874,7 @@ def render_hero_tags_html(paired: bool, readiness: dict, bag: Bag, item_count: i
     return "".join(
         [
             f'<span class="tag {"ok" if paired else "warn"}">{escape(readiness["device_status"])}</span>',
-            f'<span class="tag {sensor_tag_tone}">{escape(sensor_state_label(sensor_snapshot))} sensor</span>',
+            f'<span class="tag {sensor_tag_tone}">{escape(sensor_state_label(sensor_snapshot))} sensors</span>',
             f'<span class="tag {"ok" if readiness["bag_readiness"] == "Ready" else "warn"}">{escape(readiness["bag_readiness"])}</span>',
             f'<span class="tag">{escape(bag_size_label(bag.size_liters))} bag</span>',
             f'<span class="tag">{item_count} active item(s)</span>',
@@ -5923,11 +5946,15 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
     )
     occupied_section_count = sum(1 for section in sensor_snapshot.sections if section.detected)
     summary_cards = [
-        ("Sensor", sensor_status_label, sensor_snapshot.serial_port or "ESP32 USB serial"),
+        (
+            "Bag Sensors",
+            sensor_status_label,
+            "Live readings active" if sensor_snapshot.connection_state == "live" else "Check the bag sensor cable",
+        ),
         (
             "Utilization",
             f"{bag_utilization_percent}%" if bag_utilization_percent is not None else "Unavailable",
-            f"{occupied_section_count}/{SENSOR_SECTION_COUNT} sections occupied" if sensor_snapshot.available else "Waiting for live load-cell data",
+            f"{occupied_section_count}/{SENSOR_SECTION_COUNT} sections occupied" if sensor_snapshot.available else "Waiting for bag sensor readings",
         ),
         ("Status", readiness["bag_readiness"], readiness["device_status"]),
         ("Expired", str(len(expired_items)), f"{len(expiring_items)} near expiry"),
@@ -6553,44 +6580,13 @@ def home(request: Request) -> HTMLResponse:
           <section class="panel mission-panel">
             <div class="panel-head">
               <div>
-                <div class="panel-title">Section load sensors</div>
-                <div class="panel-note">Each monitored bag section contributes up to 20% based on its live load-cell weight.</div>
+                <div class="panel-title">Bag fill sensors</div>
+                <div class="panel-note">Each monitored bag section contributes up to 20% based on current bag weight.</div>
               </div>
               <div class="pill {utilization_tone}" id="bag-size-badge">{escape(sensor_state_label(sensor_snapshot))}</div>
             </div>
-            <div class="panel-subtitle">Per-section fill</div>
+            <div class="panel-subtitle">Section fill</div>
             <div class="sensor-sections-grid" id="sensor-sections-grid">{view_model['sensor_sections_html']}</div>
-          </section>
-
-          <section class="panel status-cluster-panel">
-            <div class="panel-head">
-              <div>
-                <div class="panel-title">Bag at a glance</div>
-                <div class="panel-note">The Pi owns live sensor utilization. Inventory edits still happen from the Android phone app.</div>
-              </div>
-            </div>
-            <div class="status-cluster-grid">
-              <div class="subpanel status-cluster-card">
-                <div class="panel-subtitle">Current bag</div>
-                <div class="status-card-value" id="bag-name-label">{escape(bag.name)}</div>
-                <div class="status-card-note">{escape(bag_size_label(bag.size_liters))} loadout on this Raspberry Pi</div>
-              </div>
-              <div class="subpanel status-cluster-card">
-                <div class="panel-subtitle">Sensor link</div>
-                <div class="status-card-value" id="sensor-status-label">{escape(view_model['sensor_status_label'])}</div>
-                <div class="status-card-note" id="sensor-status-note">{escape(view_model['sensor_status_note'])}</div>
-              </div>
-              <div class="subpanel status-cluster-card">
-                <div class="panel-subtitle">Last sync</div>
-                <div class="status-card-value" id="sync-status-label">{escape(view_model['sync_status_label'])}</div>
-                <div class="status-card-note"><span id="paired-phone-count">{view_model['paired_phone_count']}</span> paired phone(s)</div>
-              </div>
-              <div class="subpanel status-cluster-card">
-                <div class="panel-subtitle">Expiring soon</div>
-                <div class="status-card-value"><span id="expiring-count">{view_model['expiring_count']}</span> items</div>
-                <div class="status-card-note"><span id="expired-count">{view_model['expired_count']}</span> already expired</div>
-              </div>
-            </div>
           </section>
         </section>
 
@@ -7507,7 +7503,6 @@ def home(request: Request) -> HTMLResponse:
       border-radius: 14px;
       background: var(--panel);
       box-shadow: 0 12px 28px rgba(15, 23, 42, 0.2);
-      backdrop-filter: blur(14px);
       z-index: 36;
     }}
     .power-menu-button {{
@@ -8123,6 +8118,11 @@ def home(request: Request) -> HTMLResponse:
       border-color: transparent;
       color: var(--warn);
     }}
+    .micro-chip.danger {{
+      background: var(--danger-soft);
+      border-color: transparent;
+      color: var(--danger);
+    }}
     .inventory-group-total {{
       min-width: 112px;
       text-align: right;
@@ -8181,6 +8181,14 @@ def home(request: Request) -> HTMLResponse:
       color: var(--muted);
       font-size: 0.92rem;
       line-height: 1.4;
+    }}
+    .batch-card-subtitle.expiry-warn {{
+      color: var(--warn);
+      font-weight: 700;
+    }}
+    .batch-card-subtitle.expiry-danger {{
+      color: var(--danger);
+      font-weight: 800;
     }}
     .batch-card-notes {{
       border: 1px solid var(--line);
@@ -9621,7 +9629,7 @@ def home(request: Request) -> HTMLResponse:
     }}
     @media (min-width: 720px) {{
       .dashboard-grid {{
-        grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+        grid-template-columns: minmax(0, 1fr);
         align-items: start;
       }}
       .hero-score-row {{

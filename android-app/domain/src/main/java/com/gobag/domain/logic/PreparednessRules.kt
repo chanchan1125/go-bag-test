@@ -3,11 +3,14 @@ package com.gobag.domain.logic
 import com.gobag.core.model.AlertModel
 import com.gobag.core.model.Item
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-private const val DAY_MS = 24L * 60L * 60L * 1000L
 private const val EXPIRING_SOON_DAYS = 7
 
 data class ChecklistCategoryStatus(
@@ -53,10 +56,14 @@ object PreparednessRules {
         "set", "tablet", "capsule", "ml", "g", "kg", "L"
     )
 
-    private fun utc_day_number(value_ms: Long): Long = Math.floorDiv(value_ms, DAY_MS)
+    private fun stored_expiry_date(value_ms: Long) =
+        Instant.ofEpochMilli(value_ms).atZone(ZoneOffset.UTC).toLocalDate()
+
+    private fun local_date(value_ms: Long) =
+        Instant.ofEpochMilli(value_ms).atZone(ZoneId.systemDefault()).toLocalDate()
 
     fun days_until_expiry(expiry_date_ms: Long, now_ms: Long = System.currentTimeMillis()): Int =
-        (utc_day_number(expiry_date_ms) - utc_day_number(now_ms)).toInt()
+        ChronoUnit.DAYS.between(local_date(now_ms), stored_expiry_date(expiry_date_ms)).toInt()
 
     fun normalize_category(raw: String): String {
         val value = raw.trim().lowercase(Locale.ROOT)
@@ -88,8 +95,8 @@ object PreparednessRules {
         )
     }
 
-    fun expiration_state(item: Item, now_ms: Long = System.currentTimeMillis()): String {
-        val expiry = item.expiry_date_ms ?: return "NO_EXPIRATION"
+    fun expiration_state_for_expiry(expiry_date_ms: Long?, now_ms: Long = System.currentTimeMillis()): String {
+        val expiry = expiry_date_ms ?: return "NO_EXPIRATION"
         val days_left = days_until_expiry(expiry, now_ms)
         return when {
             days_left < 0 -> "EXPIRED"
@@ -97,6 +104,9 @@ object PreparednessRules {
             else -> "OK"
         }
     }
+
+    fun expiration_state(item: Item, now_ms: Long = System.currentTimeMillis()): String =
+        expiration_state_for_expiry(item.expiry_date_ms, now_ms)
 
     fun build_expiration_alerts(
         items: List<Item>,

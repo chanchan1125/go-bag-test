@@ -558,6 +558,11 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(payload[0]["type"], "expiring_soon")
         self.assertIsInstance(payload[0]["expiry_date_ms"], int)
 
+    def test_expiry_uses_local_calendar_day(self):
+        current_local_noon = int(time.mktime((2026, 4, 24, 12, 0, 0, 0, 0, -1)) * 1000)
+        yesterday_expiry = self.module.parse_yyyy_mm_dd_to_epoch_ms("2026-04-23")
+        self.assertEqual(self.module.expiration_state_for_expiry(yesterday_expiry, current_local_noon), "EXPIRED")
+
     def test_manual_add_merges_same_batch_and_preserves_separate_expiry_batches(self):
         category_id = self.client.get("/categories").json()[0]["id"]
         bag = self.client.post("/bags", json={"name": "Merge Bag", "bag_type": "46l"})
