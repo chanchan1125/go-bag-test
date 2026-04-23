@@ -150,8 +150,19 @@ class PiServerApiTests(unittest.TestCase):
     def test_pairing_base_url_prefers_reachable_request_host(self):
         request = mock.Mock(headers={"host": "192.168.1.55:8080"})
         with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": ""}, clear=False):
-            with mock.patch.object(self.module, "preferred_non_loopback_ip", return_value="10.0.0.99"):
+            with mock.patch.object(self.module, "local_ip_candidates", return_value=["10.0.0.99"]):
                 self.assertEqual(self.module.compute_pairing_base_url(request), "http://192.168.1.55:8080")
+
+    def test_pairing_base_url_candidates_include_detected_ips(self):
+        request = mock.Mock(headers={"host": "192.168.1.55:8080"})
+        with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": "", "GOBAG_REMOTE_BASE_URL": ""}, clear=False):
+            with mock.patch.object(self.module, "local_ip_candidates", return_value=["10.0.0.99", "192.168.1.56"]), mock.patch.object(
+                self.module, "compute_pairing_remote_base_url", return_value=""
+            ):
+                candidates = self.module.pairing_base_url_candidates(request)
+        self.assertEqual(candidates[0], "http://192.168.1.55:8080")
+        self.assertIn("http://10.0.0.99:8080", candidates)
+        self.assertIn("http://192.168.1.56:8080", candidates)
 
     def test_device_status_exposes_secure_remote_base_url(self):
         with mock.patch.dict(
@@ -256,6 +267,35 @@ class PiServerApiTests(unittest.TestCase):
             remote_base_url="https://bag.example.com",
         )
         self.assertEqual(payload["remote_base_url"], "https://bag.example.com")
+        self.assertEqual(
+            payload["candidate_base_urls"],
+            ["http://192.168.1.20:8080", "https://bag.example.com"],
+        )
+
+    def test_pair_qr_payload_includes_candidate_base_urls(self):
+        bag = self.module.Bag(
+            bag_id="bag-1",
+            name="Field Bag",
+            size_liters=46,
+            template_id="template_46l",
+            updated_at=1,
+            updated_by="pi-1",
+        )
+        payload = self.module.pair_qr_payload(
+            base_url="http://192.168.1.20:8080",
+            pair_code="123456",
+            pi_device_id="pi-1",
+            bag=bag,
+            candidate_base_urls=[
+                "http://192.168.1.21:8080",
+                "http://192.168.1.20:8080",
+                "not a url",
+            ],
+        )
+        self.assertEqual(
+            payload["candidate_base_urls"],
+            ["http://192.168.1.20:8080", "http://192.168.1.21:8080"],
+        )
 
     def test_bag_and_item_crud(self):
         categories = self.client.get("/categories")

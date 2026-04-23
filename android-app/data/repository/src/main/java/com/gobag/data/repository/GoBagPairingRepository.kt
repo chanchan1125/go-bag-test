@@ -43,11 +43,9 @@ class GoBagPairingRepository(
         val candidateEndpoints = build_qr_pairing_candidates(
             qr_base_url = payload.base_url,
             qr_remote_base_url = payload.remote_base_url,
+            qr_candidate_base_urls = payload.candidate_base_urls,
             preferred_base_url = preferred_base_url
-        )
-        if (candidateEndpoints.isEmpty()) {
-            normalize_base_url(payload.base_url)
-        }
+        ).ifEmpty { listOf(normalize_base_url(payload.base_url)) }
         var lastFailure: Exception? = null
 
         for (candidate in candidateEndpoints) {
@@ -61,7 +59,7 @@ class GoBagPairingRepository(
                     result
                 } else {
                     result.copy(
-                        detail = "${result.detail} We used the saved bag location because the QR location was not reachable."
+                        detail = "${result.detail} We used another bag location because the first QR location was not reachable."
                     )
                 }
             } catch (e: Exception) {
@@ -134,10 +132,15 @@ class GoBagPairingRepository(
     ): PairingSetupResult {
         device_state_store.initialize_phone_device_id_if_missing()
         val normalizedBaseUrl = normalize_base_url(base_url)
-        val normalizedLocalBaseUrl = normalize_optional_base_url(qr_payload?.base_url)
-            .ifBlank { if (is_remote_candidate(normalizedBaseUrl)) "" else normalizedBaseUrl }
         val normalizedRemoteBaseUrl = normalize_optional_base_url(qr_payload?.remote_base_url)
             .ifBlank { if (is_remote_candidate(normalizedBaseUrl)) normalizedBaseUrl else "" }
+        val normalizedLocalBaseUrl = if (is_remote_candidate(normalizedBaseUrl)) {
+            normalize_optional_base_url(qr_payload?.base_url)
+                .takeIf { it.isNotBlank() && !is_remote_candidate(it) }
+                .orEmpty()
+        } else {
+            normalizedBaseUrl
+        }
         val connectionMode = if (normalizedRemoteBaseUrl.isNotBlank() &&
             normalizedBaseUrl.equals(normalizedRemoteBaseUrl, ignoreCase = true)
         ) {
@@ -288,6 +291,7 @@ class GoBagPairingRepository(
     private suspend fun build_qr_pairing_candidates(
         qr_base_url: String,
         qr_remote_base_url: String,
+        qr_candidate_base_urls: List<String>,
         preferred_base_url: String
     ): List<String> {
         val state = device_state_store.state.first()
@@ -304,7 +308,21 @@ class GoBagPairingRepository(
             }
         }
 
+        fun add_candidate_auto(raw: String?) {
+            val normalized = raw
+                ?.takeIf { it.isNotBlank() }
+                ?.let { runCatching { normalize_base_url(it) }.getOrNull() }
+                .orEmpty()
+            if (normalized.isBlank()) return
+            if (is_remote_candidate(normalized)) {
+                remoteCandidates += normalized
+            } else {
+                localCandidates += normalized
+            }
+        }
+
         add_candidate(localCandidates, preferred_base_url)
+        qr_candidate_base_urls.forEach(::add_candidate_auto)
         add_candidate(localCandidates, qr_base_url)
         add_candidate(localCandidates, state.local_base_url)
         add_candidate(localCandidates, state.base_url.takeIf { !is_remote_candidate(it) })

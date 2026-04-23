@@ -9,6 +9,7 @@ import com.google.gson.JsonParser
 data class PairQrPayload(
     val base_url: String,
     val remote_base_url: String = "",
+    val candidate_base_urls: List<String> = emptyList(),
     val pair_code: String,
     val pi_device_id: String = "",
     val bag_id: String = "",
@@ -46,6 +47,7 @@ object PairQrParser {
         return PairQrPayload(
             base_url = baseUrl,
             remote_base_url = payload.read_string("remote_base_url"),
+            candidate_base_urls = payload.read_string_list("candidate_base_urls"),
             pair_code = pairCode,
             pi_device_id = payload.read_string("pi_device_id"),
             bag_id = payload.read_string("bag_id"),
@@ -62,6 +64,17 @@ private fun JsonObject.read_string(key: String): String {
     val value = get(key) ?: return ""
     if (!value.isJsonPrimitive) return ""
     return runCatching { value.asString.trim() }.getOrDefault("")
+}
+
+private fun JsonObject.read_string_list(key: String): List<String> {
+    val value = get(key) ?: return emptyList()
+    if (!value.isJsonArray) return emptyList()
+    return value.asJsonArray
+        .mapNotNull { element ->
+            if (!element.isJsonPrimitive) return@mapNotNull null
+            runCatching { element.asString.trim() }.getOrNull()?.takeIf { it.isNotBlank() }
+        }
+        .distinct()
 }
 
 private fun JsonObject.read_int(key: String): Int? {

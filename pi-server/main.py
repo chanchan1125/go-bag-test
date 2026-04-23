@@ -1910,7 +1910,34 @@ def active_pair_code(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
     return conn.execute("SELECT * FROM pair_codes WHERE active = 1 ORDER BY created_at DESC LIMIT 1").fetchone()
 
 
-def preferred_non_loopback_ip() -> str:
+def add_local_ip_candidate(candidates: List[str], raw_candidate: str) -> None:
+    candidate = str(raw_candidate or "").strip().strip("[]")
+    if not candidate or "%" in candidate:
+        return
+    try:
+        ip = ipaddress.ip_address(candidate)
+    except ValueError:
+        return
+    if ip.is_loopback or ip.is_unspecified:
+        return
+    if candidate not in candidates:
+        candidates.append(candidate)
+
+
+def local_ip_candidates() -> List[str]:
+    candidates: List[str] = []
+
+    sock: Optional[socket.socket] = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("10.255.255.255", 1))
+        add_local_ip_candidate(candidates, sock.getsockname()[0])
+    except OSError:
+        pass
+    finally:
+        if sock is not None:
+            sock.close()
+
     try:
         output = subprocess.run(
             ["hostname", "-I"],
@@ -1921,29 +1948,23 @@ def preferred_non_loopback_ip() -> str:
         )
         if output.returncode == 0:
             for candidate in output.stdout.split():
-                if candidate and not candidate.startswith("127."):
-                    return candidate
+                add_local_ip_candidate(candidates, candidate)
     except Exception:
         pass
 
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.connect(("10.255.255.255", 1))
-        ip = sock.getsockname()[0]
-        sock.close()
-        if ip and not ip.startswith("127."):
-            return ip
+        for result in socket.getaddrinfo(socket.gethostname(), None, socket.AF_UNSPEC, socket.SOCK_DGRAM):
+            add_local_ip_candidate(candidates, result[4][0])
     except OSError:
         pass
 
-    try:
-        for result in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM):
-            candidate = result[4][0]
-            if candidate and not candidate.startswith("127."):
-                return candidate
-    except OSError:
-        pass
+    return candidates
 
+
+def preferred_non_loopback_ip() -> str:
+    candidates = local_ip_candidates()
+    if candidates:
+        return candidates[0]
     return ""
 
 
@@ -2069,6 +2090,15 @@ def request_host_base_url(request: Optional[Request] = None) -> str:
     if not host or "127.0.0.1" in host or "localhost" in host:
         return ""
     return normalize_base_url_value(f"http://{host}")
+
+
+def is_loopback_base_url(base_url: str) -> bool:
+    normalized = normalize_base_url_value(base_url)
+    if not normalized:
+        return False
+    parsed = urlsplit(normalized)
+    host = (parsed.hostname or "").strip().strip("[]").lower()
+    return host == "localhost" or host == "::1" or host.startswith("127.")
 
 
 def current_pi_device_id() -> str:
@@ -2236,17 +2266,39 @@ def compute_remote_base_url() -> str:
     return ""
 
 
-def compute_pairing_base_url(request: Optional[Request] = None) -> str:
-    configured = normalize_base_url_value(os.getenv("GOBAG_BASE_URL", ""))
-    if configured:
-        return configured
-    request_base_url = request_host_base_url(request)
-    if request_base_url:
-        return request_base_url
+def pairing_base_url_candidates(request: Optional[Request] = None) -> List[str]:
+    candidates: List[str] = []
+
+    def add_candidate(raw_value: str) -> None:
+        normalized = normalize_base_url_value(raw_value)
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+
+    add_candidate(os.getenv("GOBAG_BASE_URL", ""))
+    add_candidate(request_host_base_url(request))
+
+    for local_ip in local_ip_candidates():
+        add_candidate(f"http://{format_url_host(local_ip)}:{PORT}")
+
     local_base_url = compute_local_base_url(request)
-    if local_base_url and "127.0.0.1" not in local_base_url and "localhost" not in local_base_url:
-        return local_base_url
-    return compute_remote_base_url() or local_base_url
+    if local_base_url and not is_loopback_base_url(local_base_url):
+        add_candidate(local_base_url)
+
+    remote_base_url = compute_pairing_remote_base_url()
+    if remote_base_url:
+        add_candidate(remote_base_url)
+
+    if local_base_url:
+        add_candidate(local_base_url)
+
+    return candidates
+
+
+def compute_pairing_base_url(request: Optional[Request] = None) -> str:
+    candidates = pairing_base_url_candidates(request)
+    if candidates:
+        return candidates[0]
+    return compute_local_base_url(request)
 
 
 def current_device_base_url_display(request: Optional[Request] = None) -> str:
@@ -5364,10 +5416,26 @@ def admin_revoke_tokens(request: Request) -> dict:
     return {"revoked": True}
 
 
-def pair_qr_payload(base_url: str, pair_code: str, pi_device_id: str, bag: Bag, remote_base_url: str = "") -> dict:
+def pair_qr_payload(
+    base_url: str,
+    pair_code: str,
+    pi_device_id: str,
+    bag: Bag,
+    remote_base_url: str = "",
+    candidate_base_urls: Optional[List[str]] = None,
+) -> dict:
+    normalized_base_url = normalize_base_url_value(base_url) or base_url
+    normalized_remote_base_url = normalize_base_url_value(remote_base_url)
+    normalized_candidates: List[str] = []
+    for candidate in [normalized_base_url, *(candidate_base_urls or []), normalized_remote_base_url]:
+        normalized = normalize_base_url_value(candidate)
+        if normalized and normalized not in normalized_candidates:
+            normalized_candidates.append(normalized)
+
     payload = {
-        "base_url": base_url,
-        "remote_base_url": remote_base_url,
+        "base_url": normalized_base_url,
+        "remote_base_url": normalized_remote_base_url,
+        "candidate_base_urls": normalized_candidates,
         "pair_code": pair_code,
         "pi_device_id": pi_device_id,
         "bag_id": bag.bag_id,
@@ -5375,8 +5443,10 @@ def pair_qr_payload(base_url: str, pair_code: str, pi_device_id: str, bag: Bag, 
         "size_liters": bag.size_liters,
         "template_id": bag.template_id,
     }
-    if not remote_base_url:
+    if not normalized_remote_base_url:
         payload.pop("remote_base_url")
+    if not normalized_candidates:
+        payload.pop("candidate_base_urls")
     return payload
 
 
@@ -5582,18 +5652,34 @@ def render_inventory_groups_html(inventory_groups: List[InventoryGroupView]) -> 
     ) or '<div class="empty-state">No inventory for this GO BAG yet.</div>'
 
 
-def render_pairing_card_html(base_url: str, pair: sqlite3.Row, pi_device_id: str, bag: Bag, paired: bool) -> str:
+def render_pairing_card_html(
+    base_url: str,
+    pair: sqlite3.Row,
+    pi_device_id: str,
+    bag: Bag,
+    paired: bool,
+    candidate_base_urls: Optional[List[str]] = None,
+) -> str:
     remote_base_url = compute_pairing_remote_base_url()
+    qr_candidates: List[str] = []
+    for candidate in [base_url, *(candidate_base_urls or []), remote_base_url]:
+        normalized = normalize_base_url_value(candidate)
+        if normalized and normalized not in qr_candidates:
+            qr_candidates.append(normalized)
+    alternate_candidates = [candidate for candidate in qr_candidates if candidate != normalize_base_url_value(base_url)][:2]
+    alternate_note = ", ".join(alternate_candidates)
     return f"""
     <div class="pair-card">
       <div class="row-title">{escape(bag.name)}</div>
       <div class="row-subtitle">{escape(bag_size_label(bag.size_liters))} physical GO BAG on this Raspberry Pi</div>
       <div class="qr-wrap" style="margin-top: 12px;">
-        <img src="{qr_data_uri_for_payload(pair_qr_payload(base_url, pair['code'], pi_device_id, bag, remote_base_url=remote_base_url))}" alt="Pair {escape(bag.name)} QR">
+        <img src="{qr_data_uri_for_payload(pair_qr_payload(base_url, pair['code'], pi_device_id, bag, remote_base_url=remote_base_url, candidate_base_urls=qr_candidates))}" alt="Pair {escape(bag.name)} QR">
         <div class="pair-code-card">
           <div class="pair-code-label">Pair code</div>
           <div class="pair-code-value">{escape(pair['code'])}</div>
           <div class="panel-note">Scan this QR code from the phone app Pair screen or enter the code manually.</div>
+          <div class="panel-note">Pairing URL: {escape(normalize_base_url_value(base_url) or base_url)}</div>
+          {f'<div class="panel-note">QR also includes: {escape(alternate_note)}</div>' if alternate_note else ''}
           <div class="panel-note">{escape('A phone is already paired and can sync now.' if paired else 'Waiting for a phone to pair with this GO BAG.')}</div>
           {f'<div class="panel-note">Remote link ready: {escape(remote_base_url)}</div>' if remote_base_url else ''}
         </div>
@@ -5777,7 +5863,8 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         edit_item = row_to_item_record(edit_item_row) if edit_item_row else None
         conn.commit()
 
-    base_url = compute_pairing_base_url(request)
+    pairing_candidates = pairing_base_url_candidates(request)
+    base_url = pairing_candidates[0] if pairing_candidates else compute_pairing_base_url(request)
     local_ip_display = current_device_ip_display()
     display_base_url = current_device_base_url_display(request)
     checked_count = sum(1 for row in readiness["checklist"] if row["checked"])
@@ -5857,7 +5944,14 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         "readiness_alert_rows": readiness_alert_rows,
         "expiry_alert_rows": expiry_alert_rows,
         "missing_html": missing_html,
-        "pairing_card_html": render_pairing_card_html(base_url, pair, pi_device_id, bag, paired),
+        "pairing_card_html": render_pairing_card_html(
+            base_url,
+            pair,
+            pi_device_id,
+            bag,
+            paired,
+            candidate_base_urls=pairing_candidates,
+        ),
         "inventory_groups_html": render_inventory_groups_html(inventory_groups),
         "inventory_groups": inventory_groups,
         "inventory_group_count": inventory_group_count,
