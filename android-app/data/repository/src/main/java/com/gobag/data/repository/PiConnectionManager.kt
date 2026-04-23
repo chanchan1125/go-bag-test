@@ -284,6 +284,8 @@ class PiConnectionManager(
     private fun build_candidate_endpoints(state: DeviceState): List<EndpointCandidate> {
         val localCandidates = linkedMapOf<String, EndpointCandidate>()
         val remoteCandidates = linkedMapOf<String, EndpointCandidate>()
+        val selectedPairedBag = selected_paired_bag(state)
+        val scopedPairedBags = selectedPairedBag?.let(::listOf).orEmpty()
 
         fun add_candidate(bucket: MutableMap<String, EndpointCandidate>, raw_value: String?, connection_mode: String) {
             val normalized = normalize_optional_base_url(raw_value)
@@ -306,8 +308,10 @@ class PiConnectionManager(
         if (infer_endpoint_mode(state.base_url, state) != CONNECTION_MODE_REMOTE) {
             add_candidate(localCandidates, state.base_url, CONNECTION_MODE_LOCAL)
         }
-        add_saved_candidates(state.saved_addresses.filter { it.is_active }.map { it.base_url })
-        state.paired_bags.forEach { paired ->
+        if (selectedPairedBag == null) {
+            add_saved_candidates(state.saved_addresses.filter { it.is_active }.map { it.base_url })
+        }
+        scopedPairedBags.forEach { paired ->
             add_candidate(localCandidates, paired.local_base_url, CONNECTION_MODE_LOCAL)
             add_candidate(
                 localCandidates,
@@ -321,14 +325,16 @@ class PiConnectionManager(
                 add_candidate(localCandidates, paired.base_url, CONNECTION_MODE_LOCAL)
             }
         }
-        add_saved_candidates(state.saved_addresses.map { it.base_url })
+        if (selectedPairedBag == null) {
+            add_saved_candidates(state.saved_addresses.map { it.base_url })
+        }
 
         add_candidate(remoteCandidates, state.remote_base_url, CONNECTION_MODE_REMOTE)
         add_candidate(remoteCandidates, derive_relay_base_url(state.pi_device_id), CONNECTION_MODE_REMOTE)
         if (infer_endpoint_mode(state.base_url, state) == CONNECTION_MODE_REMOTE) {
             add_candidate(remoteCandidates, state.base_url, CONNECTION_MODE_REMOTE)
         }
-        state.paired_bags.forEach { paired ->
+        scopedPairedBags.forEach { paired ->
             add_candidate(remoteCandidates, paired.remote_base_url, CONNECTION_MODE_REMOTE)
             add_candidate(remoteCandidates, derive_relay_base_url(paired.pi_device_id), CONNECTION_MODE_REMOTE)
             if (infer_endpoint_mode(paired.base_url, state) == CONNECTION_MODE_REMOTE) {
@@ -345,7 +351,10 @@ class PiConnectionManager(
     }
 
     private fun build_refresh_failure_message(state: DeviceState, last_failure: String): String {
-        val hasRemotePath = state.remote_base_url.isNotBlank() || state.paired_bags.any { !it.remote_base_url.isNullOrBlank() }
+        val selectedPairedBag = selected_paired_bag(state)
+        val hasRemotePath = state.remote_base_url.isNotBlank() ||
+            !selectedPairedBag?.remote_base_url.isNullOrBlank() ||
+            derive_relay_base_url(state.pi_device_id.ifBlank { selectedPairedBag?.pi_device_id.orEmpty() }).isNotBlank()
         return when {
             state.paired_bags.isNotEmpty() && hasRemotePath ->
                 "Your bag is offline right now on both its local and remote links. ${last_failure.ifBlank { "Try reconnecting." }}"
@@ -542,9 +551,18 @@ private fun connection_probe_auth_token(state: DeviceState): String {
 }
 
 private fun should_prefer_remote_candidates(state: DeviceState): Boolean {
+    val selectedPairedBag = selected_paired_bag(state)
+    val selectedHasRemotePath = state.remote_base_url.isNotBlank() ||
+        !selectedPairedBag?.remote_base_url.isNullOrBlank() ||
+        derive_relay_base_url(state.pi_device_id.ifBlank { selectedPairedBag?.pi_device_id.orEmpty() }).isNotBlank()
     if (state.last_connection_mode == CONNECTION_MODE_REMOTE) return true
     if (infer_endpoint_mode(state.base_url, state) == CONNECTION_MODE_REMOTE) return true
-    return state.paired_bags.any { it.last_connection_mode == CONNECTION_MODE_REMOTE }
+    return selectedHasRemotePath && state.paired_bags.any { it.last_connection_mode == CONNECTION_MODE_REMOTE }
+}
+
+private fun selected_paired_bag(state: DeviceState): PairedBagConnection? {
+    return state.paired_bags.firstOrNull { it.bag_id == state.selected_bag_id }
+        ?: state.paired_bags.firstOrNull { state.pi_device_id.isNotBlank() && it.pi_device_id == state.pi_device_id }
 }
 
 private fun urls_equivalent(left: String, right: String): Boolean {
