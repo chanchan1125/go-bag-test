@@ -26,7 +26,6 @@ import com.gobag.feature.sync.SyncScreen
 import com.gobag.feature.sync.SyncViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 
@@ -70,18 +69,12 @@ private fun GoBagApp() {
     }
 
     LaunchedEffect(container) {
-        combine(
-            container.sync_repository.observe_device_state(),
-            container.item_repository.observe_bags()
-        ) { state, bags ->
-            state to bags
-        }.collect { (state, bags) ->
-            val pairedBagIds = state.paired_bags.map { it.bag_id }.toSet()
-            val pairedBags = bags.filter { it.bag_id in pairedBagIds }
+        container.sync_repository.observe_device_state().collect { state ->
+            val pairedBagIds = state.paired_bags.map { it.bag_id }
             val resolvedBagId = when {
-                pairedBags.isEmpty() -> ""
-                state.selected_bag_id.isNotBlank() && pairedBags.any { it.bag_id == state.selected_bag_id } -> state.selected_bag_id
-                else -> pairedBags.first().bag_id
+                pairedBagIds.isEmpty() -> ""
+                state.selected_bag_id.isNotBlank() && state.selected_bag_id in pairedBagIds -> state.selected_bag_id
+                else -> pairedBagIds.first()
             }
             if (resolvedBagId != state.selected_bag_id) {
                 container.sync_repository.set_selected_bag_id(resolvedBagId)

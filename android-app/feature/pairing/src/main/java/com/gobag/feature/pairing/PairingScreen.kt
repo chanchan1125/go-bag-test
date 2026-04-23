@@ -73,6 +73,8 @@ fun PairingScreen(
     val isPaired = state.paired_bag_count > 0
     val statusAccent = when {
         connection.last_sync_error.isNotBlank() || connection.last_connection_error.isNotBlank() -> MaterialTheme.colorScheme.error
+        state.error.isNotBlank() || state.hero_status_label == "Attention" -> MaterialTheme.colorScheme.error
+        state.hero_status_label == "Ready" || state.hero_status_label == "Connected" -> MaterialTheme.colorScheme.tertiary
         connection.is_offline || connection.address_needs_attention -> MaterialTheme.colorScheme.error
         connection.is_online -> MaterialTheme.colorScheme.tertiary
         connection.is_paired -> MaterialTheme.colorScheme.primary
@@ -155,9 +157,9 @@ fun PairingScreen(
             item {
                 PairingHeroCard(
                     endpoint = state.manual_endpoint.ifBlank { state.endpoint.ifBlank { "No saved location" } },
-                    detail = connection.detail,
-                    statusLabel = connection.primary_label,
-                    statusValue = connection.connection_label,
+                    detail = state.hero_detail,
+                    statusLabel = state.hero_status_label,
+                    statusValue = state.hero_status_value,
                     pairedBagCount = state.paired_bag_count,
                     statusAccent = statusAccent
                 )
@@ -177,7 +179,7 @@ fun PairingScreen(
                         singleLine = true
                     )
                     Text(
-                        connection.detail,
+                        state.hero_detail,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 3,

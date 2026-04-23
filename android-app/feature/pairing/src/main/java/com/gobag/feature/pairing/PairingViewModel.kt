@@ -20,6 +20,9 @@ data class PairingUiState(
     val manual_endpoint: String = "",
     val manual_pair_code: String = "",
     val paired_bag_count: Int = 0,
+    val hero_status_label: String = "",
+    val hero_status_value: String = "",
+    val hero_detail: String = "",
     val running: Boolean = false,
     val error: String = "",
     val feedback_message: String = ""
@@ -29,6 +32,9 @@ private data class PairingViewInputs(
     val running: Boolean,
     val error: String,
     val feedback: String,
+    val hero_status_label: String,
+    val hero_status_value: String,
+    val hero_detail: String,
     val endpoint_input: String,
     val pair_code_input: String
 )
@@ -36,7 +42,16 @@ private data class PairingViewInputs(
 private data class PairingFeedbackState(
     val running: Boolean,
     val error: String,
-    val feedback: String
+    val feedback: String,
+    val hero_status_label: String,
+    val hero_status_value: String,
+    val hero_detail: String
+)
+
+private data class PairingHeroState(
+    val label: String,
+    val value: String,
+    val detail: String
 )
 
 private data class PairingEndpointState(
@@ -51,18 +66,36 @@ class PairingViewModel(
     private val running = MutableStateFlow(false)
     private val error = MutableStateFlow("")
     private val feedback_message = MutableStateFlow("")
+    private val heroStatusLabel = MutableStateFlow("")
+    private val heroStatusValue = MutableStateFlow("")
+    private val heroDetail = MutableStateFlow("")
     private val manualEndpoint = MutableStateFlow("")
     private val manualPairCode = MutableStateFlow("")
+    private val hero_state = combine(
+        heroStatusLabel,
+        heroStatusValue,
+        heroDetail
+    ) { heroLabel, heroValue, heroDetailText ->
+        PairingHeroState(
+            label = heroLabel,
+            value = heroValue,
+            detail = heroDetailText
+        )
+    }
 
     private val feedback_state = combine(
         running,
         error,
-        feedback_message
-    ) { running_now, error_text, feedback ->
+        feedback_message,
+        hero_state
+    ) { running_now, error_text, feedback, heroState ->
         PairingFeedbackState(
             running = running_now,
             error = error_text,
-            feedback = feedback
+            feedback = feedback,
+            hero_status_label = heroState.label,
+            hero_status_value = heroState.value,
+            hero_detail = heroState.detail
         )
     }
 
@@ -84,6 +117,9 @@ class PairingViewModel(
             running = feedbackState.running,
             error = feedbackState.error,
             feedback = feedbackState.feedback,
+            hero_status_label = feedbackState.hero_status_label,
+            hero_status_value = feedbackState.hero_status_value,
+            hero_detail = feedbackState.hero_detail,
             endpoint_input = endpointState.endpoint_input,
             pair_code_input = endpointState.pair_code_input
         )
@@ -102,6 +138,9 @@ class PairingViewModel(
             },
             manual_pair_code = inputs.pair_code_input,
             paired_bag_count = state.paired_bags.size,
+            hero_status_label = inputs.hero_status_label.ifBlank { connection.primary_label },
+            hero_status_value = inputs.hero_status_value.ifBlank { connection.connection_label },
+            hero_detail = inputs.hero_detail.ifBlank { connection.detail },
             running = inputs.running,
             error = inputs.error,
             feedback_message = inputs.feedback
@@ -110,6 +149,7 @@ class PairingViewModel(
 
     fun on_manual_endpoint_changed(value: String) {
         manualEndpoint.value = value
+        clear_hero_status()
     }
 
     fun on_pair_code_changed(value: String) {
@@ -150,11 +190,17 @@ class PairingViewModel(
                     allow_different_bag = true
                 )
                 manualEndpoint.value = result.endpoint
-                feedback_message.value = "Bag hub found. You can connect now."
+                heroStatusLabel.value = "Ready"
+                heroStatusValue.value = result.status.ifBlank { "Ready to connect" }
+                heroDetail.value = result.detail
+                feedback_message.value = result.detail
             } catch (e: Exception) {
                 val message = e.message ?: "We could not check that bag location."
                 error.value = message
-                feedback_message.value = "We could not check that bag location."
+                heroStatusLabel.value = "Attention"
+                heroStatusValue.value = "Check location"
+                heroDetail.value = message
+                feedback_message.value = message
             } finally {
                 running.value = false
             }
@@ -186,10 +232,16 @@ class PairingViewModel(
                 val result = action()
                 manualEndpoint.value = result.endpoint
                 manualPairCode.value = ""
+                heroStatusLabel.value = if (result.initial_sync_completed) "Connected" else "Setup started"
+                heroStatusValue.value = if (result.initial_sync_completed) "Ready" else "Needs update"
+                heroDetail.value = result.detail
                 feedback_message.value = result.detail
             } catch (e: Exception) {
                 val message = e.message ?: "We could not finish setup."
                 error.value = message
+                heroStatusLabel.value = "Attention"
+                heroStatusValue.value = "Setup failed"
+                heroDetail.value = message
                 feedback_message.value = message
             } finally {
                 running.value = false
@@ -202,5 +254,11 @@ class PairingViewModel(
         return manualEndpoint.value.ifBlank {
             state.saved_addresses.firstOrNull { it.is_active }?.base_url ?: state.base_url
         }
+    }
+
+    private fun clear_hero_status() {
+        heroStatusLabel.value = ""
+        heroStatusValue.value = ""
+        heroDetail.value = ""
     }
 }
