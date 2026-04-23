@@ -171,8 +171,17 @@ class GoBagSyncRepository(
         }
 
         val activeState = device_state_store.state.first()
-        val changed_items = item_repository.get_items_changed_since(activeState.last_sync_at).filter { it.bag_id == selectedBagId }
-        val changed_bags = item_repository.get_bags_changed_since(activeState.last_sync_at).filter { it.bag_id == selectedBagId }
+        val localItemsForSelectedBag = item_repository.get_items_changed_since(0L).filter { it.bag_id == selectedBagId }
+        val selectedBagConnection = activeState.paired_bags.firstOrNull { it.bag_id == selectedBagId }
+        // A fresh reinstall can have old sync metadata but no local item rows. Force a full pull in that case.
+        val syncBaselineAt = when {
+            activeState.last_sync_at <= 0L -> 0L
+            selectedBagConnection?.last_sync_at == 0L -> 0L
+            localItemsForSelectedBag.isEmpty() -> 0L
+            else -> activeState.last_sync_at
+        }
+        val changed_items = localItemsForSelectedBag.filter { it.updated_at > syncBaselineAt }
+        val changed_bags = item_repository.get_bags_changed_since(syncBaselineAt).filter { it.bag_id == selectedBagId }
         try {
             validate_sync_payload(selectedBagId, changed_bags, changed_items)
         } catch (e: IllegalStateException) {
@@ -193,7 +202,7 @@ class GoBagSyncRepository(
             api.sync(
                 SyncRequestDto(
                     phone_device_id = activeState.phone_device_id,
-                    last_sync_at = activeState.last_sync_at,
+                    last_sync_at = syncBaselineAt,
                     changed_bags = changed_bags.map { it.as_remote_dto() },
                     changed_items = changed_items.map { it.as_remote_dto() }
                 )
@@ -209,13 +218,13 @@ class GoBagSyncRepository(
             .map { it.as_remote_model() }
             .filter { it.bag_id == selectedBagId || it.bag_id in pairedBagIds }
             .forEach {
-            item_repository.apply_server_bag(it, state.last_sync_at)
+            item_repository.apply_server_bag(it, syncBaselineAt)
         }
         response.server_item_changes
             .map { it.as_remote_model() }
             .filter { it.bag_id == selectedBagId || it.bag_id in pairedBagIds }
             .forEach {
-            item_repository.apply_server_item(it, state.last_sync_at)
+            item_repository.apply_server_item(it, syncBaselineAt)
         }
 
         val conflicts = response.conflicts

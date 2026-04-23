@@ -1,6 +1,7 @@
 package com.gobag.data.repository
 
 import android.content.Context
+import android.provider.Settings
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -21,11 +22,13 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.UUID
 
 class DeviceStateStore(context: Context) {
+    private val app_context = context.applicationContext
     private val data_store = PreferenceDataStoreFactory.create(
-        produceFile = { context.preferencesDataStoreFile("device_state.preferences_pb") }
+        produceFile = { app_context.preferencesDataStoreFile("device_state.preferences_pb") }
     )
     private val gson = Gson()
     private val paired_bag_list_type = object : TypeToken<List<PairedBagConnection>>() {}.type
@@ -75,7 +78,7 @@ class DeviceStateStore(context: Context) {
                 has_saved_address = hasSavedAddress
             )
             DeviceState(
-                phone_device_id = prefs[PHONE_DEVICE_ID] ?: DeviceIdProvider.generate(),
+                phone_device_id = prefs[PHONE_DEVICE_ID] ?: stable_phone_device_id(),
                 auth_token = activeBag?.auth_token.orEmpty(),
                 base_url = activeBag?.base_url ?: activeAddress?.base_url.orEmpty(),
                 pi_device_id = activeBag?.pi_device_id.orEmpty(),
@@ -109,7 +112,7 @@ class DeviceStateStore(context: Context) {
 
     suspend fun initialize_phone_device_id_if_missing() {
         data_store.edit { prefs ->
-            if (prefs[PHONE_DEVICE_ID].isNullOrBlank()) prefs[PHONE_DEVICE_ID] = DeviceIdProvider.generate()
+            if (prefs[PHONE_DEVICE_ID].isNullOrBlank()) prefs[PHONE_DEVICE_ID] = stable_phone_device_id()
             if (!prefs.contains(AUTO_SYNC_ENABLED)) prefs[AUTO_SYNC_ENABLED] = false
             if (!prefs.contains(DARK_THEME_ENABLED)) prefs[DARK_THEME_ENABLED] = true
             if (!prefs.contains(HAS_UNRESOLVED_CONFLICTS)) prefs[HAS_UNRESOLVED_CONFLICTS] = false
@@ -125,6 +128,19 @@ class DeviceStateStore(context: Context) {
             if (!prefs.contains(SAVED_ADDRESSES_JSON)) prefs[SAVED_ADDRESSES_JSON] = "[]"
             if (!prefs.contains(ACTIVE_ADDRESS_ID)) prefs[ACTIVE_ADDRESS_ID] = ""
         }
+    }
+
+    private fun stable_phone_device_id(): String {
+        val androidId = Settings.Secure.getString(app_context.contentResolver, Settings.Secure.ANDROID_ID)
+            ?.trim()
+            .orEmpty()
+        if (androidId.isBlank() || androidId.equals("9774d56d682e549c", ignoreCase = true)) {
+            return DeviceIdProvider.generate()
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest("gobag:$androidId".toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return "android-${digest.take(16)}"
     }
 
     suspend fun upsert_paired_bag_connection(

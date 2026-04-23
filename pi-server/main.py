@@ -5170,6 +5170,37 @@ def update_device_bag(payload: BagUpdateRequest) -> BagRecord:
         return bag
 
 
+def is_stable_android_phone_id(phone_device_id: str) -> bool:
+    return bool(re.fullmatch(r"android-[0-9a-f]{16}", str(phone_device_id or "").strip().lower()))
+
+
+def is_legacy_uuid_phone_id(phone_device_id: str) -> bool:
+    value = str(phone_device_id or "").strip()
+    if not value:
+        return False
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError:
+        return False
+    return str(parsed) == value.lower()
+
+
+def revoke_superseded_phone_tokens(conn: sqlite3.Connection, phone_device_id: str) -> None:
+    conn.execute("UPDATE tokens SET revoked = 1 WHERE phone_device_id = ? AND revoked = 0", (phone_device_id,))
+    if not is_stable_android_phone_id(phone_device_id):
+        return
+    active_rows = conn.execute(
+        "SELECT DISTINCT phone_device_id FROM tokens WHERE revoked = 0 AND phone_device_id != ?",
+        (phone_device_id,),
+    ).fetchall()
+    active_phone_ids = [row["phone_device_id"] for row in active_rows]
+    legacy_phone_ids = [value for value in active_phone_ids if is_legacy_uuid_phone_id(value)]
+    non_legacy_phone_ids = [value for value in active_phone_ids if value not in legacy_phone_ids]
+    if legacy_phone_ids and not non_legacy_phone_ids:
+        for legacy_phone_id in legacy_phone_ids:
+            conn.execute("UPDATE tokens SET revoked = 1 WHERE phone_device_id = ? AND revoked = 0", (legacy_phone_id,))
+
+
 @app.post("/pair", response_model=PairResponse)
 def pair(req: PairRequest) -> PairResponse:
     with db_conn() as conn:
@@ -5180,7 +5211,7 @@ def pair(req: PairRequest) -> PairResponse:
         if not phone_device_id:
             raise HTTPException(status_code=400, detail="Phone device id is required")
         token = secrets.token_urlsafe(32)
-        conn.execute("UPDATE tokens SET revoked = 1 WHERE phone_device_id = ? AND revoked = 0", (phone_device_id,))
+        revoke_superseded_phone_tokens(conn, phone_device_id)
         conn.execute("INSERT INTO tokens(token, phone_device_id, issued_at, revoked) VALUES(?, ?, ?, 0)", (token, phone_device_id, now_ms()))
         conn.execute("UPDATE settings SET last_connected_device = ? WHERE id = 'primary'", (phone_device_id,))
         update_device_state(conn, "paired")
