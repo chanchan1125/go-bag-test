@@ -166,7 +166,7 @@ fun PairingScreen(
             item {
                 ControlCard(
                     title = "Bag location",
-                    subtitle = "Save the bag location first. Then scan the QR code or enter the 6-digit code."
+                    subtitle = "Optional for QR. If you use the 6-digit code, enter the bag location here and connect directly. Checking is optional."
                 ) {
                     OutlinedTextField(
                         value = state.manual_endpoint,
@@ -211,7 +211,7 @@ fun PairingScreen(
                         )
                     ) {
                         Text(
-                            if (state.running) "Checking..." else "Check location",
+                            if (state.running) "Checking..." else "Test location",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1
@@ -257,7 +257,7 @@ fun PairingScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
                     )
                     Text(
-                        "Use the same saved location above. We will finish setup and pull the bag details to this phone.",
+                        "Use the bag location above. You can connect directly without testing it first.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -290,11 +290,11 @@ fun PairingScreen(
                 ) {
                     GuidanceLine(
                         title = "Scan the QR code",
-                        body = "Fastest option when the bag screen is nearby."
+                        body = "Fastest option. The QR already includes the bag location and code."
                     )
                     GuidanceLine(
                         title = "Type the 6-digit code",
-                        body = "Use this when scanning is not working."
+                        body = "Use this when scanning is not working. Enter the bag location above, then connect."
                     )
                 }
             }

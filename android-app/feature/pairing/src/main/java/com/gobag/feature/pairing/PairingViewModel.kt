@@ -134,7 +134,7 @@ class PairingViewModel(
     fun pair_with_code() {
         execute_pairing {
             pairing_repository.pair_with_code(
-                base_url = manualEndpoint.value,
+                base_url = resolve_manual_endpoint(),
                 pair_code = manualPairCode.value
             )
         }
@@ -145,13 +145,12 @@ class PairingViewModel(
             running.value = true
             error.value = ""
             try {
-                val result = pairing_repository.test_connection(value)
+                val result = pairing_repository.test_connection(
+                    base_url = value.ifBlank { resolve_manual_endpoint() },
+                    allow_different_bag = true
+                )
                 manualEndpoint.value = result.endpoint
-                feedback_message.value = if (result.status == "Ready to connect") {
-                    "Bag hub found. Scan the QR code or enter the 6-digit code now."
-                } else {
-                    "Bag hub found."
-                }
+                feedback_message.value = "Bag hub found. You can connect now."
             } catch (e: Exception) {
                 val message = e.message ?: "We could not check that bag location."
                 error.value = message
@@ -195,6 +194,13 @@ class PairingViewModel(
             } finally {
                 running.value = false
             }
+        }
+    }
+
+    private suspend fun resolve_manual_endpoint(): String {
+        val state = sync_repository.observe_device_state().first()
+        return manualEndpoint.value.ifBlank {
+            state.saved_addresses.firstOrNull { it.is_active }?.base_url ?: state.base_url
         }
     }
 }

@@ -92,7 +92,10 @@ class PiConnectionManager(
         base_url: String,
         address_id: String? = null,
         adopt_on_success: Boolean = true,
-        update_global_failure: Boolean? = null
+        update_global_failure: Boolean? = null,
+        require_current_pi_match: Boolean = true,
+        expected_pi_device_id: String? = null,
+        pairing_probe: Boolean = false
     ): PairingConnectionResult {
         device_state_store.initialize_phone_device_id_if_missing()
         val normalizedBaseUrl = normalize_base_url(base_url)
@@ -112,11 +115,18 @@ class PiConnectionManager(
                 normalizedBaseUrl,
                 connection_probe_auth_token(state)
             ).device_status()
-            ensure_matching_pi(state, deviceStatus)
+            val normalizedExpectedPiDeviceId = expected_pi_device_id.orEmpty().trim()
+            when {
+                normalizedExpectedPiDeviceId.isNotBlank() ->
+                    ensure_expected_pi(normalizedExpectedPiDeviceId, deviceStatus)
+                require_current_pi_match ->
+                    ensure_matching_pi(state, deviceStatus)
+            }
             val resolvedMode = resolve_connection_mode(normalizedBaseUrl, inferredMode, deviceStatus)
+            val hasPairedBag = if (pairing_probe) false else state.paired_bags.isNotEmpty()
             val detail = build_success_detail(
                 connection_mode = resolvedMode,
-                has_paired_bag = state.paired_bags.isNotEmpty()
+                has_paired_bag = hasPairedBag
             )
             if (adopt_on_success) {
                 apply_success(
@@ -139,7 +149,7 @@ class PiConnectionManager(
                 endpoint = normalizedBaseUrl,
                 status = build_connection_status_label(
                     connection_mode = resolvedMode,
-                    has_paired_bag = state.paired_bags.isNotEmpty()
+                    has_paired_bag = hasPairedBag
                 ),
                 detail = detail
             )
@@ -352,9 +362,14 @@ class PiConnectionManager(
         val expectedPiDeviceId = state.pi_device_id.ifBlank {
             state.paired_bags.firstOrNull()?.pi_device_id.orEmpty()
         }
+        if (expectedPiDeviceId.isBlank()) return
+        ensure_expected_pi(expectedPiDeviceId, device_status)
+    }
+
+    private fun ensure_expected_pi(expected_pi_device_id: String, device_status: DeviceStatusDto) {
         val actualPiDeviceId = device_status.pi_device_id.trim()
-        if (expectedPiDeviceId.isBlank() || actualPiDeviceId.isBlank()) return
-        if (!expectedPiDeviceId.equals(actualPiDeviceId, ignoreCase = true)) {
+        if (expected_pi_device_id.isBlank() || actualPiDeviceId.isBlank()) return
+        if (!expected_pi_device_id.equals(actualPiDeviceId, ignoreCase = true)) {
             throw IllegalStateException("That address belongs to a different GO BAG.")
         }
     }

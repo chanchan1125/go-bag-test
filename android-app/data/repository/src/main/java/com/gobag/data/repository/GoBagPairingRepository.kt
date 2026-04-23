@@ -70,8 +70,12 @@ class GoBagPairingRepository(
         )
     }
 
-    override suspend fun test_connection(base_url: String): PairingConnectionResult {
-        return pi_connection_manager.test_endpoint(base_url)
+    override suspend fun test_connection(base_url: String, allow_different_bag: Boolean): PairingConnectionResult {
+        return if (allow_different_bag) {
+            probe_pairing_endpoint(base_url)
+        } else {
+            pi_connection_manager.test_endpoint(base_url)
+        }
     }
 
     override suspend fun save_endpoint(base_url: String, address_id: String?): SavedPiAddress {
@@ -122,7 +126,10 @@ class GoBagPairingRepository(
             CONNECTION_MODE_LOCAL
         }
         val normalizedPairCode = normalize_pair_code(pair_code)
-        pi_connection_manager.test_endpoint(normalizedBaseUrl, adopt_on_success = false)
+        probe_pairing_endpoint(
+            base_url = normalizedBaseUrl,
+            expected_pi_device_id = qr_payload?.pi_device_id.orEmpty()
+        )
 
         val state = device_state_store.state.first()
         val api = RemoteDataSourceFactory.create_api(normalizedBaseUrl)
@@ -265,21 +272,35 @@ class GoBagPairingRepository(
             }
         }
 
+        add_candidate(localCandidates, qr_base_url)
         add_candidate(localCandidates, state.local_base_url)
         add_candidate(localCandidates, state.base_url.takeIf { !is_remote_candidate(it) })
         state.saved_addresses.filter { it.is_active && !is_remote_candidate(it.base_url) }
             .forEach { add_candidate(localCandidates, it.base_url) }
-        add_candidate(localCandidates, qr_base_url)
         state.saved_addresses.filter { !is_remote_candidate(it.base_url) }
             .forEach { add_candidate(localCandidates, it.base_url) }
 
+        add_candidate(remoteCandidates, qr_remote_base_url)
         add_candidate(remoteCandidates, state.remote_base_url)
         add_candidate(remoteCandidates, state.base_url.takeIf { is_remote_candidate(it) })
-        add_candidate(remoteCandidates, qr_remote_base_url)
         state.saved_addresses.filter { is_remote_candidate(it.base_url) }
             .forEach { add_candidate(remoteCandidates, it.base_url) }
 
         return (localCandidates + remoteCandidates).toList()
+    }
+
+    private suspend fun probe_pairing_endpoint(
+        base_url: String,
+        expected_pi_device_id: String = ""
+    ): PairingConnectionResult {
+        return pi_connection_manager.test_endpoint(
+            base_url = base_url,
+            adopt_on_success = false,
+            update_global_failure = false,
+            require_current_pi_match = false,
+            expected_pi_device_id = expected_pi_device_id,
+            pairing_probe = true
+        )
     }
 
     private fun normalize_optional_base_url(base_url: String?): String {
