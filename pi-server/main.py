@@ -69,6 +69,10 @@ SENSOR_SERIAL_BAUDRATE = max(int(os.getenv("GOBAG_SENSOR_SERIAL_BAUDRATE", "1152
 SENSOR_SERIAL_READ_TIMEOUT_S = max(float(os.getenv("GOBAG_SENSOR_SERIAL_READ_TIMEOUT_S", "1.0")), 0.1)
 SENSOR_SERIAL_RECONNECT_DELAY_S = max(float(os.getenv("GOBAG_SENSOR_SERIAL_RECONNECT_DELAY_S", "2.0")), 0.5)
 SENSOR_SERIAL_SILENT_REOPEN_TIMEOUT_S = max(float(os.getenv("GOBAG_SENSOR_SERIAL_SILENT_REOPEN_TIMEOUT_S", "10.0")), 2.0)
+SENSOR_SERIAL_RESET_ON_OPEN = os.getenv("GOBAG_SENSOR_SERIAL_RESET_ON_OPEN", "1") == "1"
+SENSOR_SERIAL_RESET_HOLD_S = max(float(os.getenv("GOBAG_SENSOR_SERIAL_RESET_HOLD_S", "0.12")), 0.02)
+SENSOR_SERIAL_BOOT_DELAY_S = max(float(os.getenv("GOBAG_SENSOR_SERIAL_BOOT_DELAY_S", "1.5")), 0.0)
+SENSOR_SERIAL_EXCLUSIVE = os.getenv("GOBAG_SENSOR_SERIAL_EXCLUSIVE", "1") == "1"
 SENSOR_STALE_TIMEOUT_MS = max(int(os.getenv("GOBAG_SENSOR_STALE_TIMEOUT_MS", "6000")), 1000)
 SENSOR_SECTION_FULL_WEIGHTS_KG_RAW = os.getenv("GOBAG_SENSOR_SECTION_FULL_WEIGHTS_KG", "1,1,1,1,1")
 SENSOR_SECTION_MIN_THRESHOLDS_KG_RAW = os.getenv("GOBAG_SENSOR_SECTION_MIN_THRESHOLDS_KG", "0.05")
@@ -643,6 +647,7 @@ class Esp32SensorSerialManager:
         self._thresholds_kg = parse_section_weight_config(SENSOR_SECTION_MIN_THRESHOLDS_KG_RAW, 0.05)
         self._serial_patterns = parse_sensor_serial_patterns(SENSOR_SERIAL_PORT_PATTERNS)
         self._text_frame = Esp32TextStatusFrame()
+        self._next_serial_port_index = 0
         self._sections = [
             {
                 "index": index + 1,
@@ -970,6 +975,54 @@ class Esp32SensorSerialManager:
                 unique_ports.append(port)
         return unique_ports
 
+    def _next_serial_port(self, available_ports: List[str]) -> str:
+        if not available_ports:
+            return ""
+        if SENSOR_SERIAL_PORT:
+            return available_ports[0]
+        index = self._next_serial_port_index % len(available_ports)
+        self._next_serial_port_index = (index + 1) % len(available_ports)
+        return available_ports[index]
+
+    def _open_sensor_serial(self, serial_port: str):
+        if serial is None:
+            raise SerialException("pyserial is not installed.")
+        port = serial.Serial()
+        port.port = serial_port
+        port.baudrate = SENSOR_SERIAL_BAUDRATE
+        port.timeout = SENSOR_SERIAL_READ_TIMEOUT_S
+        if hasattr(port, "exclusive"):
+            try:
+                port.exclusive = SENSOR_SERIAL_EXCLUSIVE
+            except (AttributeError, ValueError, OSError):
+                pass
+        try:
+            port.dtr = False
+            port.rts = False
+        except (AttributeError, ValueError, OSError):
+            pass
+        port.open()
+        try:
+            port.reset_input_buffer()
+        except (AttributeError, OSError, SerialException):
+            pass
+        if SENSOR_SERIAL_RESET_ON_OPEN:
+            self._reset_esp32_to_run_mode(port, serial_port)
+        return port
+
+    def _reset_esp32_to_run_mode(self, port, serial_port: str) -> None:
+        try:
+            # Keep GPIO0 high while pulsing EN/reset so ESP32 boots the sketch,
+            # not the serial bootloader.
+            port.setDTR(False)
+            port.setRTS(True)
+            time.sleep(SENSOR_SERIAL_RESET_HOLD_S)
+            port.setRTS(False)
+            if SENSOR_SERIAL_BOOT_DELAY_S > 0:
+                time.sleep(SENSOR_SERIAL_BOOT_DELAY_S)
+        except (AttributeError, ValueError, OSError, SerialException) as exc:
+            logger.debug("Could not reset ESP32 serial control lines on %s: %s", serial_port, exc)
+
     def _snapshot_from_weights(self, weights_kg: List[float], *, raw_line: str, serial_port: str, read_at: int) -> SensorSnapshot:
         sections: List[SensorSectionState] = []
         contributions: List[float] = []
@@ -1068,9 +1121,10 @@ class Esp32SensorSerialManager:
         snapshot = self.snapshot()
         if snapshot.connection_state not in {"live", "connecting"}:
             return
-        if not snapshot.last_read_at:
+        reference_at = snapshot.last_read_at if snapshot.connection_state == "live" else snapshot.updated_at
+        if not reference_at:
             return
-        if now_ms() - snapshot.last_read_at < SENSOR_STALE_TIMEOUT_MS:
+        if now_ms() - reference_at < SENSOR_STALE_TIMEOUT_MS:
             return
         stale_sections = snapshot.sections if snapshot.total_percentage is not None else self._empty_sections()
         message = (
@@ -1149,16 +1203,13 @@ class Esp32SensorSerialManager:
                 )
                 self._stop_event.wait(SENSOR_SERIAL_RECONNECT_DELAY_S)
                 continue
-            serial_port = available_ports[0]
+            serial_port = self._next_serial_port(available_ports)
             try:
                 logger.info("Opening ESP32 sensor serial on %s at %s baud.", serial_port, SENSOR_SERIAL_BAUDRATE)
                 retry_after_silent_open = False
-                with serial.Serial(serial_port, SENSOR_SERIAL_BAUDRATE, timeout=SENSOR_SERIAL_READ_TIMEOUT_S) as port:
-                    try:
-                        port.setDTR(False)
-                        port.setRTS(False)
-                    except (AttributeError, OSError, SerialException) as exc:
-                        logger.debug("Could not adjust ESP32 serial control lines on %s: %s", serial_port, exc)
+                port = None
+                try:
+                    port = self._open_sensor_serial(serial_port)
                     logger.info("ESP32 sensor serial connected on %s.", serial_port)
                     self._set_connecting(serial_port)
                     last_serial_data_at = time.monotonic()
@@ -1175,7 +1226,7 @@ class Esp32SensorSerialManager:
                                 )
                                 self._record_waiting_status(
                                     serial_port,
-                                    message="Bag sensor cable is connected, but the ESP32 is not sending data yet. Reopening the sensor link.",
+                                    message="Bag sensor cable is connected, but the ESP32 is not sending data yet. Reopening the sensor link and checking other USB serial ports.",
                                     last_error="sensor_serial_silent",
                                 )
                                 retry_after_silent_open = True
@@ -1191,6 +1242,12 @@ class Esp32SensorSerialManager:
                             raw_line[:SENSOR_PAYLOAD_LOG_MAX_CHARS],
                         )
                         self._ingest_serial_line(raw_line, serial_port=serial_port)
+                finally:
+                    if port is not None:
+                        try:
+                            port.close()
+                        except (AttributeError, OSError, SerialException):
+                            pass
                 if retry_after_silent_open:
                     self._stop_event.wait(SENSOR_SERIAL_RECONNECT_DELAY_S)
             except (SerialException, OSError) as exc:

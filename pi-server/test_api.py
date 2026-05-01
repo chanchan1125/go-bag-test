@@ -181,7 +181,8 @@ class PiServerApiTests(unittest.TestCase):
         live_snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
         self.module.sensor_serial_manager._set_connecting("test://esp32")
 
-        stale_time = live_snapshot.last_read_at + self.module.SENSOR_STALE_TIMEOUT_MS + 1
+        connecting_snapshot = self.module.sensor_serial_manager.snapshot()
+        stale_time = connecting_snapshot.updated_at + self.module.SENSOR_STALE_TIMEOUT_MS + 1
         with mock.patch.object(self.module, "now_ms", return_value=stale_time):
             self.module.sensor_serial_manager._mark_stale_if_needed("test://esp32")
         snapshot = self.module.sensor_serial_manager.snapshot()
@@ -189,6 +190,28 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(snapshot.connection_state, "stale")
         self.assertEqual(snapshot.total_percentage, 50)
         self.assertIn("no fresh reading", snapshot.message)
+
+    def test_reconnected_sensor_does_not_go_stale_from_old_reading_timestamp(self):
+        with mock.patch.object(self.module, "now_ms", return_value=1000):
+            self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
+        with mock.patch.object(self.module, "now_ms", return_value=100000):
+            self.module.sensor_serial_manager._set_connecting("test://esp32")
+
+        with mock.patch.object(self.module, "now_ms", return_value=100000 + self.module.SENSOR_STALE_TIMEOUT_MS - 1):
+            self.module.sensor_serial_manager._mark_stale_if_needed("test://esp32")
+        snapshot = self.module.sensor_serial_manager.snapshot()
+
+        self.assertEqual(snapshot.connection_state, "connecting")
+        self.assertEqual(snapshot.total_percentage, 50)
+
+    def test_sensor_serial_port_selection_rotates_through_candidates(self):
+        manager = self.module.Esp32SensorSerialManager()
+        ports = ["/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0"]
+
+        self.assertEqual(manager._next_serial_port(ports), "/dev/ttyUSB0")
+        self.assertEqual(manager._next_serial_port(ports), "/dev/ttyUSB1")
+        self.assertEqual(manager._next_serial_port(ports), "/dev/ttyACM0")
+        self.assertEqual(manager._next_serial_port(ports), "/dev/ttyUSB0")
 
     def test_sensor_snapshot_restores_last_persisted_utilization(self):
         live_snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
