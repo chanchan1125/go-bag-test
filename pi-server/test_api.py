@@ -166,6 +166,25 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(restored_snapshot.total_percentage, 50)
         self.assertEqual(len(restored_snapshot.sections), 5)
 
+    def test_json_mode_sensor_status_lines_explain_waiting_state(self):
+        snapshot = self.module.sensor_serial_manager.ingest_serial_lines(
+            [
+                "No saved tare for sensor 2. Empty that section and tare before use.",
+                "Sensor 2 needs tare. Empty that section and send its number or 't'.",
+            ]
+        )
+
+        self.assertEqual(snapshot.connection_state, "connecting")
+        self.assertIsNone(snapshot.total_percentage)
+        self.assertIn("Sensor 2 needs tare", snapshot.message)
+        self.assertEqual(snapshot.last_error, "sensor_2_needs_tare")
+
+        ui_state = self.client.get("/ui/state")
+        self.assertEqual(ui_state.status_code, 200)
+        ui_payload = ui_state.json()
+        self.assertIsNone(ui_payload["bag_utilization_percent"])
+        self.assertIn("Sensor 2 needs tare", ui_payload["sensor_status_note"])
+
     def test_current_device_ip_display_prefers_live_ip_over_base_url(self):
         with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": "http://192.168.1.10:8001"}, clear=False):
             with mock.patch.object(self.module, "preferred_non_loopback_ip", return_value="192.168.1.9"):

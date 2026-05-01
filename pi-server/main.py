@@ -570,6 +570,10 @@ ESP32_TEXT_STATUS_HEADER_RE = re.compile(r"^-{3,}\s*BAG STATUS\s*-{3,}$", flags=
 ESP32_TEXT_STATUS_FOOTER_RE = re.compile(r"^-{3,}\s*$")
 ESP32_TEXT_SECTION_LINE_RE = re.compile(r"^Section\s+([1-5])\s*:\s*(.+)$", flags=re.IGNORECASE)
 ESP32_TEXT_WEIGHT_RE = re.compile(r"\bWeight\s*=\s*([-+]?\d*\.?\d+)\s*(kg|g)\b", flags=re.IGNORECASE)
+ESP32_SENSOR_NEEDS_TARE_RE = re.compile(r"^Sensor\s+([1-5])\s+needs\s+tare\b", flags=re.IGNORECASE)
+ESP32_SENSOR_NO_TARE_RE = re.compile(r"^No\s+saved\s+tare\s+for\s+sensor\s+([1-5])\b", flags=re.IGNORECASE)
+ESP32_SENSOR_NOT_CONNECTED_RE = re.compile(r"^Sensor\s+([1-5])\s+not\s+connected\b", flags=re.IGNORECASE)
+ESP32_SENSOR_NOT_READY_RE = re.compile(r"^Sensor\s+([1-5])\s+not\s+ready\s+for\s+tare\b", flags=re.IGNORECASE)
 
 
 def is_ignorable_sensor_serial_line(raw_line: str) -> bool:
@@ -856,10 +860,52 @@ class Esp32SensorSerialManager:
             return True
         return False
 
+    def _consume_json_mode_status_line(self, raw_line: str, serial_port: str) -> bool:
+        stripped = raw_line.strip()
+        if not stripped:
+            return False
+        needs_tare = ESP32_SENSOR_NEEDS_TARE_RE.match(stripped) or ESP32_SENSOR_NO_TARE_RE.match(stripped)
+        if needs_tare:
+            section_index = int(needs_tare.group(1))
+            self._record_waiting_status(
+                serial_port,
+                message=f"Sensor {section_index} needs tare. Empty that section, then tare it before live readings start.",
+                last_error=f"sensor_{section_index}_needs_tare",
+            )
+            return True
+        not_connected = ESP32_SENSOR_NOT_CONNECTED_RE.match(stripped)
+        if not_connected:
+            section_index = int(not_connected.group(1))
+            self._record_waiting_status(
+                serial_port,
+                message=f"Sensor {section_index} is not connected. Check the load sensor wiring.",
+                last_error=f"sensor_{section_index}_not_connected",
+            )
+            return True
+        not_ready = ESP32_SENSOR_NOT_READY_RE.match(stripped)
+        if not_ready:
+            section_index = int(not_ready.group(1))
+            self._record_waiting_status(
+                serial_port,
+                message=f"Sensor {section_index} is connected but not ready for tare yet.",
+                last_error=f"sensor_{section_index}_not_ready",
+            )
+            return True
+        if stripped.lower().startswith("tare complete"):
+            self._record_waiting_status(
+                serial_port,
+                message="Tare complete. Waiting for the first live bag sensor reading.",
+                last_error="",
+            )
+            return True
+        return False
+
     def _ingest_serial_line(self, raw_line: str, *, serial_port: str) -> Optional[SensorSnapshot]:
         stripped = raw_line.strip()
         if not stripped:
             return None
+        if self._consume_json_mode_status_line(stripped, serial_port):
+            return self.snapshot()
         if self._consume_text_status_line(stripped, serial_port):
             return self.snapshot()
         try:
@@ -1021,6 +1067,26 @@ class Esp32SensorSerialManager:
                 total_percentage_exact=snapshot.total_percentage_exact,
                 raw_payload=snapshot.raw_payload if snapshot.total_percentage is not None else "",
                 last_error=error_text,
+                sections=display_sections,
+            )
+        )
+
+    def _record_waiting_status(self, serial_port: str, *, message: str, last_error: str = "") -> None:
+        snapshot = self.snapshot()
+        display_sections = snapshot.sections if snapshot.total_percentage is not None else self._empty_sections()
+        self._set_snapshot(
+            self._build_snapshot(
+                connection_state="connecting",
+                available=False,
+                connected=True,
+                message=message,
+                serial_port=serial_port,
+                last_read_at=snapshot.last_read_at,
+                last_live_at=snapshot.last_live_at,
+                total_percentage=snapshot.total_percentage,
+                total_percentage_exact=snapshot.total_percentage_exact,
+                raw_payload=snapshot.raw_payload if snapshot.total_percentage is not None else "",
+                last_error=last_error,
                 sections=display_sections,
             )
         )
