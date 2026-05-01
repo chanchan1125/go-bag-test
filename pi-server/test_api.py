@@ -154,6 +154,42 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(ui_state.status_code, 200)
         self.assertEqual(ui_state.json()["bag_utilization_percent"], 50)
 
+    def test_sensor_reconnect_keeps_last_utilization_until_fresh_reading(self):
+        live_snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
+        self.assertEqual(live_snapshot.total_percentage, 50)
+
+        self.module.sensor_serial_manager._set_disconnected(
+            message="Bag sensor cable disconnected. Waiting to reconnect.",
+            last_error="test disconnect",
+            serial_port="test://esp32",
+        )
+        self.module.sensor_serial_manager._set_connecting("test://esp32")
+        snapshot = self.module.sensor_serial_manager.snapshot()
+
+        self.assertEqual(snapshot.connection_state, "connecting")
+        self.assertEqual(snapshot.total_percentage, 50)
+        self.assertIn("fresh reading", snapshot.message)
+        self.assertEqual(len(snapshot.sections), 5)
+
+        ui_state = self.client.get("/ui/state")
+        self.assertEqual(ui_state.status_code, 200)
+        ui_payload = ui_state.json()
+        self.assertEqual(ui_payload["bag_utilization_percent"], 50)
+        self.assertIn("Last detected reading", ui_payload["sensor_sections_html"])
+
+    def test_reconnected_sensor_without_fresh_reading_becomes_stale(self):
+        live_snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
+        self.module.sensor_serial_manager._set_connecting("test://esp32")
+
+        stale_time = live_snapshot.last_read_at + self.module.SENSOR_STALE_TIMEOUT_MS + 1
+        with mock.patch.object(self.module, "now_ms", return_value=stale_time):
+            self.module.sensor_serial_manager._mark_stale_if_needed("test://esp32")
+        snapshot = self.module.sensor_serial_manager.snapshot()
+
+        self.assertEqual(snapshot.connection_state, "stale")
+        self.assertEqual(snapshot.total_percentage, 50)
+        self.assertIn("no fresh reading", snapshot.message)
+
     def test_sensor_snapshot_restores_last_persisted_utilization(self):
         live_snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
         self.assertEqual(live_snapshot.total_percentage, 50)
