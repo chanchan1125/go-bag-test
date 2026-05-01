@@ -122,6 +122,7 @@ KIOSK_PREFERENCES_META_KEY = "pi_kiosk_preferences_v1"
 KIOSK_BRIGHTNESS_OPTIONS = {"low", "medium", "high"}
 KIOSK_REMINDER_INTERVAL_OPTIONS = (15, 30, 60, 180)
 SINGLE_BAG_META_KEY = "single_bag_id"
+LAST_SENSOR_SNAPSHOT_META_KEY = "last_sensor_snapshot_v1"
 CHECKLIST_CATEGORIES = [
     "Water & Food",
     "Medical & Health",
@@ -589,9 +590,14 @@ def is_ignorable_sensor_serial_line(raw_line: str) -> bool:
     if re.match(r"^[1-5tThH]\s*=", stripped):
         return True
     return lower.startswith((
+        "=== go bag sensor",
         "=== smart go-bag",
         "this version keeps checking sensors live.",
         "place the platform first",
+        "loaded stored tare",
+        "no saved tare",
+        "send 't'",
+        "stored tares cleared",
         "taring all connected sensors",
         "make sure only the platform is on each section",
         "tare complete",
@@ -679,6 +685,45 @@ class Esp32SensorSerialManager:
     def _set_snapshot(self, snapshot: SensorSnapshot) -> None:
         with self._lock:
             self._snapshot = snapshot
+
+    def load_persisted_snapshot(self) -> None:
+        try:
+            with db_conn() as conn:
+                raw_snapshot = get_meta(conn, LAST_SENSOR_SNAPSHOT_META_KEY)
+        except Exception as exc:
+            logger.debug("Could not load last sensor snapshot: %s", exc)
+            return
+        if not raw_snapshot:
+            return
+        try:
+            snapshot = SensorSnapshot(**json.loads(raw_snapshot))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.debug("Ignoring invalid persisted sensor snapshot: %s", exc)
+            return
+        if snapshot.total_percentage is None or not snapshot.sections:
+            return
+        self._set_snapshot(
+            snapshot.model_copy(
+                update={
+                    "connection_state": "disconnected",
+                    "available": False,
+                    "connected": False,
+                    "message": "Showing the last bag sensor reading. Reconnect the bag sensor cable for live updates.",
+                    "updated_at": now_ms(),
+                    "last_error": "last_known_sensor_reading",
+                }
+            )
+        )
+
+    def _persist_live_snapshot(self, snapshot: SensorSnapshot) -> None:
+        if snapshot.connection_state != "live" or snapshot.total_percentage is None:
+            return
+        try:
+            with db_conn() as conn:
+                set_meta(conn, LAST_SENSOR_SNAPSHOT_META_KEY, snapshot.model_dump_json())
+                conn.commit()
+        except Exception as exc:
+            logger.debug("Could not persist last sensor snapshot: %s", exc)
 
     def _reset_text_frame(self) -> None:
         self._text_frame = Esp32TextStatusFrame()
@@ -879,7 +924,7 @@ class Esp32SensorSerialManager:
             [round(value, 2) for value in contributions],
             total_percentage,
         )
-        return self._build_snapshot(
+        snapshot = self._build_snapshot(
             connection_state="live",
             available=True,
             connected=True,
@@ -892,9 +937,12 @@ class Esp32SensorSerialManager:
             raw_payload=raw_line[:SENSOR_PAYLOAD_LOG_MAX_CHARS],
             sections=sections,
         )
+        self._persist_live_snapshot(snapshot)
+        return snapshot
 
     def _set_disconnected(self, *, message: str, last_error: str = "", serial_port: str = "") -> None:
         previous = self.snapshot()
+        previous_sections = previous.sections if previous.total_percentage is not None else self._empty_sections()
         self._set_snapshot(
             self._build_snapshot(
                 connection_state="disconnected",
@@ -904,7 +952,11 @@ class Esp32SensorSerialManager:
                 serial_port=serial_port,
                 last_read_at=previous.last_read_at,
                 last_live_at=previous.last_live_at,
+                total_percentage=previous.total_percentage,
+                total_percentage_exact=previous.total_percentage_exact,
+                raw_payload=previous.raw_payload,
                 last_error=last_error,
+                sections=previous_sections,
             )
         )
 
@@ -931,6 +983,7 @@ class Esp32SensorSerialManager:
             return
         if now_ms() - snapshot.last_read_at < SENSOR_STALE_TIMEOUT_MS:
             return
+        stale_sections = snapshot.sections if snapshot.total_percentage is not None else self._empty_sections()
         self._set_snapshot(
             self._build_snapshot(
                 connection_state="stale",
@@ -940,7 +993,11 @@ class Esp32SensorSerialManager:
                 serial_port=serial_port,
                 last_read_at=snapshot.last_read_at,
                 last_live_at=snapshot.last_live_at,
+                total_percentage=snapshot.total_percentage,
+                total_percentage_exact=snapshot.total_percentage_exact,
+                raw_payload=snapshot.raw_payload,
                 last_error=snapshot.last_error,
+                sections=stale_sections,
             )
         )
 
@@ -950,6 +1007,7 @@ class Esp32SensorSerialManager:
             next_state = "connecting"
         else:
             next_state = snapshot.connection_state if snapshot.connection_state in {"live", "stale"} else "connecting"
+        display_sections = snapshot.sections if snapshot.total_percentage is not None else self._empty_sections()
         self._set_snapshot(
             self._build_snapshot(
                 connection_state=next_state,
@@ -959,11 +1017,11 @@ class Esp32SensorSerialManager:
                 serial_port=serial_port,
                 last_read_at=snapshot.last_read_at,
                 last_live_at=snapshot.last_live_at,
-                total_percentage=snapshot.total_percentage if next_state == "live" else None,
-                total_percentage_exact=snapshot.total_percentage_exact if next_state == "live" else None,
-                raw_payload=snapshot.raw_payload if next_state == "live" else "",
+                total_percentage=snapshot.total_percentage,
+                total_percentage_exact=snapshot.total_percentage_exact,
+                raw_payload=snapshot.raw_payload if snapshot.total_percentage is not None else "",
                 last_error=error_text,
-                sections=snapshot.sections if next_state == "live" else self._empty_sections(),
+                sections=display_sections,
             )
         )
 
@@ -4728,6 +4786,7 @@ def capture_camera_jpeg() -> bytes:
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    sensor_serial_manager.load_persisted_snapshot()
     sensor_serial_manager.start()
     relay_client_manager.start()
 
@@ -5511,12 +5570,23 @@ def render_summary_html(summary_cards: List[tuple[str, str, str]]) -> str:
 
 def render_sensor_sections_html(snapshot: SensorSnapshot) -> str:
     tone = sensor_state_tone(snapshot)
-    if not snapshot.available:
+    has_display_reading = snapshot.total_percentage is not None and bool(snapshot.sections)
+    if not snapshot.available and not has_display_reading:
         return f"""
         <div class="empty-state sensor-empty-state">
           <strong>{escape(sensor_state_label(snapshot))}</strong><br>{escape(sensor_detail_note(snapshot))}
         </div>
         """
+    section_note = (
+        "Contributing to bag utilization."
+        if snapshot.connection_state == "live"
+        else "Last detected reading."
+    )
+    clear_note = (
+        "Below the occupied threshold."
+        if snapshot.connection_state == "live"
+        else "Last reading was below threshold."
+    )
     return "".join(
         [
             f"""
@@ -5527,7 +5597,7 @@ def render_sensor_sections_html(snapshot: SensorSnapshot) -> str:
               </div>
               <div class="sensor-section-percent">{escape(str(int(round(section.contribution_percent or 0))))}%</div>
               <div class="sensor-section-note">
-                {'Contributing to bag utilization.' if section.detected else 'Below the occupied threshold.'}
+                {section_note if section.detected else clear_note}
               </div>
             </div>
             """
@@ -5949,12 +6019,18 @@ def build_dashboard_view_model(request: Request, edit_item_id: str = "") -> dict
         (
             "Bag Sensors",
             sensor_status_label,
-            "Live readings active" if sensor_snapshot.connection_state == "live" else "Check the bag sensor cable",
+            "Live readings active"
+            if sensor_snapshot.connection_state == "live"
+            else "Showing last detected reading"
+            if bag_utilization_percent is not None
+            else "Check the bag sensor cable",
         ),
         (
             "Utilization",
             f"{bag_utilization_percent}%" if bag_utilization_percent is not None else "Unavailable",
-            f"{occupied_section_count}/{SENSOR_SECTION_COUNT} sections occupied" if sensor_snapshot.available else "Waiting for bag sensor readings",
+            f"{occupied_section_count}/{SENSOR_SECTION_COUNT} sections occupied"
+            if bag_utilization_percent is not None
+            else "Waiting for bag sensor readings",
         ),
         ("Status", readiness["bag_readiness"], readiness["device_status"]),
         ("Expired", str(len(expired_items)), f"{len(expiring_items)} near expiry"),

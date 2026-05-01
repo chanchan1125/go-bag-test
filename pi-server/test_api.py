@@ -110,7 +110,7 @@ class PiServerApiTests(unittest.TestCase):
         self.assertEqual(device_payload["sensor_snapshot"]["total_percentage"], 50)
         self.assertEqual(device_payload["sensor_snapshot"]["sections"][1]["current_weight_kg"], 0.5)
 
-    def test_incomplete_text_sensor_status_frame_clears_utilization(self):
+    def test_incomplete_text_sensor_status_frame_keeps_last_utilization(self):
         live_snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
         self.assertEqual(live_snapshot.total_percentage, 50)
 
@@ -126,12 +126,45 @@ class PiServerApiTests(unittest.TestCase):
             ]
         )
         self.assertEqual(snapshot.connection_state, "connecting")
-        self.assertIsNone(snapshot.total_percentage)
+        self.assertEqual(snapshot.total_percentage, 50)
         self.assertIn("incomplete sensor frame", snapshot.last_error.lower())
 
         ui_state = self.client.get("/ui/state")
         self.assertEqual(ui_state.status_code, 200)
-        self.assertIsNone(ui_state.json()["bag_utilization_percent"])
+        ui_payload = ui_state.json()
+        self.assertEqual(ui_payload["bag_utilization_percent"], 50)
+        self.assertIn("Last detected reading", ui_payload["sensor_sections_html"])
+
+    def test_sensor_disconnect_keeps_last_utilization(self):
+        live_snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
+        self.assertEqual(live_snapshot.total_percentage, 50)
+
+        self.module.sensor_serial_manager._set_disconnected(
+            message="Bag sensor cable disconnected. Waiting to reconnect.",
+            last_error="test disconnect",
+            serial_port="test://esp32",
+        )
+        snapshot = self.module.sensor_serial_manager.snapshot()
+
+        self.assertEqual(snapshot.connection_state, "disconnected")
+        self.assertEqual(snapshot.total_percentage, 50)
+        self.assertEqual(len(snapshot.sections), 5)
+
+        ui_state = self.client.get("/ui/state")
+        self.assertEqual(ui_state.status_code, 200)
+        self.assertEqual(ui_state.json()["bag_utilization_percent"], 50)
+
+    def test_sensor_snapshot_restores_last_persisted_utilization(self):
+        live_snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
+        self.assertEqual(live_snapshot.total_percentage, 50)
+
+        restored_manager = self.module.Esp32SensorSerialManager()
+        restored_manager.load_persisted_snapshot()
+        restored_snapshot = restored_manager.snapshot()
+
+        self.assertEqual(restored_snapshot.connection_state, "disconnected")
+        self.assertEqual(restored_snapshot.total_percentage, 50)
+        self.assertEqual(len(restored_snapshot.sections), 5)
 
     def test_current_device_ip_display_prefers_live_ip_over_base_url(self):
         with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": "http://192.168.1.10:8001"}, clear=False):

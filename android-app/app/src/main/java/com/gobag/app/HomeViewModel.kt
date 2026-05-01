@@ -83,9 +83,15 @@ class HomeViewModel(
     ) { items, state, conflicts, bagList, selected_bag_id ->
         val connection = PiConnectionStatus.from_device_state(state)
         val summary = PreparednessRules.build_readiness_summary(items, connection.is_paired)
-        val sensorSnapshot = state.sensor_snapshot.takeIf { connection.is_online }
+        val savedSensorSnapshot = state.sensor_snapshot
+        val sensorSnapshot = savedSensorSnapshot.takeIf {
+            connection.is_online || savedSensorSnapshot?.total_percentage != null
+        }
+        val showingLastSensorReading = !connection.is_online && sensorSnapshot?.total_percentage != null
         val sensorStatusLabel = if (connection.is_online) {
             formatSensorStatusLabel(sensorSnapshot?.connection_state)
+        } else if (showingLastSensorReading) {
+            "Last Sensor"
         } else {
             when {
                 connection.reconnect_required -> "Pi Offline"
@@ -97,6 +103,8 @@ class HomeViewModel(
             sensorSnapshot?.message?.ifBlank {
                 "Connect the bag hub to view live section weights."
             } ?: "Connect the bag hub to view live section weights."
+        } else if (showingLastSensorReading) {
+            "Showing the last bag sensor reading saved on this phone. Reconnect to the Raspberry Pi for live updates."
         } else {
             connection.last_connection_error.ifBlank {
                 if (connection.detail.isNotBlank()) {
