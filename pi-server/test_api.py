@@ -221,6 +221,46 @@ class PiServerApiTests(unittest.TestCase):
         self.assertIsNone(ui_payload["bag_utilization_percent"])
         self.assertIn("Sensor 2 needs tare", ui_payload["sensor_status_note"])
 
+    def test_json_mode_sensor_not_ready_line_explains_waiting_state(self):
+        snapshot = self.module.sensor_serial_manager.ingest_serial_lines(
+            ["Sensor 4 not ready for reading."]
+        )
+
+        self.assertEqual(snapshot.connection_state, "connecting")
+        self.assertIsNone(snapshot.total_percentage)
+        self.assertIn("Sensor 4 is connected but not ready", snapshot.message)
+        self.assertEqual(snapshot.last_error, "sensor_4_not_ready")
+
+    def test_esp32_boot_noise_does_not_poison_reconnect_state(self):
+        live_snapshot = self.module.sensor_serial_manager.ingest_payload_line("0.25,0.50,0.75,1.00,0.00")
+        self.assertEqual(live_snapshot.total_percentage, 50)
+        self.module.sensor_serial_manager._set_connecting("test://esp32")
+
+        snapshot = self.module.sensor_serial_manager.ingest_serial_lines(
+            [
+                "rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)",
+                "configsip: 0, SPIWP:0xee",
+                "entry 0x400805f0",
+            ]
+        )
+
+        self.assertEqual(snapshot.connection_state, "connecting")
+        self.assertEqual(snapshot.total_percentage, 50)
+        self.assertNotEqual(snapshot.last_error, "Unsupported sensor payload format. Use JSON or five ordered numeric readings.")
+
+    def test_esp32_json_after_boot_noise_returns_live(self):
+        snapshot = self.module.sensor_serial_manager.ingest_serial_lines(
+            [
+                "rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)",
+                "entry 0x400805f0",
+                '{"source":"esp32_hx711","unit":"g","weights":[0.0,726.6,1682.6,6202.8,1492.8],"occupied_sections":4,"connected_sections":5}',
+            ]
+        )
+
+        self.assertEqual(snapshot.connection_state, "live")
+        self.assertEqual(snapshot.total_percentage, 75)
+        self.assertEqual(snapshot.last_error, "")
+
     def test_current_device_ip_display_prefers_live_ip_over_base_url(self):
         with mock.patch.dict(os.environ, {"GOBAG_BASE_URL": "http://192.168.1.10:8001"}, clear=False):
             with mock.patch.object(self.module, "preferred_non_loopback_ip", return_value="192.168.1.9"):

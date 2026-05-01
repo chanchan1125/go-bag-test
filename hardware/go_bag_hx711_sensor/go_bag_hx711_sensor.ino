@@ -23,12 +23,27 @@ float DETECT_THRESHOLD_G[NUM_SENSORS] = {
 
 const int TARE_SAMPLES = 20;
 const int READ_SAMPLES = 10;
+const unsigned long SAMPLE_READY_TIMEOUT_MS = 250;
 const unsigned long PRINT_INTERVAL_MS = 1000;
 
 unsigned long lastPrint = 0;
 
 bool sensorAvailable(uint8_t i) {
   return scales[i].wait_ready_timeout(500);
+}
+
+bool readAverageWithTimeout(uint8_t i, int samples, long &averageRaw) {
+  int64_t totalRaw = 0;
+
+  for (int sample = 0; sample < samples; sample++) {
+    if (!scales[i].wait_ready_timeout(SAMPLE_READY_TIMEOUT_MS)) {
+      return false;
+    }
+    totalRaw += scales[i].read();
+  }
+
+  averageRaw = (long)(totalRaw / samples);
+  return true;
 }
 
 String tareKey(uint8_t i) {
@@ -91,7 +106,15 @@ void tareSensor(uint8_t i) {
     return;
   }
 
-  tareRaw[i] = scales[i].read_average(TARE_SAMPLES);
+  long averageRaw = 0;
+  if (!readAverageWithTimeout(i, TARE_SAMPLES, averageRaw)) {
+    Serial.print("Sensor ");
+    Serial.print(i + 1);
+    Serial.println(" not ready for tare.");
+    return;
+  }
+
+  tareRaw[i] = averageRaw;
   hasTare[i] = true;
   saveTare(i);
 
@@ -178,7 +201,15 @@ void publishJsonFrame() {
       continue;
     }
 
-    long raw = scales[i].read_average(READ_SAMPLES);
+    long raw = 0;
+    if (!readAverageWithTimeout(i, READ_SAMPLES, raw)) {
+      Serial.print("Sensor ");
+      Serial.print(i + 1);
+      Serial.println(" not ready for reading.");
+      ready = false;
+      continue;
+    }
+
     float weightG = computeWeightG(i, raw);
 
     weightsG[i] = weightG;

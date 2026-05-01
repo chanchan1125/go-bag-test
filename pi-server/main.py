@@ -574,7 +574,7 @@ ESP32_TEXT_WEIGHT_RE = re.compile(r"\bWeight\s*=\s*([-+]?\d*\.?\d+)\s*(kg|g)\b",
 ESP32_SENSOR_NEEDS_TARE_RE = re.compile(r"^Sensor\s+([1-5])\s+needs\s+tare\b", flags=re.IGNORECASE)
 ESP32_SENSOR_NO_TARE_RE = re.compile(r"^No\s+saved\s+tare\s+for\s+sensor\s+([1-5])\b", flags=re.IGNORECASE)
 ESP32_SENSOR_NOT_CONNECTED_RE = re.compile(r"^Sensor\s+([1-5])\s+not\s+connected\b", flags=re.IGNORECASE)
-ESP32_SENSOR_NOT_READY_RE = re.compile(r"^Sensor\s+([1-5])\s+not\s+ready\s+for\s+tare\b", flags=re.IGNORECASE)
+ESP32_SENSOR_NOT_READY_RE = re.compile(r"^Sensor\s+([1-5])\s+not\s+ready(?:\s+for\s+(?:tare|reading))?\b", flags=re.IGNORECASE)
 
 
 def is_ignorable_sensor_serial_line(raw_line: str) -> bool:
@@ -608,6 +608,30 @@ def is_ignorable_sensor_serial_line(raw_line: str) -> bool:
         "tare complete",
         "sensor ",
     ))
+
+
+def looks_like_sensor_payload_attempt(raw_line: str) -> bool:
+    stripped = raw_line.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("{"):
+        return True
+    if re.search(r"\b(weights?|weights_kg|weights_g|sections?|section_|current_weight|weight_kg|weight_g)\b", stripped, flags=re.IGNORECASE):
+        return True
+    if re.search(r"(?:section_?|s)(\d)\s*[:=]\s*[-+]?\d", stripped, flags=re.IGNORECASE):
+        return True
+
+    numeric_count = 0
+    parts = [part for part in re.split(r"[\s,]+", stripped) if part]
+    for part in parts:
+        try:
+            float(part)
+        except ValueError:
+            continue
+        numeric_count += 1
+    if numeric_count >= SENSOR_SECTION_COUNT:
+        return True
+    return "," in stripped and numeric_count > 0 and len(parts) >= SENSOR_SECTION_COUNT
 
 
 class Esp32SensorSerialManager:
@@ -909,6 +933,14 @@ class Esp32SensorSerialManager:
             return self.snapshot()
         if self._consume_text_status_line(stripped, serial_port):
             return self.snapshot()
+        if not looks_like_sensor_payload_attempt(stripped):
+            if not is_ignorable_sensor_serial_line(stripped):
+                logger.info(
+                    "Ignoring non-payload sensor serial line from %s: %s",
+                    serial_port,
+                    stripped[:SENSOR_PAYLOAD_LOG_MAX_CHARS],
+                )
+            return None
         try:
             weights_kg = parse_sensor_payload_line(stripped)
         except ValueError as exc:
